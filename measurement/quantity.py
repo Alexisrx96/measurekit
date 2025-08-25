@@ -14,6 +14,8 @@ Numeric = int | float
 
 
 class Quantity(Real):
+    __slots__ = ("value", "fraction", "unit", "dimension", "uncertainty")
+
     default_unit: CompoundUnit | None = None
     _cache: dict[CompoundUnit, type] = {}
 
@@ -36,8 +38,10 @@ class Quantity(Real):
         self,
         value: Numeric | Quantity = 1,
         unit: CompoundUnit | None = None,
+        uncertainty: float = 0.0,
     ):
         if isinstance(value, Quantity):
+            uncertainty = value.uncertainty
             value, unit = value.value, value.unit
 
         if unit is None:
@@ -50,12 +54,14 @@ class Quantity(Real):
         if self.default_unit is not None and unit != self.default_unit:
             conversion_factor = unit.conversion_factor_to(self.default_unit)
             value = value * conversion_factor
+            uncertainty = uncertainty * conversion_factor
             unit = self.default_unit
 
-        self.value = value
-        self.fraction = Fraction(str(value))
-        self.unit = unit
-        self.dimension = unit.dimension
+        object.__setattr__(self, "value", float(value))
+        object.__setattr__(self, "fraction", Fraction(str(value)))
+        object.__setattr__(self, "unit", unit)
+        object.__setattr__(self, "dimension", unit.dimension)
+        object.__setattr__(self, "uncertainty", float(uncertainty))
 
     def to(self, target_unit: CompoundUnit | str) -> Quantity:
         if not isinstance(self.unit, CompoundUnit):
@@ -65,48 +71,124 @@ class Quantity(Real):
         if isinstance(target_unit, str):
             target_unit = get_unit(target_unit)
 
-        new_value = self.value * self.unit.conversion_factor_to(target_unit)
-        return Quantity(new_value, target_unit)
+        conversion_factor = self.unit.conversion_factor_to(target_unit)
+        new_value = self.value * conversion_factor
+        new_uncertainty = self.uncertainty * conversion_factor
+        return Quantity(new_value, target_unit, uncertainty=new_uncertainty)
 
     def __add__(self, other: Quantity) -> Quantity:
         if self.dimension != other.dimension or self.unit != other.unit:
             raise ValueError(
                 "Cannot add quantities with different dimensions or units"
-                f"{self.dimension} != {other.dimension}"
-                f"{self.unit} != {other.unit}"
             )
-        return Quantity(self.value + other.value, self.unit)
+
+        new_value = self.value + other.value
+        # Suma en cuadratura de las incertidumbres absolutas
+        new_uncertainty = math.sqrt(self.uncertainty**2 + other.uncertainty**2)
+        return Quantity(new_value, self.unit, uncertainty=new_uncertainty)
 
     def __sub__(self, other: Quantity) -> Quantity:
         if self.dimension != other.dimension or self.unit != other.unit:
             raise ValueError(
                 "Cannot subtract quantities with different dimensions or units"
             )
-        return Quantity(self.value - other.value, self.unit)
+
+        new_value = self.value - other.value
+        # La incertidumbre también se suma en cuadratura para la resta
+        new_uncertainty = math.sqrt(self.uncertainty**2 + other.uncertainty**2)
+        return Quantity(new_value, self.unit, uncertainty=new_uncertainty)
 
     def __mul__(self, other: Numeric | Quantity | CompoundUnit) -> Quantity:
         if isinstance(other, Quantity):
-            return Quantity(self.value * other.value, self.unit * other.unit)
-        if isinstance(other, CompoundUnit):
-            if other.dimension != self.dimension:
-                return Quantity(self.value, self.unit * other)
-            return Quantity(
-                self.value * other.conversion_factor_to(self.unit), self.unit
-            )
-        return Quantity(self.value * other, self.unit)
+            new_value = self.value * other.value
+            new_unit = self.unit * other.unit
 
-    def __rdiv__(self, other: Numeric | Quantity) -> Quantity:
-        if isinstance(other, Quantity):
-            return Quantity(self.value / other.value, self.unit / other.unit)
-        return Quantity(self.value / other, 1 / self.unit)
+            # Propagación para multiplicación
+            if new_value == 0:
+                new_uncertainty = 0
+            else:
+                rel_unc_1 = (
+                    self.uncertainty / self.value if self.value != 0 else 0
+                )
+                rel_unc_2 = (
+                    other.uncertainty / other.value if other.value != 0 else 0
+                )
+                new_uncertainty = abs(new_value) * math.sqrt(
+                    rel_unc_1**2 + rel_unc_2**2
+                )
+
+            return Quantity(new_value, new_unit, uncertainty=new_uncertainty)
+
+        # Multiplicación por un escalar (constante exacta)
+        if isinstance(other, (int, float)):
+            new_value = self.value * other
+            # La incertidumbre se escala linealmente
+            new_uncertainty = self.uncertainty * abs(other)
+            return Quantity(new_value, self.unit, uncertainty=new_uncertainty)
+
+        return super().__mul__(
+            other
+        )  # Mantener comportamiento para CompoundUnit
 
     def __truediv__(self, other: Numeric | Quantity) -> Quantity:
         if isinstance(other, Quantity):
-            return Quantity(self.value / other.value, self.unit / other.unit)
-        return Quantity(self.value / other, self.unit)
+            if other.value == 0:
+                raise ZeroDivisionError(
+                    "Division by a Quantity with zero value."
+                )
+            new_value = self.value / other.value
+            new_unit = self.unit / other.unit
 
-    def __pow__(self, exponent: int) -> Quantity:
-        return Quantity(self.value**exponent, self.unit**exponent)
+            if new_value == 0:
+                new_uncertainty = 0
+            else:
+                rel_unc_1 = (
+                    self.uncertainty / self.value if self.value != 0 else 0
+                )
+                rel_unc_2 = (
+                    other.uncertainty / other.value if other.value != 0 else 0
+                )
+                new_uncertainty = abs(new_value) * math.sqrt(
+                    rel_unc_1**2 + rel_unc_2**2
+                )
+
+            return Quantity(new_value, new_unit, uncertainty=new_uncertainty)
+
+        if isinstance(other, (int, float)):
+            if other == 0:
+                raise ZeroDivisionError("Division by zero.")
+            new_value = self.value / other
+            new_uncertainty = self.uncertainty / abs(other)
+            return Quantity(new_value, self.unit, uncertainty=new_uncertainty)
+
+        return NotImplemented
+
+    def __pow__(self, exponent: int | float) -> Quantity:
+        new_value = self.value**exponent
+        new_unit = self.unit**exponent
+
+        if new_value == 0:
+            new_uncertainty = 0
+        else:
+            rel_unc = self.uncertainty / self.value if self.value != 0 else 0
+            new_uncertainty = abs(new_value * exponent) * rel_unc
+
+        return Quantity(new_value, new_unit, uncertainty=new_uncertainty)
+
+    def __rmul__(self, other: Numeric) -> Quantity:
+        return self.__mul__(other)
+
+    def __rtruediv__(self, other: Numeric) -> Quantity:
+        new_value = other / self.value
+        new_unit = 1 / self.unit
+
+        if new_value == 0:
+            new_uncertainty = 0
+        else:
+            rel_unc = self.uncertainty / self.value if self.value != 0 else 0
+            new_uncertainty = abs(new_value) * rel_unc
+
+        return Quantity(new_value, new_unit, uncertainty=new_uncertainty)
 
     def __format__(self, format_spec: str) -> str:
         """
@@ -156,19 +238,15 @@ class Quantity(Real):
         return f"{numeric_str} {unit_str}"
 
     def __str__(self) -> str:
-        return f"{self.value} {self.unit:full}"
+        if self.uncertainty == 0:
+            return f"{self.value} {self.unit:full}"
+        return f"({self.value} ± {self.uncertainty}) {self.unit:full}"
 
     def __repr__(self) -> str:
-        return f"Quantity({self.value!r}, {self.unit!r})"
-
-    def __rtruediv__(self, other: Numeric) -> Quantity:
-        return Quantity(other / self.value, 1 / self.unit)
+        return f"Quantity({self.value!r}, {self.unit!r}, uncertainty={self.uncertainty!r})"
 
     def __radd__(self, other: Numeric) -> Quantity:
         return Quantity(self.value + other, self.unit)
-
-    def __rmul__(self, other: Numeric) -> Quantity:
-        return Quantity(self.value * other, self.unit)
 
     def __rsub__(self, other: Numeric) -> Quantity:
         return Quantity(other - self.value, 1 / self.unit)
