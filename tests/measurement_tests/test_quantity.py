@@ -11,6 +11,7 @@ from measurement.units import CompoundUnit
 
 from tests.base_test_class import BaseTestUnit
 
+
 class TestQuantity(BaseTestUnit):
     """Tests for the Quantity class."""
 
@@ -226,7 +227,10 @@ class TestQuantity(BaseTestUnit):
 
         # Basic string representation
         self.assertEqual(str(length), "5.0 m")
-        self.assertEqual(repr(length), "Quantity(5.0, CompoundUnit({'m': 1}))")
+        self.assertEqual(
+            repr(length),
+            "Quantity(5.0, CompoundUnit({'m': 1}), uncertainty=0.0)",
+        )
 
         # Formatting
         self.assertEqual(f"{length:.2f}", "5.00 m")
