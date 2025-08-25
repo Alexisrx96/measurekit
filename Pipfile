@@ -1,0 +1,25 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+matplotlib = "*"
+seaborn = "*"
+sympy = "*"
+pytest = "*"
+pytest-cov = "*"
+numpy = "*"
+numba = "*"
+
+[dev-packages]
+isort = "*"
+pytest-cov = "*"
+ipykernel = "*"
+pytest = "*"
+black = "*"
+ruff = "*"
+setuptools = "*"
+
+[requires]
+python_version = "3.12"

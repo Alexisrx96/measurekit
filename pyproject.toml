@@ -1,0 +1,43 @@
+[tool.ruff]
+line-length = 79  # General line length for code
+
+[tool.ruff.lint]  # Lint settings must go under this section
+exclude = ["*.ipynb"]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # or "numpy", "pep257"
+
+[tool.ruff.format]
+docstring-code-format = true  # Ensures code inside docstrings is formatted properly
+
+
+[tool.pytest.ini_options]
+# addopts = "--cov --cov-report=term-missing --cov-config=pyproject.toml"
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py",  # Ignore all __init__.py files
+    "test/*",          # Ignore everything inside test/ directory
+    "tests/*",         # Also ignore if your tests directory is named tests
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",  # Ignore type-checking blocks
+]
