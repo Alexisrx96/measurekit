@@ -3,6 +3,7 @@
 import configparser
 import re
 from pathlib import Path
+from importlib import resources
 
 import measurekit.constants as constants_module
 import measurekit.dimensions as dimensions_module
@@ -39,8 +40,9 @@ def initialize_system():
 def _get_config_paths() -> list[Path]:
     """Construye una lista ordenada de rutas de archivos de configuración para cargar."""
     paths_to_load = []
-    lib_root_dir = Path(__file__).resolve().parent.parent
-    lib_config_dir = lib_root_dir / "config"
+    # This is the correct way to find the config dir INSIDE the package
+    lib_package_dir = Path(__file__).resolve().parent
+    lib_config_dir = lib_package_dir / "config"
     user_config_dir = Path.home() / ".config" / "measurekit"
 
     print(f"Searching for library configurations in: {lib_config_dir}")
@@ -72,23 +74,72 @@ def _get_config_paths() -> list[Path]:
 
 
 def _load_all_configurations():
-    """Lee todos los archivos de configuración y los fusiona en el objeto `config` global."""
+    """
+    Reads all configuration files from the library package and the user's
+    home directory and merges them into the global `config` object.
+    """
     parser = configparser.ConfigParser()
-    config_paths = _get_config_paths()
+    paths_to_load = []
 
-    if not config_paths:
+    # --- Part 1: Find LIBRARY configurations using importlib.resources ---
+    # This is the robust way to find data files inside your package.
+    # It works for tests and for installed packages (even in zip files).
+    try:
+        # 'resources.files()' returns a path-like object to a package's contents.
+        # We point it to our 'measurekit.config' sub-package.
+        lib_config_dir = resources.files("measurekit.config")
+
+        print(f"Searching for library configurations in: {lib_config_dir}")
+
+        lib_master_conf = lib_config_dir / "measurekit.conf"
+        if lib_master_conf.is_file():
+            paths_to_load.append(lib_master_conf)
+
+        systems_to_load_by_default = {"international.conf", "imperial.conf"}
+        lib_systems_dir = lib_config_dir / "systems"
+        if lib_systems_dir.is_dir():
+            for system_file in sorted(list(systems_to_load_by_default)):
+                if (lib_systems_dir / system_file).is_file():
+                    paths_to_load.append(lib_systems_dir / system_file)
+
+    except (ModuleNotFoundError, FileNotFoundError):
+        print(
+            "[WARNING] Could not locate the built-in library configuration files."
+        )
+    # --- End Part 1 ---
+
+    # --- Part 2: Find USER configurations (this logic remains the same) ---
+    user_config_dir = Path.home() / ".config" / "measurekit"
+    print(f"Searching for user configurations in: {user_config_dir}")
+
+    user_master_conf = user_config_dir / "measurekit.conf"
+    if user_master_conf.exists():
+        print(f"Found user master config: {user_master_conf}")
+        paths_to_load.append(user_master_conf)
+
+    user_systems_dir = user_config_dir / "systems"
+    if user_systems_dir.is_dir():
+        print("Found user systems directory. Loading custom systems...")
+        for user_system_conf in sorted(user_systems_dir.glob("*.conf")):
+            paths_to_load.append(user_system_conf)
+    # --- End Part 2 ---
+
+    # --- Part 3: Load the discovered files (this logic remains the same) ---
+    if not paths_to_load:
         print(
             "\n[WARNING] No configuration files found. The library will have no units defined."
         )
         return
 
     print("\nLoading configuration files in order of precedence:")
-    for path in config_paths:
+    for path in paths_to_load:
         print(f"  -> {path}")
 
-    parser.read(config_paths, encoding="utf-8")
+    # For `resources` paths, we may need to convert them to strings to be safe
+    str_paths = [str(p) for p in paths_to_load]
+    parser.read(str_paths, encoding="utf-8")
 
-    # Pobla los diccionarios en el objeto `config`
+    # Populate the config object...
     if "Settings" in parser:
         config.settings.update(parser.items("Settings"))
     if "Prefixes" in parser:
