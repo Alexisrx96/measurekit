@@ -4,7 +4,7 @@ import math
 import operator
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any, ClassVar, Generic, TypeVar, cast, overload, Self
+from typing import Any, ClassVar, Generic, Self, TypeVar, cast, overload
 
 import numpy as np
 import sympy as sp
@@ -30,7 +30,112 @@ Numeric = int | float | NDArray[Any]
 
 @dataclass(frozen=True)
 class Quantity(Generic[ValueType, UncType]):
-    """Representa una cantidad física inmutable con un valor, unidad e incertidumbre."""
+    """Represents a physical quantity with magnitude, unit, and uncertainty.
+
+    The `Quantity` class encapsulates a value (scalar or array), its associated
+    unit, and the uncertainty of the measurement. It supports arithmetic
+    operations, unit conversions, formatting, and propagation of uncertainties
+    according to physical rules.
+
+    Parameters
+    ----------
+    magnitude : ValueType
+        The numerical value of the quantity. Can be a scalar (int, float) or a
+        NumPy array.
+    unit : CompoundUnit
+        The unit of measurement, supporting compound and derived units.
+    uncertainty_obj : Uncertainty[UncType]
+        The uncertainty object representing the standard deviation
+        (absolute uncertainty).
+    fraction : Fraction or None, optional
+        Fractional representation of the value, if applicable.
+    dimension : Dimension
+        The physical dimension (e.g., length, mass, time) associated with the
+        unit.
+
+    Class Variables:
+    --------------
+    _cache : dict[CompoundUnit, type]
+        Internal cache for unit-specific Quantity subclasses.
+
+    Methods:
+    -------
+    from_input(value, unit, uncertainty=0.0)
+        Constructs a Quantity from raw input, preserving generic types and
+        handling scalars or arrays, and uncertainty propagation.
+
+    to(target_unit)
+        Converts the quantity to a new unit, adjusting magnitude and
+        uncertainty.
+
+    Arithmetic Operations
+    --------------------
+    Supports addition, subtraction, multiplication, division, power, and their
+    reflected counterparts, with correct unit and uncertainty propagation.
+
+    Comparison Operations
+    ---------------------
+    Supports equality and ordering comparisons, enforcing dimension
+    consistency.
+
+    Formatting & Representation
+    --------------------------
+    __format__(format_spec)
+        Flexible formatting for numeric and unit representation, including
+        LaTeX output.
+    to_latex()
+        Returns a LaTeX string representation of the quantity.
+    __str__(), __repr__()
+        Human-readable and developer representations.
+
+    NumPy Integration
+    ----------------
+    __array_ufunc__(ufunc, method, *inputs, **kwargs)
+        Enables NumPy universal function support, including reduction and
+        element-wise operations, with correct unit and uncertainty handling.
+
+    Vector Operations
+    ----------------
+    dot(other)
+        Computes the dot product of two quantities.
+    cross(other)
+        Computes the cross product of two quantities.
+
+    Indexing & Length
+    -----------------
+    __getitem__(key)
+        Supports array-like indexing for quantities with array values.
+    __len__()
+        Returns the length of the underlying array value.
+
+    Other Methods
+    -------------
+    __neg__(), __pos__(), __abs__()
+        Unary operations.
+    __float__()
+        Converts the quantity to a float (if possible).
+    __trunc__(), __floor__(), __ceil__(), __round__(ndigits)
+        Rounding and truncation operations, compatible with arrays.
+
+    Notes:
+    -----
+    - All arithmetic and comparison operations enforce dimension consistency.
+    - Uncertainty propagation follows standard physical rules for each
+    operation.
+    - Supports both scalar and array quantities, with correct broadcasting and
+    propagation.
+    - Formatting supports plain, fractional, and LaTeX representations.
+
+    Examples:
+    --------
+    >>> q1 = Quantity.from_input(5.0, meter, uncertainty=0.1)
+    >>> q2 = Quantity.from_input([1, 2, 3], meter)
+    >>> q3 = q1 + q1
+    >>> q4 = q2 * 2
+    >>> print(q1.to("cm"))
+    >>> print(f"{q1:.2f|alias}")
+    >>> print(q1.to_latex())
+    """
 
     magnitude: ValueType
     unit: CompoundUnit
@@ -49,33 +154,6 @@ class Quantity(Generic[ValueType, UncType]):
         "fraction",
         "dimension",
     )
-
-    # @overload
-    # @classmethod
-    # def from_input(
-    #     cls,
-    #     value: NDArray[Any],
-    #     unit: CompoundUnit,
-    #     uncertainty: float | Uncertainty[float] = 0.0,
-    # ) -> Quantity[NDArray[Any], NDArray[Any]]: ...
-
-    # @overload
-    # @classmethod
-    # def from_input(
-    #     cls,
-    #     value: ValueType,
-    #     unit: CompoundUnit,
-    #     uncertainty: UncType | Uncertainty[UncType] = 0.0,
-    # ) -> Quantity[ValueType, UncType]: ...
-
-    # @overload
-    # @classmethod
-    # def from_input(
-    #     cls,
-    #     value: Quantity[ValueType, UncType],
-    #     unit: CompoundUnit,
-    #     uncertainty: UncType | Uncertainty[UncType] | None = None,
-    # ) -> Quantity[ValueType, UncType]: ...
 
     @classmethod
     def from_input(
@@ -178,7 +256,6 @@ class Quantity(Generic[ValueType, UncType]):
             new_value, target_unit, uncertainty=new_uncertainty
         )
 
-    # 1. Si CUALQUIER operando (valor o incertidumbre) es un NDArray, el resultado es NDArray.
     @overload
     def __add__(
         self: Quantity[NDArray[Any], Any], other: Any
@@ -200,7 +277,6 @@ class Quantity(Generic[ValueType, UncType]):
         self, other: NDArray[Any]
     ) -> Quantity[NDArray[Any], NDArray[Any]]: ...
 
-    # 2. Si no hay NDArrays, y CUALQUIER operando (valor o incertidumbre) es un float, el resultado es float.
     @overload
     def __add__(
         self: Quantity[float, Any], other: Any
@@ -212,7 +288,6 @@ class Quantity(Generic[ValueType, UncType]):
     @overload
     def __add__(self, other: float) -> Quantity[float, float]: ...
 
-    # 3. Solo si AMBOS operandos (valor e incertidumbre) son int/float, el resultado puede ser int.
     @overload
     def __add__(
         self: Quantity[int, float], other: Quantity[int, float]
@@ -297,7 +372,8 @@ class Quantity(Generic[ValueType, UncType]):
         if isinstance(other, (int, float, np.ndarray)):
             if not self.unit.is_dimensionless():
                 raise ValueError(
-                    "No se puede restar un escalar de una cantidad con dimensiones."
+                    "No se puede restar un escalar de una cantidad"
+                    " con dimensiones."
                 )
             new_value = self.magnitude - other
             return Quantity.from_input(
@@ -520,7 +596,10 @@ class Quantity(Generic[ValueType, UncType]):
             return f"{self.magnitude} {self.unit:full}"
 
         if is_array_unc:
-            return f"Quantity(value={self.magnitude}, unit={self.unit:full}, uncertainty=[...])"
+            return (
+                f"Quantity(value={self.magnitude}, unit={self.unit:full}"
+                ", uncertainty=[...])"
+            )
 
         return f"({self.magnitude} ± {self.uncertainty}) {self.unit:full}"
 
@@ -574,7 +653,6 @@ class Quantity(Generic[ValueType, UncType]):
     def __rsub__(self, other: float) -> Quantity[float, float]: ...
 
     def __rsub__(self, other: Any) -> Any:
-        # La lógica es other + (-self). Usamos los dunders que ya están bien tipados.
         return self.__neg__().__add__(other)
 
     # --- Multiplicación Inversa: __rmul__ ---
@@ -933,8 +1011,10 @@ class Quantity(Generic[ValueType, UncType]):
     def dot(
         self, other: Quantity[NDArray[Any], Any]
     ) -> Quantity[float, float]:
-        """Calcula el producto punto entre dos cantidades. El tipo de retorno
-        (escalar o array) depende de las dimensiones de los valores de entrada.
+        """Calcula el producto punto entre dos cantidades.
+
+        El tipo de retorno (escalar o array) depende de las dimensiones de los
+        valores de entrada.
         """
         if not isinstance(other, Quantity):
             return NotImplemented
