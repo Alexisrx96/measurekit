@@ -11,6 +11,9 @@ pytest = "*"
 pytest-cov = "*"
 numpy = "*"
 numba = "*"
+configparser = "*"
+scipy = "*"
+typing-extensions = "*"
 
 [dev-packages]
 isort = "*"

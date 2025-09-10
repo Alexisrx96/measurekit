@@ -1,7 +1,19 @@
+"""setup.py - Setup script for the MeasureKit package.
+
+This script uses setuptools to define the package metadata
+and dependencies for the MeasureKit package.
+
+The package metadata is defined in the setup.cfg file.
+The dependencies are defined in the requirements.txt file.
+
+The package metadata is read from the setup.cfg file and
+the dependencies are installed using the requirements.txt file.
+"""
+
 from setuptools import find_packages, setup
 
 # Read the contents of README file
-with open('README.md', encoding='utf-8') as f:
+with open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
@@ -10,7 +22,7 @@ setup(
     author="Irvin Torres",
     author_email="irvinrx1996@hotmail.com",
     description="A Python package for handling measurement units and "
-               "conversions",
+    "conversions",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/irvinrx1996/measurekit",
@@ -32,6 +44,8 @@ setup(
     python_requires=">=3.6",
     install_requires=[
         "sympy>=1.8",
+        "numpy>=1.20",
+        "scipy>=1.7",
     ],
     keywords="units, measurement, conversion, physics, engineering, science",
     project_urls={
