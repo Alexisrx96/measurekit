@@ -2,7 +2,7 @@
 
 import unittest
 
-from notation.lexer import (
+from measurekit.notation.lexer import (
     TokenType,
     UnitToken,
     generate_tokens,
@@ -77,7 +77,7 @@ class TestTokenGeneration(unittest.TestCase):
         )
 
     def test_generate_tokens_with_superscripts(self):
-        """Test generating tokens with superscript notation."""
+        """Test generating tokens with superscript measurekit.notation."""
         tokens = list(generate_tokens("m²"))
         self.assertEqual(
             tokens,

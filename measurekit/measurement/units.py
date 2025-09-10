@@ -32,19 +32,19 @@ import numpy as np
 import sympy as sp
 from numpy.typing import NDArray
 
-from config import config
-from measurement.conversions import (
+from measurekit.config import config
+from measurekit.measurement.conversions import (
     _UNIT_RECIPES,
     UNIT_DIMENSIONS,
     get_compound_unit_conversion_factor,
 )
-from measurement.dimensions import Dimension
-from notation.lexer import generate_tokens, to_superscript
-from notation.parsers import NotationParser
-from notation.typing import ExponentsDict
+from measurekit.measurement.dimensions import Dimension
+from measurekit.notation.lexer import generate_tokens, to_superscript
+from measurekit.notation.parsers import NotationParser
+from measurekit.notation.typing import ExponentsDict
 
 if TYPE_CHECKING:
-    from measurement.quantity import Quantity, UncType, ValueType
+    from measurekit.measurement.quantity import Quantity, UncType, ValueType
 
 
 def should_auto_simplify() -> bool:
@@ -348,7 +348,9 @@ class CompoundUnit:
         The auto-simplification setting is taken into account when other is a
          Quantity.
         """
-        Quantity_ = importlib.import_module("measurement.quantity").Quantity
+        Quantity_ = importlib.import_module(
+            "measurekit.measurement.quantity"
+        ).Quantity
 
         if isinstance(other, (float, int, np.ndarray)):
             return Quantity_.from_input(value=other, unit=self)
@@ -414,7 +416,7 @@ class CompoundUnit:
 # measurekit/measurement/units.py
 
 # ... (otros imports existentes)
-from measurement.conversions import (
+from measurekit.measurement.conversions import (
     _UNIT_RECIPES,
     UNIT_DIMENSIONS,
     _CONVERSION_FACTORS,

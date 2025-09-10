@@ -10,10 +10,10 @@ import numpy as np
 import sympy as sp
 from numpy.typing import NDArray
 
-from config import config
-from measurement.dimensions import Dimension
-from measurement.uncertainty import Uncertainty
-from measurement.units import CompoundUnit, get_unit
+from measurekit.config import config
+from measurekit.measurement.dimensions import Dimension
+from measurekit.measurement.uncertainty import Uncertainty
+from measurekit.measurement.units import CompoundUnit, get_unit
 
 OtherValueType = TypeVar("OtherValueType", float, int, NDArray[Any])
 ValueType = TypeVar(
@@ -33,7 +33,7 @@ class Quantity(Generic[ValueType, UncType]):
     """Represents a physical quantity with magnitude, unit, and uncertainty.
 
     The `Quantity` class encapsulates a value (scalar or array), its associated
-    unit, and the uncertainty of the measurement. It supports arithmetic
+    unit, and the uncertainty of the measurekit.measurement. It supports arithmetic
     operations, unit conversions, formatting, and propagation of uncertainties
     according to physical rules.
 

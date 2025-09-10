@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from notation.typing import ExponentsDict
+from measurekit.notation.typing import ExponentsDict
 
 
 class ExponentEntityProtocol(Protocol):

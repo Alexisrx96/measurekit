@@ -7,12 +7,12 @@ scenarios.
 import math
 import unittest
 
-from measurement.api import Q_
-from measurement.conversions import (
+from measurekit.measurement.api import Q_
+from measurekit.measurement.conversions import (
     register_unit,
 )
-from measurement.dimensions import Dimension
-from measurement.units import CompoundUnit, get_unit
+from measurekit.measurement.dimensions import Dimension
+from measurekit.measurement.units import CompoundUnit, get_unit
 from tests.base_test_class import BaseTestUnit
 
 

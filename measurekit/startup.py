@@ -4,19 +4,19 @@ import configparser
 import re
 from pathlib import Path
 
-import constants as constants_module
-import dimensions as dimensions_module
-import units as units_module
-from config import config
-from measurement.api import Q_
-from measurement.conversions import register_prefix, register_unit
-from measurement.dimensions import (
+import measurekit.constants as constants_module
+import measurekit.dimensions as dimensions_module
+import measurekit.units as units_module
+from measurekit.config import config
+from measurekit.measurement.api import Q_
+from measurekit.measurement.conversions import register_prefix, register_unit
+from measurekit.measurement.dimensions import (
     _PREFIX_BLOCKLIST,
     Dimension,
     block_prefixes_for_dimension_symbol,
     register_dimension,
 )
-from measurement.units import CompoundUnit, get_unit
+from measurekit.measurement.units import CompoundUnit, get_unit
 
 
 def initialize_system():
@@ -102,7 +102,7 @@ def _load_all_configurations():
         config.constant_definitions.update(parser.items("Constants"))
 
 
-# En tu archivo: startup.py
+# En tu archivo: measurekit.startup.py
 
 
 def _initialize_prefix_system():
@@ -159,7 +159,7 @@ def _initialize_dimension_system():
         dimensions_module,
         loaded_dimensions,
         "Dimension",
-        "from measurement.dimensions import Dimension",
+        "from measurekit.measurement.dimensions import Dimension",
     )
 
 
@@ -177,7 +177,7 @@ def _initialize_unit_system():
     # para tener acceso a sus símbolos, nombres y factores.
     # Asumimos que register_prefix los ha almacenado en un lugar accesible,
     # por ejemplo, en el propio módulo de conversions.
-    from measurement.conversions import get_all_prefixes
+    from measurekit.measurement.conversions import get_all_prefixes
 
     prefixes = (
         get_all_prefixes()
@@ -263,7 +263,7 @@ def _initialize_unit_system():
         units_module,
         loaded_units,
         "CompoundUnit",
-        "from measurement.units import CompoundUnit",
+        "from measurekit.measurement.units import CompoundUnit",
     )
 
 
@@ -295,7 +295,7 @@ def _initialize_constant_system():
         constants_module,
         loaded_constants,
         "Quantity",
-        "from measurement.quantity import Quantity",
+        "from measurekit.measurement.quantity import Quantity",
     )
 
 

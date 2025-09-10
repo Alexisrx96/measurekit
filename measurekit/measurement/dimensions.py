@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, cast
 
-from notation.lexer import generate_tokens, to_superscript
-from notation.parsers import (
+from measurekit.notation.lexer import generate_tokens, to_superscript
+from measurekit.notation.parsers import (
     NotationParser,
 )
-from notation.typing import ExponentsDict
+from measurekit.notation.typing import ExponentsDict
 
 _DIMENSION_NAME_REGISTRY: dict[Dimension | None, str] = {}
 

@@ -38,5 +38,5 @@ class Config:
 
 # --- Instancia global única ---
 # Esta instancia será importada y utilizada por el resto de la aplicación,
-# principalmente por el módulo startup.py para poblarla.
+# principalmente por el módulo measurekit.startup.py para poblarla.
 config = Config()

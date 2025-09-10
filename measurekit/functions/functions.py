@@ -4,10 +4,10 @@ from typing import Callable
 import numpy as np
 import sympy as sp
 
-from measurement.api import Q_
-from measurement.dimensions import Dimension
-from measurement.quantity import Quantity
-from measurement.units import CompoundUnit
+from measurekit.measurement.api import Q_
+from measurekit.measurement.dimensions import Dimension
+from measurekit.measurement.quantity import Quantity
+from measurekit.measurement.units import CompoundUnit
 
 
 @dataclass(frozen=True)

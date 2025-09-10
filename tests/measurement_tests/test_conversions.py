@@ -4,7 +4,7 @@
 
 import unittest
 
-from measurement.conversions import (
+from measurekit.measurement.conversions import (
     UNIT_DIMENSIONS,
     UNIT_REGISTRY,
     UnitDefinition,
@@ -14,8 +14,8 @@ from measurement.conversions import (
     get_conversion_factor,
     register_unit,
 )
-from measurement.dimensions import Dimension
-from measurement.units import CompoundUnit
+from measurekit.measurement.dimensions import Dimension
+from measurekit.measurement.units import CompoundUnit
 from tests.base_test_class import BaseTestUnit
 
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from measurement.dimensions import Dimension
+from measurekit.measurement.dimensions import Dimension
 
 if TYPE_CHECKING:
-    from measurement.units import CompoundUnit
+    from measurekit.measurement.units import CompoundUnit
 
 
 _UNIT_RECIPES: dict[str, CompoundUnit] = {}

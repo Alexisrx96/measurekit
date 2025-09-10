@@ -2,7 +2,11 @@
 
 import unittest
 
-from measurement.dimensions import Dimension, get_dimension, register_dimension
+from measurekit.measurement.dimensions import (
+    Dimension,
+    get_dimension,
+    register_dimension,
+)
 from tests.base_test_class import BaseTestUnit
 
 

@@ -2,9 +2,9 @@
 
 import unittest
 
-from notation.base_entity import BaseExponentEntity
-from notation.lexer import TokenType, UnitToken, generate_tokens
-from notation.parsers import NotationParser
+from measurekit.notation.base_entity import BaseExponentEntity
+from measurekit.notation.lexer import TokenType, UnitToken, generate_tokens
+from measurekit.notation.parsers import NotationParser
 
 
 class TestNotationParser(unittest.TestCase):
@@ -194,5 +194,5 @@ class TestNotationParser(unittest.TestCase):
         self.assertIsNone(exponent)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

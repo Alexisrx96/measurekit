@@ -11,4 +11,4 @@ fuerza = dimensions.FORCE
 """
 
 # Este módulo se llenará con atributos (las dimensiones)
-# de forma programática en el módulo startup.py.
+# de forma programática en el módulo measurekit.startup.py.

@@ -7,13 +7,13 @@ together properly, testing end-to-end functionality.
 import math
 import unittest
 
-from measurement.api import Q_
-from measurement.conversions import (
+from measurekit.measurement.api import Q_
+from measurekit.measurement.conversions import (
     UNIT_REGISTRY,
     register_unit,
 )
-from measurement.dimensions import Dimension
-from measurement.units import CompoundUnit, get_unit
+from measurekit.measurement.dimensions import Dimension
+from measurekit.measurement.units import CompoundUnit, get_unit
 from tests.base_test_class import BaseTestUnit
 
 
@@ -221,7 +221,7 @@ class TestMeasurementSystemIntegration(BaseTestUnit):
         self.assertEqual(force.dimension.exponents, {"M": 1, "L": 1, "T": -2})
 
     def test_scientific_notation_parsing(self):
-        """Test parsing of units with scientific notation."""
+        """Test parsing of units with scientific measurekit.notation."""
         # Test parsing unit expressions
         force_unit = get_unit("kg·m·s⁻²")
         self.assertEqual(force_unit.exponents, {"kg": 1, "m": 1, "s": -2})

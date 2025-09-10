@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from functools import singledispatchmethod
 
-from notation.lexer import to_superscript
-from notation.typing import ExponentsDict
+from measurekit.notation.lexer import to_superscript
+from measurekit.notation.typing import ExponentsDict
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,5 @@ class BaseExponentEntity:
         return "1"
 
     @singledispatchmethod
-    def __rtruediv__(
-        self, other: complex
-    ) -> "BaseExponentEntity":
+    def __rtruediv__(self, other: complex) -> "BaseExponentEntity":
         return type(self)({u: -exp for u, exp in self.exponents.items()})

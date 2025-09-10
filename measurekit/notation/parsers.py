@@ -3,13 +3,13 @@ from typing import (
     Union,
 )
 
-from notation.lexer import (
+from measurekit.notation.lexer import (
     TokenType,
     UnitToken,
     parse_superscript,
 )
-from notation.protocols import ExponentEntityProtocol
-from notation.token_buffer import TokenBuffer
+from measurekit.notation.protocols import ExponentEntityProtocol
+from measurekit.notation.token_buffer import TokenBuffer
 
 
 class NotationParser:

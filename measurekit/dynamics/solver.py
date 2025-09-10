@@ -3,8 +3,8 @@ from typing import Callable
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from measurement.api import Q_
-from measurement.quantity import Quantity
+from measurekit.measurement.api import Q_
+from measurekit.measurement.quantity import Quantity
 
 
 class ODESolution:

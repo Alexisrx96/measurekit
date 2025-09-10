@@ -12,4 +12,4 @@ segundo = units.second
 """
 
 # Este módulo se llenará con atributos (las unidades)
-# de forma programática en el módulo startup.py.
+# de forma programática en el módulo measurekit.startup.py.

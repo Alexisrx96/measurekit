@@ -2,8 +2,8 @@
 
 from typing import overload
 
-from measurement.quantity import Quantity, UncType, ValueType
-from measurement.units import CompoundUnit, get_unit
+from measurekit.measurement.quantity import Quantity, UncType, ValueType
+from measurekit.measurement.units import CompoundUnit, get_unit
 
 
 class _SpecializedQuantityFactory:

@@ -1,8 +1,11 @@
 import unittest
 
-from measurement.conversions import UNIT_DIMENSIONS, UNIT_REGISTRY
-from measurement.dimensions import _DIMENSION_NAME_REGISTRY, Dimension
-from measurement.units import CompoundUnit
+from measurekit.measurement.conversions import UNIT_DIMENSIONS, UNIT_REGISTRY
+from measurekit.measurement.dimensions import (
+    _DIMENSION_NAME_REGISTRY,
+    Dimension,
+)
+from measurekit.measurement.units import CompoundUnit
 
 
 class BaseTestUnit(unittest.TestCase):
