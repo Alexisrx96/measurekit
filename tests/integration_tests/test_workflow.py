@@ -1,21 +1,20 @@
 """Integration tests for complete workflows in MeasureKit.
 
-These tests verify that all components work together correctly in real-world scenarios.
+These tests verify that all components work together correctly in real-world
+scenarios.
 """
 
 import math
 import unittest
 
+from measurement.api import Q_
 from measurement.conversions import (
-    UNIT_DIMENSIONS,
-    UNIT_REGISTRY,
     register_unit,
 )
 from measurement.dimensions import Dimension
-from measurement.quantity import Quantity
 from measurement.units import CompoundUnit, get_unit
+from tests.base_test_class import BaseTestUnit
 
-from tests.base_test_class import BaseTestUnit      
 
 class TestWorkflowIntegration(BaseTestUnit):
     """Tests for complete workflows from unit definition to calculations."""
@@ -45,16 +44,15 @@ class TestWorkflowIntegration(BaseTestUnit):
         CompoundUnit.register_alias({"$": 1, "h": -1}, "$/h", "hourly_rate")
         CompoundUnit.register_alias({"$": 1, "m": -1}, "$/m", "linear_cost")
 
-
     def test_engineering_workflow(self):
         """Test an engineering workflow with material and cost calculations."""
         # Define material properties
-        density_steel = Quantity(7850.0, get_unit("kg/m³"))  # Steel density
+        density_steel = Q_(7850.0, get_unit("kg/m³"))  # Steel density
 
         # Define project parameters
-        pipe_length = Quantity(100.0, get_unit("m"))
-        pipe_diameter = Quantity(0.1, get_unit("m"))  # 10cm diameter
-        pipe_thickness = Quantity(0.005, get_unit("m"))  # 5mm wall thickness
+        pipe_length = Q_(100.0, get_unit("m"))
+        pipe_diameter = Q_(0.1, get_unit("m"))  # 10cm diameter
+        pipe_thickness = Q_(0.005, get_unit("m"))  # 5mm wall thickness
 
         # Calculate pipe geometry
         outer_radius = pipe_diameter / 2
@@ -73,15 +71,15 @@ class TestWorkflowIntegration(BaseTestUnit):
         self.assertEqual(pipe_mass.unit.exponents, {"kg": 1})
 
         # Define material cost
-        steel_cost_per_kg = Quantity(2.5, get_unit("$/kg"))
+        steel_cost_per_kg = Q_(2.5, get_unit("$/kg"))
 
         # Calculate material cost
         material_cost = pipe_mass * steel_cost_per_kg
         self.assertEqual(material_cost.unit.exponents, {"$": 1})
 
         # Define labor parameters
-        installation_rate = Quantity(10.0, get_unit("m/h"))  # Meters per hour
-        labor_cost_rate = Quantity(25.0, get_unit("$/h"))  # Hourly rate
+        installation_rate = Q_(10.0, get_unit("m/h"))  # Meters per hour
+        labor_cost_rate = Q_(25.0, get_unit("$/h"))  # Hourly rate
 
         # Calculate installation time
         installation_time = pipe_length / installation_rate
@@ -102,10 +100,10 @@ class TestWorkflowIntegration(BaseTestUnit):
     def test_physics_workflow(self):
         """Test a physics workflow with motion and energy calculations."""
         # Define initial conditions
-        initial_velocity = Quantity(0.0, get_unit("m/s"))
-        acceleration = Quantity(9.8, get_unit("m/s²"))
-        time_interval = Quantity(5.0, get_unit("s"))
-        mass = Quantity(2.0, get_unit("kg"))
+        initial_velocity = Q_(0.0, get_unit("m/s"))
+        acceleration = Q_(9.8, get_unit("m/s²"))
+        time_interval = Q_(5.0, get_unit("s"))
+        mass = Q_(2.0, get_unit("kg"))
 
         # Calculate final velocity using v = v₀ + at
         final_velocity = initial_velocity + acceleration * time_interval
@@ -129,7 +127,9 @@ class TestWorkflowIntegration(BaseTestUnit):
         self.assertEqual(work_done.unit.exponents, {"kg": 1, "m": 2, "s": -2})
 
         # Verify that work equals change in kinetic energy
-        self.assertLess(abs(work_done.value - kinetic_energy.value), 1e-10)
+        self.assertLess(
+            abs(work_done.magnitude - kinetic_energy.magnitude), 1e-10
+        )
 
         # Calculate power as P = W/t
         power = work_done / time_interval
@@ -138,17 +138,17 @@ class TestWorkflowIntegration(BaseTestUnit):
     def test_unit_error_handling(self):
         """Test error handling in operations with incompatible units."""
         # Create quantities with different dimensions
-        length = Quantity(10.0, get_unit("m"))
-        time = Quantity(5.0, get_unit("s"))
-        mass = Quantity(2.0, get_unit("kg"))
-        money = Quantity(100.0, get_unit("$"))
+        length = Q_(10.0, get_unit("m"))
+        time = Q_(5.0, get_unit("s"))
+        mass = Q_(2.0, get_unit("kg"))
+        money = Q_(100.0, get_unit("$"))
 
         # Test addition/subtraction with incompatible units
         with self.assertRaises(ValueError):
-            length + time
+            length + time  # type: ignore
 
         with self.assertRaises(ValueError):
-            mass - money
+            mass - money  # type: ignore
 
         # Test conversion between incompatible units
         with self.assertRaises(ValueError):
@@ -159,15 +159,17 @@ class TestWorkflowIntegration(BaseTestUnit):
 
         # Test comparing quantities with different dimensions
         with self.assertRaises(ValueError):
-            # This expression will cause a ValueError because you can't compare different dimensions
+            # This expression will cause a ValueError because you can't
+            # compare different dimensions
             self.assertTrue(length < time)
 
         with self.assertRaises(ValueError):
-            # This expression will cause a ValueError because you can't compare different dimensions
+            # This expression will cause a ValueError because you can't
+            # compare different dimensions
             self.assertTrue(mass == money)
 
         # Verify that compatible operations work
-        length_ft = Quantity(50.0, get_unit("ft"))
+        length_ft = Q_(50.0, get_unit("ft"))
         sum_length = length + length_ft.to("m")
         self.assertEqual(sum_length.unit.exponents, {"m": 1})
 

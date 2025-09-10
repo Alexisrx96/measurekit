@@ -1,4 +1,5 @@
 """Test suite for the lexer module."""
+
 import unittest
 
 from notation.lexer import (
@@ -38,11 +39,11 @@ class TestSuperscriptSubcript(unittest.TestCase):
         self.assertEqual(parse_superscript("¹²³"), 123)
         self.assertEqual(parse_superscript("⁻⁴⁵"), -45)
         self.assertEqual(parse_superscript("⁰"), 0)
-        
+
         # Test parsing decimal superscripts
         self.assertEqual(parse_superscript("⁰⋅⁵"), 0.5)
         self.assertEqual(parse_superscript("¹⋅²³"), 1.23)
-        
+
         # Invalid superscript should return 0
         self.assertEqual(parse_superscript("abc"), 0)
         self.assertEqual(parse_superscript(""), 0)
@@ -55,137 +56,173 @@ class TestTokenGeneration(unittest.TestCase):
         """Test generating tokens for basic unit expressions."""
         # Test a simple unit
         tokens = list(generate_tokens("m"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         # Test multiple units
         tokens = list(generate_tokens("m kg s"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.UNIT, "kg"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.EOF, ""),
-        ])
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.UNIT, "kg"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
 
     def test_generate_tokens_with_superscripts(self):
         """Test generating tokens with superscript notation."""
         tokens = list(generate_tokens("m²"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.SUP, "²"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.SUP, "²"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         tokens = list(generate_tokens("kg⁻¹"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "kg"),
-            UnitToken(TokenType.SUP, "⁻¹"),
-            UnitToken(TokenType.EOF, ""),
-        ])
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "kg"),
+                UnitToken(TokenType.SUP, "⁻¹"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
 
     def test_generate_tokens_with_operations(self):
         """Test generating tokens with mathematical operations."""
         # Test multiplication
         tokens = list(generate_tokens("m·s"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.MUL, "·"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.MUL, "·"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         # Test alternative multiplication
         tokens = list(generate_tokens("m*s"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.MUL, "*"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.MUL, "*"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         # Test division
         tokens = list(generate_tokens("m/s"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.DIV, "/"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.DIV, "/"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         # Test exponent notation
         tokens = list(generate_tokens("m^2"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.EXP, "^"),
-            UnitToken(TokenType.NUMBER, "2"),
-            UnitToken(TokenType.EOF, ""),
-        ])
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.EXP, "^"),
+                UnitToken(TokenType.NUMBER, "2"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
 
     def test_generate_tokens_with_parentheses(self):
         """Test generating tokens with parentheses grouping."""
         tokens = list(generate_tokens("(m/s)"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.LPAREN, "("),
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.DIV, "/"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.RPAREN, ")"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.LPAREN, "("),
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.DIV, "/"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.RPAREN, ")"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         # With superscript outside parentheses
         tokens = list(generate_tokens("(m/s)²"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.LPAREN, "("),
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.DIV, "/"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.RPAREN, ")"),
-            UnitToken(TokenType.SUP, "²"),
-            UnitToken(TokenType.EOF, ""),
-        ])
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.LPAREN, "("),
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.DIV, "/"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.RPAREN, ")"),
+                UnitToken(TokenType.SUP, "²"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
 
     def test_generate_tokens_complex_expressions(self):
         """Test generating tokens for complex unit expressions."""
         tokens = list(generate_tokens("kg·m²·s⁻²"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "kg"),
-            UnitToken(TokenType.MUL, "·"),
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.SUP, "²"),
-            UnitToken(TokenType.MUL, "·"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.SUP, "⁻²"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "kg"),
+                UnitToken(TokenType.MUL, "·"),
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.SUP, "²"),
+                UnitToken(TokenType.MUL, "·"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.SUP, "⁻²"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         # With mixed notation
         tokens = list(generate_tokens("kg*m^2/s^2"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "kg"),
-            UnitToken(TokenType.MUL, "*"),
-            UnitToken(TokenType.UNIT, "m"),
-            UnitToken(TokenType.EXP, "^"),
-            UnitToken(TokenType.NUMBER, "2"),
-            UnitToken(TokenType.DIV, "/"),
-            UnitToken(TokenType.UNIT, "s"),
-            UnitToken(TokenType.EXP, "^"),
-            UnitToken(TokenType.NUMBER, "2"),
-            UnitToken(TokenType.EOF, ""),
-        ])
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "kg"),
+                UnitToken(TokenType.MUL, "*"),
+                UnitToken(TokenType.UNIT, "m"),
+                UnitToken(TokenType.EXP, "^"),
+                UnitToken(TokenType.NUMBER, "2"),
+                UnitToken(TokenType.DIV, "/"),
+                UnitToken(TokenType.UNIT, "s"),
+                UnitToken(TokenType.EXP, "^"),
+                UnitToken(TokenType.NUMBER, "2"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
 
     def test_error_handling(self):
         """Test error handling for invalid characters."""
         with self.assertRaises(ValueError) as cm:
             list(generate_tokens("m@s"))
         self.assertIn("Unexpected character '@'", str(cm.exception))
-        
+
         with self.assertRaises(ValueError) as cm:
             list(generate_tokens("kg#m"))
         self.assertIn("Unexpected character '#'", str(cm.exception))
-        
+
         with self.assertRaises(ValueError) as cm:
             list(generate_tokens("?"))
         self.assertIn("Unexpected character '?'", str(cm.exception))
@@ -194,17 +231,23 @@ class TestTokenGeneration(unittest.TestCase):
         """Test handling of special characters in unit names."""
         # Test units with special characters like Ω (Ohm) and µ (micro)
         tokens = list(generate_tokens("Ω"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "Ω"),
-            UnitToken(TokenType.EOF, ""),
-        ])
-        
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "Ω"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
+
         tokens = list(generate_tokens("µm"))
-        self.assertEqual(tokens, [
-            UnitToken(TokenType.UNIT, "µm"),
-            UnitToken(TokenType.EOF, ""),
-        ])
+        self.assertEqual(
+            tokens,
+            [
+                UnitToken(TokenType.UNIT, "µm"),
+                UnitToken(TokenType.EOF, ""),
+            ],
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
