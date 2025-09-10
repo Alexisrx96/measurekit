@@ -39,8 +39,7 @@ def initialize_system():
 def _get_config_paths() -> list[Path]:
     """Construye una lista ordenada de rutas de archivos de configuración para cargar."""
     paths_to_load = []
-    # (El resto de la función no necesita cambios, está perfecta)
-    lib_root_dir = Path(__file__).resolve().parent
+    lib_root_dir = Path(__file__).resolve().parent.parent
     lib_config_dir = lib_root_dir / "config"
     user_config_dir = Path.home() / ".config" / "measurekit"
 
