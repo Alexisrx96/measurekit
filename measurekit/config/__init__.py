@@ -35,7 +35,4 @@ class Config:
         self.parser = configparser.ConfigParser()
 
 
-# --- Instancia global única ---
-# Esta instancia será importada y utilizada por el resto de la aplicación,
-# principalmente por el módulo measurekit.startup.py para poblarla.
 config = Config()
