@@ -60,6 +60,7 @@ omit = [
     "**/__init__.py",
     "tests/*",
     "manual_sandbox/*",
+    "measurekit/*.py"    
 ]
 
 [tool.coverage.report]
