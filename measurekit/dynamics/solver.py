@@ -1,3 +1,12 @@
+# measurekit/dynamics/solver.py
+"""This module provides a unit-aware solver for ordinary differential equation (ODE) initial value problems.
+
+It wraps the powerful `solve_ivp` function from the SciPy library, allowing
+users to define their differential equations using `measurekit.Quantity`
+objects. This ensures that all calculations are dimensionally correct,
+preventing common errors in physics and engineering simulations.
+"""
+
 from typing import Callable
 
 import numpy as np
@@ -8,16 +17,18 @@ from measurekit.measurement.quantity import Quantity
 
 
 class ODESolution:
-    """Clase para almacenar y presentar la solución de una EDO.
+    """A class to store and present the solution of an ODE.
 
-    Permite acceder a los resultados de forma sencilla.
+    Allows for easy access to the results.
     """
 
     def __init__(self, t: Quantity, y: list[Quantity]):
+        """Initializes the ODESolution with time points and state values."""
         self.t = t
         self.y = y
 
     def __repr__(self):
+        """Provides a concise string representation of the solution."""
         return (
             f"ODESolution(t=[{self.t[0]:.2f}...{self.t[-1]:.2f}],"
             f" num_states={len(self.y)})"
@@ -31,36 +42,34 @@ def solve_unit_aware_ivp(
     t_eval: np.ndarray | None = None,
     **kwargs,
 ) -> ODESolution:
-    """Resuelve un problema de valor inicial manejando unidades de forma
-    consciente y eficiente.
-    """
-    # --- 1. Desempaquetado de Unidades (UNA SOLA VEZ) ---
-    # ¿Por qué? Extraemos toda la información de unidades ANTES de entrar
-    # al bucle del solucionador. Esto es la clave de la eficiencia.
+    """Solves an initial value problem, handling units consciously and efficiently."""
+    # --- 1. Unit Unpacking (ONCE) ---
+    # Why? We extract all unit information BEFORE entering the solver's
+    # loop. This is the key to efficiency.
     t_unit = t_span[0].unit
     y0_values = np.array([q.magnitude for q in y0])
     y0_units = [q.unit for q in y0]
 
-    # Calculamos las unidades esperadas para las derivadas de antemano.
+    # We calculate the expected units for the derivatives beforehand.
     dydt_units = [state_unit / t_unit for state_unit in y0_units]
 
     t_span_values = [t_span[0].magnitude, t_span[1].to(t_unit).magnitude]
 
-    # --- 2. Creación del Wrapper de la Función (Enfoque Eficiente) ---
-    # ¿Por qué? Este wrapper ahora trabaja exclusivamente con arrays de NumPy.
-    # El truco es que "cierra" (hace un closure) sobre las variables de
-    # unidades (t_unit, y0_units, dydt_units) para poder re-empaquetar y
-    # desempaquetar en los límites de la llamada.
+    # --- 2. Function Wrapper Creation (Efficient Approach) ---
+    # Why? This wrapper now works exclusively with NumPy arrays.
+    # The trick is that it "closes" over the unit variables
+    # (t_unit, y0_units, dydt_units) to be able to repack and
+    # unpack at the call boundaries.
     def fun_wrapper(t_val: float, y_val: np.ndarray) -> np.ndarray:
-        # a. Re-empaquetado en Quantities para la DX del usuario
+        # a. Repackaging into Quantities for the user's DX
         t_q = Q_(t_val, t_unit)
         y_q = [Q_(val, unit) for val, unit in zip(y_val, y0_units)]
 
-        # b. Llamada a la función original del usuario
+        # b. Calling the user's original function
         dy_dt_q = fun(t_q, y_q)
 
-        # c. Desempaquetado de las derivadas a un array numérico
-        # Se realizan las conversiones necesarias para asegurar la consistencia.
+        # c. Unpacking the derivatives into a numeric array
+        # Necessary conversions are performed to ensure consistency.
         dy_dt_values = np.array(
             [
                 res.to(expected_unit).magnitude
@@ -70,16 +79,16 @@ def solve_unit_aware_ivp(
 
         return dy_dt_values
 
-    # --- 3. Llamada al Solucionador de SciPy ---
-    # SciPy solo ve números, lo que le permite correr a máxima velocidad.
+    # --- 3. Calling the SciPy Solver ---
+    # SciPy only sees numbers, which allows it to run at maximum speed.
     sol = solve_ivp(
         fun_wrapper, t_span_values, y0_values, t_eval=t_eval, **kwargs
     )
 
-    # --- 4. Re-empaquetado de la Solución Final (UNA SOLA VEZ) ---
-    # ¿Por qué? Una vez que SciPy ha terminado su trabajo, tomamos los arrays
-    # numéricos resultantes y los convertimos de vuelta en objetos Quantity
-    # para el usuario.
+    # --- 4. Repackaging the Final Solution (ONCE) ---
+    # Why? Once SciPy has finished its work, we take the resulting
+    # numeric arrays and convert them back into Quantity objects
+    # for the user.
     solution_t = Q_(sol.t, t_unit)
     solution_y = [
         Q_(state_values, y0_units[i]) for i, state_values in enumerate(sol.y)
