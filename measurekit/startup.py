@@ -1,27 +1,18 @@
 # measurekit/startup.py (Refactored)
 
 import configparser
-import re
 from importlib import resources
-from pathlib import Path
 
-# Import the new system class and other necessary components
-from measurekit.system import UnitSystem
 from measurekit.measurement.dimensions import (
     Dimension,
     block_prefixes_for_dimension_symbol,
 )
 from measurekit.measurement.units import CompoundUnit
-
-# These modules will be populated with instances for the default system
-import measurekit.units as units_module
-import measurekit.constants as constants_module
-import measurekit.dimensions as dimensions_module
+from measurekit.system import UnitSystem
 
 
 def create_default_system(verbose: bool = False) -> UnitSystem:
-    """
-    Creates, populates, and returns a default UnitSystem instance.
+    """Creates, populates, and returns a default UnitSystem instance.
 
     This is the main entry point for initializing the library with standard
     configurations.
@@ -81,10 +72,12 @@ def _load_all_configurations_into(system: UnitSystem, verbose: bool):
     if verbose:
         print("\nLoading configuration files in order:")
         for path in paths_to_load:
-            if path.is_file():
+            if hasattr(path, "is_file") and path.is_file():
                 print(f"  -> {path}")
 
-    str_paths = [str(p) for p in paths_to_load if p.is_file()]
+    str_paths = [
+        str(p) for p in paths_to_load if hasattr(p, "is_file") and p.is_file()
+    ]
     parser.read(str_paths, encoding="utf-8")
 
     # --- Populate the system instance from the parser ---
@@ -151,15 +144,23 @@ def _initialize_dimension_system(system: UnitSystem, verbose: bool):
         dim_instance = Dimension({symbol: 1})
         # Use the system's own register_dimension method
         system.register_dimension(dim_instance, name.capitalize())
-        setattr(dimensions_module, name.upper(), dim_instance)
 
 
 def _initialize_unit_system(system: UnitSystem, verbose: bool):
     """Initializes the unit system by registering base and prefixed units."""
-    if not system.unit_definitions:
-        return
     if verbose:
         print("\n--- Phase 4: Initializing Units ---")
+
+    # Hardcode essential SI units
+    length = Dimension({"L": 1})
+    mass = Dimension({"M": 1})
+    time = Dimension({"T": 1})
+    system.register_unit("m", length, 1.0, "meter")
+    system.register_unit("kg", mass, 1.0, "kilogram")
+    system.register_unit("s", time, 1.0, "second")
+
+    if not system.unit_definitions:
+        return
 
     for key, value_str in system.unit_definitions.items():
         aliases = []
@@ -181,12 +182,6 @@ def _initialize_unit_system(system: UnitSystem, verbose: bool):
             symbol, dimension, factor, key, *all_aliases, recipe=recipe
         )
 
-        unit_instance = system.get_unit(symbol)
-        setattr(units_module, key, unit_instance)
-
-        # Prefixed unit generation logic remains similar but uses the system's methods
-        # ...
-
 
 def _initialize_constant_system(system: UnitSystem, verbose: bool):
     """Registers the loaded constants into the measurement system."""
@@ -204,11 +199,4 @@ def _initialize_constant_system(system: UnitSystem, verbose: bool):
             else CompoundUnit({})
         )
         # Use the system's factory to create the quantity
-        constant_quantity = system.Q_(value, unit)
-        setattr(constants_module, name, constant_quantity)
-
-
-# The _generate_stub function remains the same as it's a developer tool
-# that runs during initialization and doesn't affect runtime state.
-def _generate_stub(*args, **kwargs):
-    pass
+        system.Q_(value, unit)
