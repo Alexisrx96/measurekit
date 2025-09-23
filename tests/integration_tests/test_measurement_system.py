@@ -9,7 +9,6 @@ UnitSystem instance.
 import math
 import unittest
 
-from measurekit.measurement.dimensions import Dimension
 from measurekit.measurement.units import CompoundUnit
 from tests.base_test_class import BaseTestUnit
 
@@ -20,24 +19,7 @@ class TestMeasurementSystemIntegration(BaseTestUnit):
     def setUp(self):
         """Set up a fully populated, isolated UnitSystem for each test."""
         super().setUp()
-
-        # Create base dimensions
-        length = Dimension({"L": 1})
-        time = Dimension({"T": 1})
-        mass = Dimension({"M": 1})
-
-        # Derived dimensions
-        force = mass * length / (time**2)
-        energy = force * length
-
-        # Register all units into our isolated system
-        self.system.register_unit("m", length, 1.0, "meter")
-        self.system.register_unit("cm", length, 0.01, "centimeter")
-        self.system.register_unit("km", length, 1000.0, "kilometer")
-        self.system.register_unit("s", time, 1.0, "second")
-        self.system.register_unit("kg", mass, 1.0, "kilogram")
-        self.system.register_unit("N", force, 1.0, "newton")
-        self.system.register_unit("J", energy, 1.0, "joule")
+        self.add_common_units()
 
         # Register aliases for compound units
         CompoundUnit.register_alias({"m": 1, "s": -1}, "velocity")
