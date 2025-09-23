@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import measurekit.measurement.quantity as quantity_module
 from measurekit.measurement.conversions import UnitDefinition
