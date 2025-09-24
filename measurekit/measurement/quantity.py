@@ -1,11 +1,3 @@
-"""Provides the core Quantity class for the MeasureKit library.
-
-This module defines the Quantity class, which is the fundamental object for
-representing physical quantities. It encapsulates a numerical value
-(magnitude), a unit of measurement, and an associated uncertainty, enabling
-dimensionally-aware arithmetic, unit conversions, and uncertainty propagation.
-"""
-
 from __future__ import annotations
 
 import operator
@@ -16,15 +8,18 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Self,
     TypeVar,
     cast,
+    overload,
 )
 
 import numpy as np
 import sympy as sp
 from numpy.typing import NDArray
 
+from measurekit.exceptions import IncompatibleUnitsError
 from measurekit.measurement.dimensions import Dimension
 from measurekit.measurement.uncertainty import Uncertainty
 from measurekit.measurement.units import CompoundUnit
@@ -32,10 +27,24 @@ from measurekit.measurement.units import CompoundUnit
 if TYPE_CHECKING:
     from measurekit.system import UnitSystem
 
-# Define generic types for values and uncertainties
+# --- Generic Type Variables ---
+
+# Broad types for general use
 ValueType = TypeVar("ValueType", float, int, NDArray[Any])
 UncType = TypeVar("UncType", float, NDArray[Any])
 Numeric = int | float | NDArray[Any]
+
+# More specific types for precise overloading of arithmetic operations
+ScalarValue = TypeVar("ScalarValue", int, float)
+ArrayValue = TypeVar("ArrayValue", bound=NDArray[Any])
+ScalarUnc = TypeVar("ScalarUnc", bound=float)
+ArrayUnc = TypeVar("ArrayUnc", bound=NDArray[Any])
+
+# Generic types for the 'other' operand in binary operations
+ScalarValueSelf = TypeVar("ScalarValueSelf", int, float)
+ScalarValueOther = TypeVar("ScalarValueOther", int, float)
+OtherValueType = TypeVar("OtherValueType", float, int, NDArray[Any])
+OtherUncType = TypeVar("OtherUncType", float, NDArray[Any])
 
 
 @dataclass(frozen=True)
@@ -75,8 +84,38 @@ class Quantity(Generic[ValueType, UncType]):
 
     _cache: ClassVar[dict[CompoundUnit, type]] = {}
 
+    @overload
     @classmethod
     def from_input(
+        cls,
+        value: ScalarValue,
+        unit: CompoundUnit,
+        system: UnitSystem,
+        uncertainty: float = 0.0,
+    ) -> Quantity[ScalarValue, float]: ...
+
+    @overload
+    @classmethod
+    def from_input(
+        cls,
+        value: ArrayValue,
+        unit: CompoundUnit,
+        system: UnitSystem,
+        uncertainty: ArrayUnc | float = 0.0,
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    @classmethod
+    def from_input(
+        cls,
+        value: Any,
+        unit: CompoundUnit,
+        system: UnitSystem,
+        uncertainty: Any = 0.0,
+    ) -> Quantity[Any, Any]: ...
+
+    @classmethod
+    def from_input(  # type: ignore
         cls,
         value: Any,
         unit: CompoundUnit,
@@ -119,9 +158,6 @@ class Quantity(Generic[ValueType, UncType]):
             system=system,
         )
 
-    # ... The rest of the file remains the same as the complete version
-    # you had before the error. All logic for arithmetic, comparisons,
-    # and representation will now work correctly.
     @property
     def uncertainty(self) -> UncType:
         """The uncertainty of the quantity as a standard deviation.
@@ -147,7 +183,7 @@ class Quantity(Generic[ValueType, UncType]):
             target_unit = self.system.get_unit(target_unit)
 
         if self.dimension != target_unit.dimension(self.system):
-            raise ValueError("Cannot convert between incompatible dimensions.")
+            raise IncompatibleUnitsError(self.unit, target_unit)
 
         conversion_factor = self.unit.conversion_factor_to(
             self.system, target_unit
@@ -161,19 +197,37 @@ class Quantity(Generic[ValueType, UncType]):
 
     # --- Full Arithmetic Implementations ---
 
+    @overload
+    def __add__(  # Scalar + Scalar -> Scalar (Corrected)
+        self: Quantity[ScalarValueSelf, UncType],
+        other: Quantity[ScalarValueOther, OtherUncType],
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __add__(  # Array + Array -> Array
+        self: Quantity[ArrayValue, UncType],
+        other: Quantity[ArrayValue, OtherUncType],
+    ) -> Quantity[ArrayValue, NDArray[Any]]: ...
+
+    @overload
+    def __add__(  # Scalar + Array -> Array
+        self: Quantity[ScalarValue, UncType],
+        other: Quantity[ArrayValue, OtherUncType],
+    ) -> Quantity[ArrayValue, NDArray[Any]]: ...
+
+    @overload
+    def __add__(  # Array + Scalar -> Array
+        self: Quantity[ArrayValue, UncType],
+        other: Quantity[ScalarValue, OtherUncType],
+    ) -> Quantity[ArrayValue, NDArray[Any]]: ...
+
     def __add__(self, other: Any) -> Quantity:
-        """Add two quantities.
-
-        Args:
-        other (Any): The quantity to add.
-
-        Returns:
-        Quantity: The result of the addition.
-        """
+        """Add two quantities."""
         if not isinstance(other, Quantity):
             return NotImplemented
+        # ... (rest of the method is unchanged)
         if self.dimension != other.dimension:
-            raise ValueError("Cannot add quantities with different dimensions")
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         new_magnitude = self.magnitude + other_converted.magnitude
         new_uncertainty_obj = self.uncertainty_obj.add(
@@ -186,21 +240,37 @@ class Quantity(Generic[ValueType, UncType]):
             uncertainty=new_uncertainty_obj,
         )
 
+    @overload
+    def __sub__(  # Scalar - Scalar -> Scalar (Corrected)
+        self: Quantity[ScalarValueSelf, UncType],
+        other: Quantity[ScalarValueOther, OtherUncType],
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __sub__(  # Array - Array -> Array
+        self: Quantity[ArrayValue, UncType],
+        other: Quantity[ArrayValue, OtherUncType],
+    ) -> Quantity[ArrayValue, NDArray[Any]]: ...
+
+    @overload
+    def __sub__(  # Scalar - Array -> Array
+        self: Quantity[ScalarValue, UncType],
+        other: Quantity[ArrayValue, OtherUncType],
+    ) -> Quantity[ArrayValue, NDArray[Any]]: ...
+
+    @overload
+    def __sub__(  # Array - Scalar -> Array
+        self: Quantity[ArrayValue, UncType],
+        other: Quantity[ScalarValue, OtherUncType],
+    ) -> Quantity[ArrayValue, NDArray[Any]]: ...
+
     def __sub__(self, other: Any) -> Quantity:
-        """Subtract two quantities.
-
-        Args:
-        other (Any): The quantity to subtract.
-
-        Returns:
-        Quantity: The result of the subtraction.
-        """
+        """Subtract two quantities."""
         if not isinstance(other, Quantity):
             return NotImplemented
+        # ... (rest of the method is unchanged)
         if self.dimension != other.dimension:
-            raise ValueError(
-                "Cannot subtract quantities with different dimensions"
-            )
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         new_magnitude = self.magnitude - other_converted.magnitude
         new_uncertainty_obj = self.uncertainty_obj.add(
@@ -213,15 +283,50 @@ class Quantity(Generic[ValueType, UncType]):
             uncertainty=new_uncertainty_obj,
         )
 
+    @overload
+    def __mul__(
+        self: Quantity[ScalarValue, ScalarUnc], other: ScalarValue
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ArrayValue, ArrayUnc], other: ScalarValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ScalarValue, ScalarUnc], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ArrayValue, ArrayUnc], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ScalarValue, ScalarUnc],
+        other: Quantity[ScalarValue, ScalarUnc],
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ArrayValue, ArrayUnc], other: Quantity[Any, Any]
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ScalarValue, ScalarUnc],
+        other: Quantity[ArrayValue, ArrayUnc],
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __mul__(
+        self: Quantity[ValueType, UncType], other: CompoundUnit
+    ) -> Quantity[ValueType, UncType]: ...
+
     def __mul__(self, other: Any) -> Quantity:
-        """Multiply two quantities.
-
-        Args:
-        other (Any): The quantity to multiply by.
-
-        Returns:
-        Quantity: The result of the multiplication.
-        """
+        """Multiply two quantities."""
         if isinstance(other, (int, float, np.ndarray)):
             new_magnitude = self.magnitude * other
             new_uncertainty = self.uncertainty_obj.std_dev * np.abs(other)
@@ -248,7 +353,6 @@ class Quantity(Generic[ValueType, UncType]):
                 uncertainty=new_uncertainty_obj,
             )
 
-        # Add support for multiplying a Quantity by a CompoundUnit
         if isinstance(other, CompoundUnit):
             new_unit = self.unit * other
             return Quantity.from_input(
@@ -260,15 +364,40 @@ class Quantity(Generic[ValueType, UncType]):
 
         return NotImplemented
 
+    @overload
+    def __truediv__(
+        self: Quantity[Any, Any], other: ScalarValue
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __truediv__(
+        self: Quantity[Any, Any], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __truediv__(
+        self: Quantity[ScalarValue, ScalarUnc],
+        other: Quantity[ScalarValue, ScalarUnc],
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __truediv__(
+        self: Quantity[ArrayValue, ArrayUnc], other: Quantity[Any, Any]
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __truediv__(
+        self: Quantity[ScalarValue, ScalarUnc],
+        other: Quantity[ArrayValue, ArrayUnc],
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __truediv__(
+        self: Quantity[ValueType, UncType], other: CompoundUnit
+    ) -> Quantity[ValueType, UncType]: ...
+
     def __truediv__(self, other: Any) -> Quantity:
-        """Divide two quantities.
-
-        Args:
-        other (Any): The quantity to divide by.
-
-        Returns:
-        Quantity: The result of the division.
-        """
+        """Divide two quantities."""
         if isinstance(other, (int, float, np.ndarray)):
             new_magnitude = self.magnitude / other
             new_uncertainty = self.uncertainty_obj.std_dev / np.abs(other)
@@ -295,7 +424,6 @@ class Quantity(Generic[ValueType, UncType]):
                 uncertainty=new_uncertainty_obj,
             )
 
-        # Add support for dividing a Quantity by a CompoundUnit
         if isinstance(other, CompoundUnit):
             new_unit = self.unit / other
             return Quantity.from_input(
@@ -307,15 +435,18 @@ class Quantity(Generic[ValueType, UncType]):
 
         return NotImplemented
 
+    @overload
+    def __pow__(
+        self: Quantity[ScalarValue, ScalarUnc], exponent: float
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __pow__(
+        self: Quantity[ArrayValue, ArrayUnc], exponent: float
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
     def __pow__(self, exponent: float) -> Quantity:
-        """Raise the quantity to a power.
-
-        Args:
-        exponent (float): The exponent to raise the quantity to.
-
-        Returns:
-        Quantity: The result of the exponentiation.
-        """
+        """Raise the quantity to a power."""
         new_value = self.magnitude**exponent
         new_unit = self.unit**exponent
         calc_value = np.asarray(self.magnitude, dtype=float)
@@ -329,28 +460,53 @@ class Quantity(Generic[ValueType, UncType]):
     # --- Reverse and Other Dunder Methods ---
 
     __radd__ = __add__
-    __rmul__ = __mul__
 
-    def __rsub__(self, other: Any) -> Quantity:
-        """Reverse subtraction.
+    @overload
+    def __rmul__(
+        self: Quantity[ScalarValue, ScalarUnc], other: ScalarValue
+    ) -> Quantity[float, float]: ...
 
-        Args:
-        other (Any): The quantity to be subtracted from.
+    @overload
+    def __rmul__(
+        self: Quantity[ArrayValue, ArrayUnc], other: ScalarValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
 
-        Returns:
-        Quantity: The result of the reverse subtraction.
-        """
-        return self.__neg__().__add__(other)
+    @overload
+    def __rmul__(
+        self: Quantity[ScalarValue, ScalarUnc], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __rmul__(
+        self: Quantity[ArrayValue, ArrayUnc], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    def __rmul__(self, other: Any) -> Quantity:
+        """Reverse multiplication."""
+        return self * other
+
+    @overload
+    def __rtruediv__(
+        self: Quantity[ScalarValue, ScalarUnc], other: ScalarValue
+    ) -> Quantity[float, float]: ...
+
+    @overload
+    def __rtruediv__(
+        self: Quantity[ArrayValue, ArrayUnc], other: ScalarValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __rtruediv__(
+        self: Quantity[ScalarValue, ScalarUnc], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
+
+    @overload
+    def __rtruediv__(
+        self: Quantity[ArrayValue, ArrayUnc], other: ArrayValue
+    ) -> Quantity[ArrayValue, ArrayUnc]: ...
 
     def __rtruediv__(self, other: Any) -> Quantity:
-        """Reverse division.
-
-        Args:
-        other (Any): The quantity to be divided.
-
-        Returns:
-        Quantity: The result of the reverse division.
-        """
+        """Reverse division."""
         if np.any(np.asarray(self.magnitude) == 0):
             raise ZeroDivisionError(
                 "Division by a Quantity with zero magnitude."
@@ -368,13 +524,21 @@ class Quantity(Generic[ValueType, UncType]):
             uncertainty=new_uncertainty_obj,
         )
 
+    # ... (the rest of the class remains the same) ...
     def __neg__(self) -> Self:
-        """Negate the quantity.
-
-        Returns:
-        Self: The negated quantity.
-        """
-        return cast(Self, -1 * self)
+        """Negate the quantity."""
+        # This implementation is more explicit and type-checker friendly.
+        # It directly creates a new Quantity with a negated magnitude,
+        # preserving the unit and uncertainty.
+        return cast(
+            Self,
+            Quantity.from_input(
+                -self.magnitude,
+                self.unit,
+                self.system,
+                uncertainty=self.uncertainty_obj,
+            ),
+        )
 
     def __pos__(self) -> Self:
         """Return the quantity as is.
@@ -382,7 +546,7 @@ class Quantity(Generic[ValueType, UncType]):
         Returns:
         Self: The quantity.
         """
-        return cast(Self, +1 * self)
+        return self
 
     def __abs__(self) -> Self:
         """Return the absolute value of the quantity.
@@ -410,14 +574,24 @@ class Quantity(Generic[ValueType, UncType]):
 
     # --- NumPy Integration ---
 
-    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+    def __array_ufunc__(
+        self,
+        ufunc: np.ufunc,
+        method: Literal[
+            "__call__", "reduce", "reduceat", "accumulate", "outer", "at"
+        ],
+        *inputs: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Handle NumPy universal functions."""
+        # --- Find the first Quantity input to use as a template ---
         q_input = next(
             (inp for inp in inputs if isinstance(inp, Quantity)), None
         )
         if q_input is None:
             return NotImplemented
 
+        # --- Handle different ufunc methods ---
         if method == "reduce":
             result_magnitude = ufunc.reduce(q_input.magnitude, **kwargs)
             return Quantity.from_input(
@@ -425,13 +599,14 @@ class Quantity(Generic[ValueType, UncType]):
             )
 
         if method == "__call__":
+            # Extract magnitudes from all inputs for the calculation
             numeric_inputs = [
                 inp.magnitude if isinstance(inp, Quantity) else inp
                 for inp in inputs
             ]
             result_magnitude = ufunc(*numeric_inputs, **kwargs)
 
-            # Special cases for units and uncertainty
+            # --- Handle units and uncertainty for specific ufuncs ---
             if ufunc == np.absolute:
                 return Quantity.from_input(
                     result_magnitude,
@@ -442,6 +617,7 @@ class Quantity(Generic[ValueType, UncType]):
 
             if ufunc == np.sqrt:
                 result_unit = q_input.unit**0.5
+                # Avoid division by zero for uncertainty calculation
                 rel_unc = (
                     (q_input.uncertainty / q_input.magnitude)
                     if np.all(q_input.magnitude != 0)
@@ -460,21 +636,21 @@ class Quantity(Generic[ValueType, UncType]):
                     result_magnitude, q_input.unit**2, q_input.system
                 )
 
-            elif ufunc in {np.sin, np.cos, np.tan}:
-                # The dimension check now correctly uses the system
+            # Handle trigonometric functions which require dimensionless inputs
+            if ufunc in {np.sin, np.cos, np.tan}:
                 if not q_input.unit.dimension(
                     q_input.system
                 ).is_dimensionless():
-                    raise ValueError(
-                        f"{ufunc.__name__} requires a dimensionless quantity."
+                    raise IncompatibleUnitsError(
+                        q_input.unit, CompoundUnit({})
                     )
 
-                result_unit = CompoundUnit({})
+                result_unit = CompoundUnit({})  # Result is dimensionless
                 if ufunc == np.sin:
                     derivative = np.abs(np.cos(q_input.magnitude))
                 elif ufunc == np.cos:
                     derivative = np.abs(-np.sin(q_input.magnitude))
-                else:
+                else:  # tan
                     derivative = np.abs(1 / np.cos(q_input.magnitude) ** 2)
                 result_uncertainty = derivative * q_input.uncertainty
                 return Quantity.from_input(
@@ -484,6 +660,7 @@ class Quantity(Generic[ValueType, UncType]):
                     uncertainty=result_uncertainty,
                 )
 
+            # Delegate standard binary operations back to the class's dunder methods
             op_map = {
                 np.add: operator.add,
                 np.subtract: operator.sub,
@@ -493,25 +670,20 @@ class Quantity(Generic[ValueType, UncType]):
             if ufunc in op_map and len(inputs) == 2:
                 return op_map[ufunc](inputs[0], inputs[1])
 
+            # For other ufuncs, if the input was dimensionless, return a dimensionless Quantity
             if q_input.unit.dimension(q_input.system).is_dimensionless():
                 return Quantity.from_input(
                     result_magnitude, q_input.unit, q_input.system
                 )
 
+        # If the operation is not supported, return NotImplemented
         return NotImplemented
 
     # --- Vector and other methods from your original, now refactored ---
     def dot(
         self, other: Quantity[NDArray[Any], Any]
     ) -> Quantity[float, float]:
-        """Calculate the dot product of two quantities.
-
-        Args:
-        other (Quantity[NDArray[Any], Any]): The other quantity.
-
-        Returns:
-        Quantity[float, float]: The dot product of the two quantities.
-        """
+        """Calculate the dot product of two quantities."""
         if not isinstance(other, Quantity):
             return NotImplemented
         result_value = np.dot(self.magnitude, other.magnitude)
@@ -526,14 +698,7 @@ class Quantity(Generic[ValueType, UncType]):
     def cross(
         self, other: Quantity[NDArray[Any], Any]
     ) -> Quantity[NDArray[Any], NDArray[Any]]:
-        """Calculate the cross product of two quantities.
-
-        Args:
-        other (Quantity[NDArray[Any], Any]): The other quantity.
-
-        Returns:
-        Quantity[NDArray[Any], NDArray[Any]]: The cross product.
-        """
+        """Calculate the cross product of two quantities."""
         if not isinstance(other, Quantity):
             return NotImplemented
         result_value = np.cross(self.magnitude, other.magnitude)
@@ -572,15 +737,7 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __round__(self, ndigits: int | None = None) -> Self:
-        """Round the quantity's magnitude.
-
-        Args:
-        ndigits (int | None, optional): The number of digits to round to.
-        Defaults to None.
-
-        Returns:
-        Self: The rounded quantity.
-        """
+        """Round the quantity's magnitude."""
         new_value = (
             np.round(self.magnitude, ndigits)
             if ndigits is not None
@@ -594,118 +751,60 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __eq__(self, other: object) -> bool:
-        """Check if two quantities are equal.
-
-        Args:
-        other (object): The other quantity.
-
-        Returns:
-        bool: True if the quantities are equal, False otherwise.
-        """
+        """Check if two quantities are equal."""
         if not isinstance(other, Quantity):
             return NotImplemented
         if self.dimension != other.dimension:
-            raise ValueError(
-                "Cannot compare quantities with different dimensions"
-            )
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         return cast(
             bool, np.all(np.isclose(self.magnitude, other_converted.magnitude))
         )
 
     def __lt__(self, other: Any) -> bool:
-        """Check if this quantity is less than another.
-
-        Args:
-        other (Any): The other quantity.
-
-        Returns:
-        bool: True if this quantity is less than the other, False otherwise.
-        """
+        """Check if this quantity is less than another."""
         if not isinstance(other, Quantity):
             return NotImplemented
         if self.dimension != other.dimension:
-            raise ValueError(
-                "Cannot compare quantities with different dimensions"
-            )
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         return self.magnitude < other_converted.magnitude
 
     def __le__(self, other: Any) -> bool:
-        """Check if this quantity is less than or equal to another.
-
-        Args:
-        other (Any): The other quantity.
-
-        Returns:
-        bool: True if this quantity is less than or equal to the other,
-        False otherwise.
-        """
+        """Check if this quantity is less than or equal to another."""
         if not isinstance(other, Quantity):
             return NotImplemented
         if self.dimension != other.dimension:
-            raise ValueError(
-                "Cannot compare quantities with different dimensions"
-            )
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         return self.magnitude <= other_converted.magnitude
 
     def __gt__(self, other: Any) -> bool:
-        """Check if this quantity is greater than another.
-
-        Args:
-        other (Any): The other quantity.
-
-        Returns:
-        bool: True if this quantity is greater than the other, False
-        otherwise.
-        """
+        """Check if this quantity is greater than another."""
         if not isinstance(other, Quantity):
             return NotImplemented
         if self.dimension != other.dimension:
-            raise ValueError(
-                "Cannot compare quantities with different dimensions"
-            )
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         return self.magnitude > other_converted.magnitude
 
     def __ge__(self, other: Any) -> bool:
-        """Check if this quantity is greater than or equal to another.
-
-        Args:
-        other (Any): The other quantity.
-
-        Returns:
-        bool: True if this quantity is greater than or equal to the other,
-        False otherwise.
-        """
+        """Check if this quantity is greater than or equal to another."""
         if not isinstance(other, Quantity):
             return NotImplemented
         if self.dimension != other.dimension:
-            raise ValueError(
-                "Cannot compare quantities with different dimensions"
-            )
+            raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         return self.magnitude >= other_converted.magnitude
 
     # --- Formateo (__format__) ---
     def __format__(self, format_spec: str) -> str:
-        """Format the quantity as a string.
-
-        Args:
-        format_spec (str): The format specification.
-
-        Returns:
-        str: The formatted string.
-        """
+        """Format the quantity as a string."""
         recognized_unit_formats = {"alias", "full"}
 
-        # Check for a composite spec using the delimiter '|'.
         if "|" in format_spec:
             numeric_format, unit_format = format_spec.split("|", 1)
         else:
-            # If the provided format spec is one of the recognized unit
-            # formats, treat it as a unit spec and default the numeric part.
             if (
                 format_spec in recognized_unit_formats
                 or format_spec.startswith("alias:")
@@ -717,11 +816,9 @@ class Quantity(Generic[ValueType, UncType]):
                 numeric_format = format_spec
                 unit_format = "full"  # Default unit format.
 
-        # Format numeric part.
         if numeric_format == "frac":
             numeric_str = str(self.fraction)
         elif numeric_format:
-            # Check if self.magnitude is an array
             if isinstance(self.magnitude, np.ndarray):
                 numeric_str = np.array2string(
                     self.magnitude,
@@ -737,17 +834,11 @@ class Quantity(Generic[ValueType, UncType]):
         else:
             numeric_str = str(self.magnitude)
 
-        # Format unit part.
         unit_str = format(self.unit, unit_format)
         return f"{numeric_str} {unit_str}"
 
     def to_latex(self):
-        """Return a LaTeX representation of the quantity.
-
-        Returns:
-        str: The LaTeX representation of the quantity.
-        """
-        # sympy tiene excelentes capacidades de impresión LaTeX
+        """Return a LaTeX representation of the quantity."""
         value_latex = sp.latex(self.magnitude)
         unit_latex = self.unit.to_latex()
 

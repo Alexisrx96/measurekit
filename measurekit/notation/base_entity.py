@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from functools import singledispatchmethod
+from typing import Self
 
 from measurekit.notation.lexer import to_superscript
 from measurekit.notation.typing import ExponentsDict
@@ -9,7 +12,7 @@ from measurekit.notation.typing import ExponentsDict
 class BaseExponentEntity:
     exponents: ExponentsDict
 
-    def __new__(cls, exponents: ExponentsDict) -> "BaseExponentEntity":
+    def __new__(cls, exponents: ExponentsDict) -> Self:
         normalized = {k: v for k, v in exponents.items() if v}
         instance = super().__new__(cls)
         object.__setattr__(instance, "exponents", normalized)
@@ -19,25 +22,19 @@ class BaseExponentEntity:
         # This is intentionally left blank because all logic is in __new__
         pass
 
-    def __mul__(
-        self: "BaseExponentEntity", other: "BaseExponentEntity"
-    ) -> "BaseExponentEntity":
+    def __mul__(self: Self, other: Self) -> Self:
         new_exponents = self.exponents.copy()
         for key, exp in other.exponents.items():
             new_exponents[key] = new_exponents.get(key, 0) + exp
         return type(self)(new_exponents)
 
-    def __truediv__(
-        self: "BaseExponentEntity", other: "BaseExponentEntity"
-    ) -> "BaseExponentEntity":
+    def __truediv__(self: Self, other: Self) -> Self:
         new_exponents = self.exponents.copy()
         for key, exp in other.exponents.items():
             new_exponents[key] = new_exponents.get(key, 0) - exp
         return type(self)(new_exponents)
 
-    def __pow__(
-        self: "BaseExponentEntity", power: float
-    ) -> "BaseExponentEntity":
+    def __pow__(self: Self, power: float) -> Self:
         return type(self)({k: v * power for k, v in self.exponents.items()})
 
     def __eq__(self, other: object) -> bool:
@@ -72,5 +69,6 @@ class BaseExponentEntity:
         return "1"
 
     @singledispatchmethod
-    def __rtruediv__(self, other: complex) -> "BaseExponentEntity":
+    def __rtruediv__(self: Self, other: complex) -> Self:
+        """Implements the reflected division operator, returning the inverse of the entity."""
         return type(self)({u: -exp for u, exp in self.exponents.items()})
