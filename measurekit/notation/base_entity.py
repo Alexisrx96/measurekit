@@ -16,8 +16,8 @@ class BaseExponentEntity:
         return instance
 
     def __init__(self, exponents: ExponentsDict) -> None:
-        normalized = {k: v for k, v in exponents.items() if v}
-        object.__setattr__(self, "exponents", normalized)
+        # This is intentionally left blank because all logic is in __new__
+        pass
 
     def __mul__(
         self: "BaseExponentEntity", other: "BaseExponentEntity"
@@ -25,7 +25,7 @@ class BaseExponentEntity:
         new_exponents = self.exponents.copy()
         for key, exp in other.exponents.items():
             new_exponents[key] = new_exponents.get(key, 0) + exp
-        return BaseExponentEntity(new_exponents)
+        return type(self)(new_exponents)
 
     def __truediv__(
         self: "BaseExponentEntity", other: "BaseExponentEntity"
@@ -38,9 +38,7 @@ class BaseExponentEntity:
     def __pow__(
         self: "BaseExponentEntity", power: float
     ) -> "BaseExponentEntity":
-        return BaseExponentEntity(
-            {k: v * power for k, v in self.exponents.items()}
-        )
+        return type(self)({k: v * power for k, v in self.exponents.items()})
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, BaseExponentEntity):
@@ -48,16 +46,15 @@ class BaseExponentEntity:
         return self.exponents == other.exponents
 
     def __hash__(self) -> int:
-        return hash(tuple(sorted(self.exponents.items())))
+        return hash(frozenset(self.exponents.items()))
 
     def __repr__(self) -> str:
         return str(self.exponents)
 
     def __str__(self) -> str:
         numerator, denominator = [], []
-        for unit, exp in sorted(
-            self.exponents.items(), key=lambda x: (-x[1], x[0])
-        ):
+        # Sort alphabetically for a deterministic order
+        for unit, exp in sorted(self.exponents.items()):
             formatted = (
                 f"{unit}{to_superscript(abs(exp)) if abs(exp) != 1 else ''}"
             )
