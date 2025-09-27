@@ -1,31 +1,34 @@
-# measurekit/system.py (Corrected with missing methods)
-
 from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, cast
 
-import measurekit.measurement.quantity as quantity_module
+from measurekit.measurement.api import QuantityFactory
 from measurekit.measurement.conversions import UnitDefinition
 from measurekit.measurement.dimensions import Dimension
-from measurekit.measurement.units import CompoundUnit
+from measurekit.measurement.ports.unit_repository import IUnitRepository
+from measurekit.measurement.units import CompoundUnit, ExponentsDict
 from measurekit.notation.lexer import generate_tokens
 from measurekit.notation.parsers import NotationParser
 
 
-class UnitSystem:
+class UnitSystem(IUnitRepository):
     """
     Manages a self-contained system of dimensions, units, and configurations.
     """
 
-    def __init__(self):
+    def __init__(self, name: str | None = None, description: str = ""):
         """Initializes a new, clean unit system."""
+        self.name = name
+        self.description = description
         self.PREFIX_REGISTRY: dict[str, dict[str, Any]] = {}
         self.UNIT_SYMBOL_REGISTRY: dict[str, UnitDefinition] = {}
         self.UNIT_REGISTRY: dict[Dimension, dict[str, UnitDefinition]] = (
             defaultdict(dict)
         )
         self.UNIT_DIMENSIONS: dict[str, Dimension] = {}
+        self.ALIASES: dict[tuple, list[str]] = defaultdict(list)
+        self.ALIAS_TO_EXPONENTS: dict[str, tuple] = {}
         self._UNIT_RECIPES: dict[str, CompoundUnit] = {}
         self._DIMENSION_NAME_REGISTRY: dict[Dimension | None, str] = {}
         self._PREFIX_BLOCKLIST: set[str] = set()
@@ -34,20 +37,26 @@ class UnitSystem:
         self.dimension_definitions: dict[str, str] = {}
         self.unit_definitions: dict[str, str] = {}
         self.constant_definitions: dict[str, str] = {}
-
         CompoundUnit._cache.clear()
-        CompoundUnit._aliases.clear()
-        CompoundUnit._alias_to_exponents.clear()
         Dimension._cache.clear()
+        self.Q_ = QuantityFactory(self)
+
+    def get_definition(self, unit_symbol: str) -> UnitDefinition | None:
+        return self.UNIT_SYMBOL_REGISTRY.get(unit_symbol)
 
     def get_setting(self, key: str, default: str | None = None) -> str | None:
         return self.settings.get(key, default)
 
-    # THIS IS THE FIX: Added the missing register_prefix method
+    def register_alias(self, exponents: ExponentsDict, *aliases: str) -> None:
+        key = tuple(sorted((k, v) for k, v in exponents.items() if v != 0))
+        for alias in aliases:
+            if alias not in self.ALIASES[key]:
+                self.ALIASES[key].append(alias)
+            self.ALIAS_TO_EXPONENTS[alias] = key
+
     def register_prefix(
         self, symbol: str, factor: float, name: str | None = None
     ) -> None:
-        """Registers a prefix within this unit system."""
         if symbol in self.PREFIX_REGISTRY:
             print(
                 f"[WARNING] Prefix '{symbol}' is being redefined in this system."
@@ -57,9 +66,11 @@ class UnitSystem:
             "name": name or symbol,
         }
 
-    # THIS IS THE FIX: Added the missing register_dimension method
     def register_dimension(self, dimension: Dimension, name: str):
-        """Registers a dimension name within this unit system."""
+        if dimension in self._DIMENSION_NAME_REGISTRY:
+            print(
+                f"[WARNING] Dimension '{dimension}' is being redefined in this system."
+            )
         self._DIMENSION_NAME_REGISTRY[dimension] = name
 
     def register_unit(
@@ -72,6 +83,9 @@ class UnitSystem:
         recipe: CompoundUnit | None = None,
         allow_prefixes: bool = True,
     ) -> None:
+        """
+        Registers a unit and its aliases with the system.
+        """
         unit_def = UnitDefinition(
             symbol,
             dimension,
@@ -80,78 +94,66 @@ class UnitSystem:
             recipe=recipe,
             allow_prefixes=allow_prefixes,
         )
+
+        all_names = set([symbol] + list(aliases))
+        sorted_names = sorted(list(all_names))
+
+        for unit_name in sorted_names:
+            if unit_name in self.UNIT_SYMBOL_REGISTRY:
+                print(f"[WARNING] Unit '{unit_name}' is being redefined.")
+
+            self.UNIT_SYMBOL_REGISTRY[unit_name] = unit_def
+            self.UNIT_DIMENSIONS[unit_name] = dimension
+
         self.UNIT_REGISTRY[dimension][symbol] = unit_def
-        self.UNIT_DIMENSIONS[symbol] = dimension
-        for alias in aliases:
-            self.UNIT_SYMBOL_REGISTRY[alias] = unit_def
+
         if recipe:
             self._UNIT_RECIPES[symbol] = recipe
-            for alias in aliases:
-                self._UNIT_RECIPES[alias] = recipe
+
+        # Automatically register prefixed units
+        if allow_prefixes and symbol not in self._PREFIX_BLOCKLIST:
+            for prefix_symbol, prefix_data in self.PREFIX_REGISTRY.items():
+                prefixed_symbol = prefix_symbol + symbol
+
+                # Check if the prefixed unit is already registered.
+                if prefixed_symbol in self.UNIT_SYMBOL_REGISTRY:
+                    continue  # Skip to avoid redefinition warnings.
+
+                prefixed_name = prefix_data["name"] + (name or symbol)
+                prefixed_factor = prefix_data["factor"] * factor_to_base
+
+                prefixed_def = UnitDefinition(
+                    prefixed_symbol,
+                    dimension,
+                    prefixed_factor,
+                    prefixed_name,
+                    allow_prefixes=False,  # Prefixed units cannot have prefixes
+                )
+                self.UNIT_SYMBOL_REGISTRY[prefixed_symbol] = prefixed_def
+                self.UNIT_DIMENSIONS[prefixed_symbol] = dimension
+                self.UNIT_REGISTRY[dimension][prefixed_symbol] = prefixed_def
 
     def get_unit(self, unit_expression: str) -> CompoundUnit:
         """
-        Analyzes a unit expression, handling aliases, dynamic prefixes,
-        and complex expressions.
+        Retrieves a CompoundUnit from the system based on its notation.
+        This method is now a pure retrieval function with no side effects.
         """
-        # 1. Check for a known alias first.
-        if unit_expression in CompoundUnit._alias_to_exponents:
-            key = CompoundUnit._alias_to_exponents[unit_expression]
-            return CompoundUnit(dict(key))
-
-        # 2. Check if the unit has already been dynamically created.
+        # 1. Check for simple units (including aliases and prefixed units)
         if unit_expression in self.UNIT_DIMENSIONS:
+            # Check if this unit has a recipe and return the simplified unit
+            if unit_expression in self._UNIT_RECIPES:
+                return self._UNIT_RECIPES[unit_expression]
             return CompoundUnit({unit_expression: 1})
 
-        # 3. Attempt to parse as a prefixed unit.
-        # Sort prefixes by length descending (e.g., 'da' before 'd')
-        sorted_prefixes = sorted(
-            self.PREFIX_REGISTRY.keys(), key=len, reverse=True
-        )
+        # 2. Check for aliases
+        if unit_expression in self.ALIAS_TO_EXPONENTS:
+            key = self.ALIAS_TO_EXPONENTS[unit_expression]
+            return CompoundUnit(dict(key))
 
-        for prefix_symbol in sorted_prefixes:
-            if unit_expression.startswith(prefix_symbol):
-                unit_symbol = unit_expression[len(prefix_symbol) :]
-
-                # Check if the base unit exists in our system
-                if unit_symbol in self.UNIT_SYMBOL_REGISTRY:
-                    base_unit_def = self.UNIT_SYMBOL_REGISTRY[unit_symbol]
-
-                    # Check if this unit is allowed to have prefixes
-                    if base_unit_def.allow_prefixes:
-                        prefix_data = self.PREFIX_REGISTRY[prefix_symbol]
-
-                        # Dynamically register the new prefixed unit
-                        new_factor = (
-                            prefix_data["factor"]
-                            * base_unit_def.factor_to_base
-                        )
-                        self.register_unit(
-                            unit_expression,
-                            base_unit_def.dimension,
-                            new_factor,
-                            f"{prefix_data['name']}{base_unit_def.name}",
-                            recipe=CompoundUnit({base_unit_def.symbol: 1}),
-                        )
-                        CompoundUnit.register_alias(
-                            {unit_expression: 1}, unit_expression
-                        )
-
-                        # Return the newly created unit
-                        return CompoundUnit({unit_expression: 1})
-
-        # 4. If all else fails, parse as a complex expression (e.g., "m/s")
+        # 3. Parse as a compound expression
         tokens = generate_tokens(unit_expression)
         parser = NotationParser(tokens, CompoundUnit)
-        return cast(CompoundUnit, parser.parse())
+        result = cast(CompoundUnit, parser.parse())
 
-    def Q_(self, *args, **kwargs):
-        value, unit = args[0], args[1]
-        uncertainty = kwargs.get("uncertainty", 0.0)
-
-        if isinstance(unit, str):
-            unit = self.get_unit(unit)
-
-        return quantity_module.Quantity.from_input(
-            value=value, unit=unit, system=self, uncertainty=uncertainty
-        )
+        # Simplify the result of the parsing
+        return result.simplify(self)
