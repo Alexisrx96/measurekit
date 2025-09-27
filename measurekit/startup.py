@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import configparser
 from importlib import resources
-from typing import cast, Dict, Any
+from typing import cast
 
+from measurekit.context import system_context
+from measurekit.measurement.api import QuantityFactory
 from measurekit.measurement.conversions import UnitDefinition
 from measurekit.measurement.dimensions import (
     Dimension,
@@ -11,6 +13,8 @@ from measurekit.measurement.dimensions import (
 )
 from measurekit.measurement.units import CompoundUnit
 from measurekit.system import UnitSystem
+
+Q_ = QuantityFactory()
 
 
 def _load_all_configurations_into(
@@ -167,6 +171,7 @@ class UnitSystemBuilder:
         self, constants_data: dict[str, str]
     ) -> UnitSystemBuilder:
         """Adds constants from a dictionary of constant definitions."""
+
         if not constants_data:
             return self
         if self._verbose:
@@ -179,7 +184,8 @@ class UnitSystemBuilder:
                 if unit_str.strip() != "1"
                 else CompoundUnit({})
             )
-            _ = self._system.Q_(value, unit)
+            with system_context(self._system):
+                _ = Q_(value, unit)
         return self
 
     def build(self) -> UnitSystem:
