@@ -190,14 +190,15 @@ class UnitSystemBuilder:
                     UnitDefinition, self._system.get_definition(key)
                 )
                 if unit_def and not unit_def.recipe:
-                    # Obtenemos el objeto CompoundUnit a partir de la receta.
+                    # Obtain the CompoundUnit object from the recipe.
                     recipe_unit = self._system.get_unit(recipe_str)
 
-                    # Simplificamos la receta a sus componentes de unidades base.
-                    # Esto es crucial para la conversión.
+                    # Simplify the recipe to its base unit components.
+                    # This is crucial for conversion.
                     simplified_recipe = recipe_unit.simplify(self._system)
 
-                    # Asignamos la receta simplificada al objeto de definición de la unidad.
+                    # Assign the simplified recipe to the unit definition
+                    # object.
                     unit_def.recipe = simplified_recipe
                     self._system._UNIT_RECIPES[unit_def.symbol] = (
                         simplified_recipe

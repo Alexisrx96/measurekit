@@ -1,6 +1,4 @@
-# tests/measurement_tests/test_units.py (Refactored)
-
-"""Test suite for the CompoundUnit class and get_unit function after refactoring."""
+"""Test suite for the CompoundUnit class and get_unit function."""
 
 import unittest
 
@@ -16,7 +14,8 @@ class TestCompoundUnit(BaseTestUnit):
     def setUp(self):
         """Set up test fixtures before each test."""
         super().setUp()
-        # Aliases are still registered on the class, as they are stateless definitions
+        # Aliases are still registered on the class, as they are stateless
+        # definitions
         self.system.register_alias({"m": 1, "s": -1}, "velocity", "speed")
 
         # Register units into our isolated test system

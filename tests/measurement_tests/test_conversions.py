@@ -50,7 +50,7 @@ class TestUnitSystemRegistration(BaseTestUnit):
         self.assertIn("cm", self.system.UNIT_REGISTRY[self.length])
 
     def test_find_dimension_for_unit(self):
-        """Test finding the dimension for a registered unit within the system."""
+        """Test finding the dimension for a registered unit."""
         self.system.register_unit("m", self.length, 1.0, "meter")
         self.system.register_unit("s", self.time, 1.0, "second")
 

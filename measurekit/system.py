@@ -9,6 +9,7 @@ It serves as the main "application" object in the library's architecture.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import Any, cast
 
@@ -20,9 +21,12 @@ from measurekit.measurement.units import CompoundUnit, ExponentsDict
 from measurekit.notation.lexer import generate_tokens
 from measurekit.notation.parsers import NotationParser
 
+# Create a logger specific to this module
+log = logging.getLogger(__name__)
+
 
 class UnitSystem(IUnitRepository):
-    """Manages a  system of dimensions, units, and configurations."""
+    """Manages a self-contained system of dimensions, units, and config."""
 
     def __init__(self, name: str | None = None, description: str = ""):
         """Initializes a new, clean unit system."""
@@ -72,9 +76,8 @@ class UnitSystem(IUnitRepository):
     ) -> None:
         """Registers a prefix with its symbol, factor, and optional name."""
         if symbol in self.PREFIX_REGISTRY:
-            print(
-                f"[WARNING] Prefix '{symbol}' is being "
-                "redefined in this system."
+            log.warning(
+                "Prefix '%s' is being redefined in this system.", symbol
             )
         self.PREFIX_REGISTRY[symbol] = {
             "factor": factor,
@@ -84,9 +87,8 @@ class UnitSystem(IUnitRepository):
     def register_dimension(self, dimension: Dimension, name: str):
         """Registers a descriptive name for a Dimension instance."""
         if dimension in self._DIMENSION_NAME_REGISTRY:
-            print(
-                f"[WARNING] Dimension '{dimension}' is being "
-                "redefined in this system."
+            log.warning(
+                "Dimension '%s' is being redefined in this system.", dimension
             )
         self._DIMENSION_NAME_REGISTRY[dimension] = name
 
@@ -115,7 +117,7 @@ class UnitSystem(IUnitRepository):
 
         for unit_name in sorted_names:
             if unit_name in self.UNIT_SYMBOL_REGISTRY:
-                print(f"[WARNING] Unit '{unit_name}' is being redefined.")
+                log.warning("Unit '%s' is being redefined.", unit_name)
 
             self.UNIT_SYMBOL_REGISTRY[unit_name] = unit_def
             self.UNIT_DIMENSIONS[unit_name] = dimension
@@ -142,7 +144,7 @@ class UnitSystem(IUnitRepository):
                     dimension,
                     prefixed_factor,
                     prefixed_name,
-                    allow_prefixes=False,  # Prefixed units cannot have prefixes
+                    allow_prefixes=False,  # Prefixed units cannot have prefix
                 )
                 self.UNIT_SYMBOL_REGISTRY[prefixed_symbol] = prefixed_def
                 self.UNIT_DIMENSIONS[prefixed_symbol] = dimension

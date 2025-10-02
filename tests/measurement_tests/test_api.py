@@ -12,23 +12,21 @@ class TestSpecializedQuantityFactory(unittest.TestCase):
     """Tests for the _SpecializedQuantityFactory class."""
 
     def test_init(self):
-        """Test the initialization of the _SpecializedQuantityFactory class."""
-        # FIX: Swapped arguments to the correct order: (unit, system).
+        """Test the initialization of _SpecializedQuantityFactory class."""
         factory = SpecializedQuantityFactory(get_unit("m"), default_system)
 
-        # FIX: Accessed the correct internal attributes (_system, _default_unit).
         self.assertEqual(factory._system, default_system)
         self.assertEqual(factory._default_unit, get_unit("m"))
 
     def test_call(self):
-        """Test the __call__ method of the _SpecializedQuantityFactory class."""
+        """Test the __call__ method of _SpecializedQuantityFactory class."""
         factory = SpecializedQuantityFactory(get_unit("m"), default_system)
         quantity = factory(5)
         self.assertEqual(quantity.magnitude, 5)
         self.assertEqual(quantity.unit, get_unit("m"))
 
     def test_repr(self):
-        """Test the __repr__ method of the _SpecializedQuantityFactory class."""
+        """Test the __repr__ method of _SpecializedQuantityFactory class."""
         factory = SpecializedQuantityFactory(get_unit("m"), default_system)
 
         self.assertEqual(repr(factory), "<Quantity Factory for unit='m'>")

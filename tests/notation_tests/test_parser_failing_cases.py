@@ -9,16 +9,18 @@ from measurekit.notation.parsers import NotationParser
 
 class TestNotationParserFailingCases(unittest.TestCase):
     """
-    Provides specific tests for expected failure branches within the NotationParser.
+    Provides specific tests for expected failure branches.
     """
 
     def test_factor_value_error_fallback(self):
         """
         Covers the `except ValueError` block in `factor()` by manually
         feeding the parser a token that the lexer would normally not produce.
-        This simulates a scenario where an embedded exponent cannot be parsed as an int.
+        This simulates a scenario where an embedded exponent cannot be parsed
+        as an int.
         """
-        # We simulate a hypothetical lexer that produces a single "m-s" UNIT token.
+        # We simulate a hypothetical lexer that produces a single
+        # "m-s" UNIT token.
         mock_tokens = iter(
             [
                 UnitToken(TokenType.UNIT, "m-s"),

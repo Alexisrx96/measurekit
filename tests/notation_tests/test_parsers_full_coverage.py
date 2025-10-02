@@ -194,7 +194,9 @@ class TestNotationParser(unittest.TestCase):
         self.assertIsNone(exponent)
 
     def test_parse_unit_with_inline_digit_exponent(self):
-        """Test parsing units with exponents as trailing digits (e.g., 'm2')."""
+        """Test parsing units with exponents as trailing digits.
+
+        For example, (e.g., 'm2')."""
         tokens = generate_tokens("m2")
         parser = NotationParser(tokens, BaseExponentEntity)
         result = parser.parse()

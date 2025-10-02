@@ -1,5 +1,5 @@
 # measurekit/dynamics/solver.py
-"""This module provides a unit-aware solver for ordinary differential equation (ODE) initial value problems.
+"""This module provides a unit-aware solver for ordinary differential equation.
 
 It wraps the powerful `solve_ivp` function from the SciPy library, allowing
 users to define their differential equations using `measurekit.Quantity`
@@ -38,7 +38,8 @@ class ODESolution:
             return f"ODESolution(t=[], num_states={len(self.y)})"
 
         # Create scalar Quantity objects for the start and end times
-        # This allows us to use Quantity's own formatting, which includes units.
+        # This allows us to use Quantity's own formatting, which includes
+        # units.
         t_start = Quantity(self.t.magnitude[0], self.t.unit)
         t_end = Quantity(self.t.magnitude[-1], self.t.unit)
 
@@ -55,8 +56,12 @@ def solve_unit_aware_ivp(
     t_eval: NDArray[np.floating] | None = None,
     **kwargs,
 ) -> ODESolution:
-    """Solves an initial value problem, handling units consciously and efficiently."""
-    """Solves an initial value problem, handling units consciously and efficiently."""
+    """Solves an initial value problem.
+
+    This function is a wrapper around `scipy.integrate.solve_ivp`, allowing
+    users to define their differential equations using `measurekit.Quantity`
+    objects. It ensures that all calculations are dimensionally consistent.
+    """
     # --- 1. Unit Unpacking (ONCE) ---
     t_unit = t_span[0].unit
     y0_magnitudes = np.array([q.magnitude for q in y0])

@@ -565,7 +565,8 @@ class Quantity(Generic[ValueType, UncType]):
 
         if numeric_format == "frac" and self.fraction is not None:
             numeric_str = str(self.fraction)
-            return f"{numeric_str} {unit_str}"  # Uncertainty not used with fractions
+            # Uncertainty not used with fractions
+            return f"{numeric_str} {unit_str}"
 
         def format_val(val, fmt_spec):
             if isinstance(val, np.ndarray):
@@ -600,10 +601,20 @@ class Quantity(Generic[ValueType, UncType]):
         is_array_unc = isinstance(self.uncertainty, np.ndarray)
         has_unc = is_array_unc or self.uncertainty > 0
         if not has_unc:
-            return f"{self.magnitude} {self.unit.to_string(self.system, use_alias=True)}"
+            return (
+                f"{self.magnitude} "
+                f"{self.unit.to_string(self.system, use_alias=True)}"
+            )
         if is_array_unc:
-            return f"Quantity(value={self.magnitude}, unit={self.unit.to_string(self.system, use_alias=True)}, uncertainty=[...])"
-        return f"({self.magnitude} ± {self.uncertainty}) {self.unit.to_string(self.system, use_alias=True)}"
+            return (
+                f"Quantity(value={self.magnitude}, "
+                f"unit={self.unit.to_string(self.system, use_alias=True)}, "
+                "uncertainty=[...])"
+            )
+        return (
+            f"({self.magnitude} ± {self.uncertainty}) "
+            f"{self.unit.to_string(self.system, use_alias=True)}"
+        )
 
     def _repr_latex_(self):
         """Return a LaTeX representation of the quantity for use in Jupyter."""
@@ -611,7 +622,10 @@ class Quantity(Generic[ValueType, UncType]):
 
     def __repr__(self) -> str:
         """Return a string representation of the quantity."""
-        return f"Quantity({self.magnitude!r}, {self.unit!r}, uncertainty={self.uncertainty!r})"
+        return (
+            f"Quantity({self.magnitude!r}, {self.unit!r}, "
+            f"uncertainty={self.uncertainty!r})"
+        )
 
 
 __all__ = ["Quantity"]

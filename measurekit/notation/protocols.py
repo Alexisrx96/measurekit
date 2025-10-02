@@ -15,7 +15,8 @@ class ExponentEntityProtocol(Protocol):
     """Protocol for entities that have exponents.
 
     This protocol defines the required methods and properties for any class
-    that represents an entity with exponents, such as Dimension or CompoundUnit.
+    that represents an entity with exponents, such as Dimension or
+    CompoundUnit.
     """
 
     @property

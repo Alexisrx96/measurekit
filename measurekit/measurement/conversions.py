@@ -75,10 +75,13 @@ class UnitDefinition:
 
     def __str__(self) -> str:
         """Provides a simple string representation of the unit definition."""
-        return f"UnitDefinition({self.symbol}, {self.dimension}, {self.factor_to_base})"
+        return (
+            f"UnitDefinition({self.symbol}, {self.dimension}, "
+            f"{self.factor_to_base})"
+        )
 
     def __repr__(self) -> str:
-        """Provides a detailed developer representation of the unit definition."""
+        """Provides a detailed representation of the unit definition."""
         return (
             f"UnitDefinition({self.symbol}, {self.dimension}, "
             f"{self.factor_to_base}, {self.name})"

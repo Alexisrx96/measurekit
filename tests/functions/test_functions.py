@@ -52,7 +52,8 @@ class TestFunction(unittest.TestCase):
             symbolic_func=x,
         )
         with self.assertRaises(ValueError):
-            # Attempting to get the output in seconds, which is a time dimension
+            # Attempting to get the output in seconds,
+            # which is a time dimension
             func(get_unit("s"), x=Q_(5, "m"))
 
     def test_function_call_missing_parameter(self):
@@ -82,7 +83,7 @@ class TestFunction(unittest.TestCase):
         self.assertEqual(deriv(get_unit("m**2"), x=Q_(4, "m")), Q_(48, "m**2"))
 
     def test_derivative_nonexistent_parameter(self):
-        """Tests taking the derivative with respect to a nonexistent parameter."""
+        """Tests taking the derivative with respect to a nonexistent param."""
         x = sp.Symbol("x")
         func = Function(
             parameters={"x": Dimension.from_string("L")},
@@ -102,7 +103,8 @@ class TestFunction(unittest.TestCase):
         )
         self.assertEqual(
             repr(func),
-            "Function(1/x, params={ x: Dimensionless }, output_dim=Dimensionless)",
+            "Function(1/x, params={ x: Dimensionless }, "
+            "output_dim=Dimensionless)",
         )
 
     def test_function_str(self):

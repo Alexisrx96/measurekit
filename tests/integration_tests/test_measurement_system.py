@@ -14,7 +14,7 @@ from tests.base_test_class import BaseTestUnit
 
 
 class TestMeasurementSystemIntegration(BaseTestUnit):
-    """Integration tests for the refactored, system-aware measurement system."""
+    """Integration tests for the system-aware measurement system."""
 
     def setUp(self):
         """Set up a fully populated, isolated UnitSystem for each test."""

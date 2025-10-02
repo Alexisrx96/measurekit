@@ -40,7 +40,7 @@ class ConversionError(MeasureKitError):
     """Raised when a unit conversion is not possible."""
 
     def __init__(self, from_unit: CompoundUnit, to_unit: CompoundUnit):
-        """Initialize the exception with the units involved in the failed conversion.
+        """Initialize the exception with the units involved in the conversion.
 
         :param from_unit: The unit from which we are trying to convert.
         :param to_unit: The unit to which we are trying to convert.

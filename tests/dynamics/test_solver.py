@@ -20,9 +20,10 @@ class TestODESolution(BaseTestUnit):
         self.system.register_unit("s", time, 1.0, "second")
 
     def test_init_and_repr(self):
-        """Test the initialization and representation of the ODESolution class."""
+        """Test the initialization and representation for ODESolution class."""
         t_quantities = self.system.Q_(np.linspace(0, 1, 5), "s")
-        # The solver returns a list of Quantities, where each Quantity holds an array of values
+        # The solver returns a list of Quantities, where each Quantity
+        # holds an array of values
         y_quantities = [self.system.Q_(np.linspace(0, 10, 5), "m")]
 
         sol = ODESolution(t=t_quantities, y=y_quantities)
