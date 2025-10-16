@@ -17,7 +17,7 @@ from sympy.core.symbol import Symbol
 from measurekit import default_system
 from measurekit.domain.measurement.units import CompoundUnit
 from measurekit.exceptions import IncompatibleUnitsError
-from measurekit.functions.functions import Function
+from measurekit.application.functions.functions import Function
 from measurekit.system import UnitSystem
 
 
