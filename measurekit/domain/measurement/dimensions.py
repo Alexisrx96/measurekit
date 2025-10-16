@@ -12,13 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Self, cast
 
-from measurekit.notation.base_entity import BaseExponentEntity
-from measurekit.notation.lexer import generate_tokens, to_superscript
-from measurekit.notation.parsers import (
+from measurekit.domain.notation.base_entity import BaseExponentEntity
+from measurekit.domain.notation.lexer import generate_tokens, to_superscript
+from measurekit.domain.notation.parsers import (
     NotationParser,
 )
-from measurekit.notation.protocols import ExponentEntityProtocol
-from measurekit.notation.typing import ExponentsDict
+from measurekit.domain.notation.protocols import ExponentEntityProtocol
+from measurekit.domain.notation.typing import ExponentsDict
 
 _DIMENSION_NAME_REGISTRY: dict[Dimension | None, str] = {}
 
