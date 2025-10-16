@@ -3,7 +3,7 @@ import unittest
 import sympy
 
 from measurekit.exceptions import IncompatibleUnitsError
-from measurekit.symbolic.quantity import Equation, SymbolicQuantity
+from measurekit.domain.symbolic.quantity import Equation, SymbolicQuantity
 from tests.base_test_class import BaseTestUnit
 from tests.decorators import with_system_context
 
