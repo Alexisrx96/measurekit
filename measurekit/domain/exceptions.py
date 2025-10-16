@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from measurekit.measurement.units import CompoundUnit
+    from measurekit.domain.measurement.units import CompoundUnit
 
 
 class MeasureKitError(Exception):
