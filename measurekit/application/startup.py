@@ -20,8 +20,8 @@ from measurekit.domain.measurement.dimensions import (
     Dimension,
     block_prefixes_for_dimension_symbol,
 )
+from measurekit.domain.measurement.system import UnitSystem
 from measurekit.domain.measurement.units import CompoundUnit
-from measurekit.system import UnitSystem
 
 
 def _load_all_configurations_into(
