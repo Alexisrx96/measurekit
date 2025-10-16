@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import cast
 
 from measurekit.context import system_context
-from measurekit.measurement.conversions import UnitDefinition
-from measurekit.measurement.dimensions import (
+from measurekit.domain.measurement.conversions import UnitDefinition
+from measurekit.domain.measurement.dimensions import (
     Dimension,
     block_prefixes_for_dimension_symbol,
 )
-from measurekit.measurement.units import CompoundUnit
+from measurekit.domain.measurement.units import CompoundUnit
 from measurekit.system import UnitSystem
 
 
