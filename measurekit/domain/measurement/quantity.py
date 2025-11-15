@@ -30,10 +30,10 @@ import sympy as sp
 from numpy.typing import NDArray
 
 from measurekit.application.context import get_active_system
+from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.uncertainty import Uncertainty
 from measurekit.domain.measurement.units import CompoundUnit
-from measurekit.domain.exceptions import IncompatibleUnitsError
 
 if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
@@ -111,8 +111,6 @@ class Quantity(Generic[ValueType, UncType]):
         uncertainty: Any = 0.0,
     ) -> Self:
         """Creates a Quantity from raw input values."""
-        from measurekit.application.context import get_active_system
-
         resolved_system = system if system is not None else get_active_system()
 
         if isinstance(value, np.ndarray):
@@ -147,10 +145,20 @@ class Quantity(Generic[ValueType, UncType]):
         if self.dimension != target_unit.dimension(self.system):
             raise IncompatibleUnitsError(self.unit, target_unit)
         conversion_factor = self.unit.conversion_factor_to(target_unit)
-        new_value = self.magnitude * conversion_factor
-        new_uncertainty = self.uncertainty * conversion_factor
-        return Quantity.from_input(
-            new_value, target_unit, self.system, uncertainty=new_uncertainty
+
+        # Use cast to ensure type checker accepts magnitude * float
+        new_value = cast(Numeric, self.magnitude) * conversion_factor
+        new_uncertainty = cast(Numeric, self.uncertainty) * conversion_factor
+
+        # Cast the return to assert type preservation
+        return cast(
+            Quantity[ValueType, UncType],
+            Quantity.from_input(
+                new_value,
+                target_unit,
+                self.system,
+                uncertainty=new_uncertainty,
+            ),
         )
 
     # --- Arithmetic Dunder Methods ---
@@ -193,14 +201,23 @@ class Quantity(Generic[ValueType, UncType]):
     def __mul__(self, other: Any) -> Quantity:
         """Handles cases like my_quantity * other."""
         if isinstance(other, (int, float, np.ndarray)):
-            new_magnitude = self.magnitude * other
-            new_uncertainty = self.uncertainty_obj.std_dev * np.abs(other)
-            return Quantity.from_input(
-                new_magnitude,
-                self.unit,
-                self.system,
-                uncertainty=new_uncertainty,
+            # Use cast for arithmetic safety
+            new_magnitude = cast(Numeric, self.magnitude) * other
+            new_uncertainty = cast(
+                Numeric, self.uncertainty_obj.std_dev
+            ) * np.abs(other)
+
+            # Cast the return to the expected generic type
+            return cast(
+                Quantity[ValueType, UncType],
+                Quantity.from_input(
+                    new_magnitude,
+                    self.unit,
+                    self.system,
+                    uncertainty=new_uncertainty,
+                ),
             )
+
         if isinstance(other, Quantity):
             new_magnitude = self.magnitude * other.magnitude
             new_unit = self.unit * other.unit
@@ -229,13 +246,21 @@ class Quantity(Generic[ValueType, UncType]):
     def __truediv__(self, other: Any) -> Quantity:
         """Handles cases like my_quantity / other."""
         if isinstance(other, (int, float, np.ndarray)):
-            new_magnitude = self.magnitude / other
-            new_uncertainty = self.uncertainty_obj.std_dev / np.abs(other)
-            return Quantity.from_input(
-                new_magnitude,
-                self.unit,
-                self.system,
-                uncertainty=new_uncertainty,
+            # Use cast for arithmetic safety
+            new_magnitude = cast(Numeric, self.magnitude) / other
+            new_uncertainty = cast(
+                Numeric, self.uncertainty_obj.std_dev
+            ) / np.abs(other)
+
+            # Cast the return to the expected generic type
+            return cast(
+                Quantity[ValueType, UncType],
+                Quantity.from_input(
+                    new_magnitude,
+                    self.unit,
+                    self.system,
+                    uncertainty=new_uncertainty,
+                ),
             )
         if isinstance(other, Quantity):
             new_magnitude = self.magnitude / other.magnitude
