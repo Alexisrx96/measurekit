@@ -46,7 +46,7 @@ def _load_all_configurations_into(
 
     # 2. Add packaged library configuration files (Low Priority)
     try:
-        lib_config_dir = resources.files("measurekit.config")
+        lib_config_dir = resources.files("measurekit.infrastructure.config")
         for file_name in config_files:
             # Note: We must use str() because configparser.read()
             # might not support Path objects across all Python versions
