@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from measurekit.system import UnitSystem
+    from measurekit.domain.measurement.system import UnitSystem
 
 # 1. Global mutable placeholder for the UnitSystem
 # This will be set by measurekit/__init__.py after initialization completes.
