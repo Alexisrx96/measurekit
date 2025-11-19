@@ -72,15 +72,15 @@ class Function:
         required_args = set(self.arg_names)
         provided_args = set(kwargs.keys())
 
-        if required_args != provided_args:
+        if not required_args.issubset(provided_args):
             missing = required_args - provided_args
-            extra = provided_args - required_args
-            msg = ""
-            if missing:
-                msg += f"Missing required arguments: {missing}. "
-            if extra:
-                msg += f"Got unexpected arguments: {extra}."
-            raise TypeError(msg)
+            raise TypeError(f"Missing required arguments: {missing}")
+
+        # Allow arguments that are in parameters, even if not used in the symbolic expression
+        allowed_args = set(self.parameters.keys())
+        if not provided_args.issubset(allowed_args):
+            unexpected = provided_args - allowed_args
+            raise TypeError(f"Got unexpected arguments: {unexpected}")
 
         # Build the list of numeric arguments in the correct, sorted order
         numeric_args = []

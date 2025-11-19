@@ -19,7 +19,6 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
-    Self,
     TypeVar,
     cast,
     overload,
@@ -28,6 +27,7 @@ from typing import (
 import numpy as np
 import sympy as sp
 from numpy.typing import NDArray
+from typing_extensions import Self
 
 from measurekit.application.context import get_active_system
 from measurekit.domain.exceptions import IncompatibleUnitsError

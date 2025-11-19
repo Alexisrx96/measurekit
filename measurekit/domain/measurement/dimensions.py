@@ -10,7 +10,9 @@ library, enabling it to check for dimensional consistency in calculations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Self, cast
+from typing import ClassVar, cast
+
+from typing_extensions import Self
 
 from measurekit.domain.notation.base_entity import BaseExponentEntity
 from measurekit.domain.notation.lexer import generate_tokens, to_superscript

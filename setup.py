@@ -1,14 +1,4 @@
-"""setup.py - Setup script for the MeasureKit package.
-
-This script uses setuptools to define the package metadata
-and dependencies for the MeasureKit package.
-
-The package metadata is defined in the setup.cfg file.
-The dependencies are defined in the requirements.txt file.
-
-The package metadata is read from the setup.cfg file and
-the dependencies are installed using the requirements.txt file.
-"""
+"""setup.py - Setup script for the MeasureKit package."""
 
 from setuptools import find_packages, setup
 
@@ -18,7 +8,7 @@ with open("README.md", encoding="utf-8") as f:
 
 setup(
     name="measurekit",
-    version="0.1.0",
+    version="0.0.002-dev",
     author="Irvin Torres",
     author_email="irvinrx1996@hotmail.com",
     description="A Python package for handling measurement units and "
@@ -27,12 +17,17 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/irvinrx1996/measurekit",
     packages=find_packages(exclude=["tests", "tests.*"]),
+    package_data={
+        "measurekit": [
+            "infrastructure/config/*.conf",
+            "infrastructure/config/systems/*.conf",
+        ]
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Development Status :: 3 - Alpha",
@@ -41,11 +36,12 @@ setup(
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Physics",
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.10",
     install_requires=[
-        "sympy>=1.8",
-        "numpy>=1.20",
-        "scipy>=1.7",
+        "sympy>=1.4",
+        "numpy>=2.2",
+        "scipy>=1.5",
+        "typing-extensions>=4.15.0",
     ],
     keywords="units, measurement, conversion, physics, engineering, science",
     project_urls={
