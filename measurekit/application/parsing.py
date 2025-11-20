@@ -1,9 +1,5 @@
-# notation/lexer.py
-"""Lexical analyzer for scientific notations.
-
-It provides some common notations for physical quantities and units, such as
-superscript and subscript notations for exponents and units.
-"""
+# measurekit/application/parsing.py
+"""Lexical analyzer for scientific notations."""
 
 from __future__ import annotations
 
@@ -22,16 +18,20 @@ _SUBSCRIPT_MAP = str.maketrans("0123456789-", "₀₁₂₃₄₅₆₇₈₉₋
 
 
 def to_superscript(n: str | float) -> str:
-    """Convert an integer to its superscript representation."""
+    """Convert a number to its superscript representation."""
+    if isinstance(n, float) and n.is_integer():
+        n = int(n)
+
     result = str(n).translate(_SUPERSCRIPT_MAP)
-    # Remove characters that weren't translated
     return "".join(c for c in result if c in "⁰¹²³⁴⁵⁶⁷⁸⁹⋅⁻")
 
 
 def to_subscript(n: str | float) -> str:
-    """Convert an integer to its subscript representation."""
+    """Convert a number to its subscript representation."""
+    if isinstance(n, float) and n.is_integer():
+        n = int(n)
+
     result = str(n).translate(_SUBSCRIPT_MAP)
-    # Remove characters that weren't translated
     return "".join(c for c in result if c in "₀₁₂₃₄₅₆₇₈₉₋")
 
 
@@ -128,24 +128,6 @@ def generate_tokens(input_string: str) -> Generator[UnitToken, None, None]:
         elif kind == "MISMATCH":
             raise ValueError(f"Unexpected character {value!r}")
     yield UnitToken(TokenType.EOF, "")
-
-
-"""A recursive descent parser for symbolic unit and dimension expressions.
-
-This module provides a NotationParser that transforms a stream of tokens from
-the lexer into a structured entity representing a physical unit or dimension.
-It follows a simple grammar to handle multiplication, division, and
-exponentiation of symbolic entities.
-
-The grammar is defined as follows:
-- expr  : term ((MUL | DIV) term)*
-- term  : factor
-- factor: (UNIT | LPAREN expr RPAREN) (EXP NUMBER | SUP)? | NUMBER
-
-This structure allows the parser to correctly handle operator precedence and
-nested expressions. The parser is designed to be generic and can work with any
-entity class that adheres to the ExponentEntityProtocol.
-"""
 
 
 class NotationParser:

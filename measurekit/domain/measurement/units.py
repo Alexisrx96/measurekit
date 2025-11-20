@@ -1,11 +1,5 @@
-"""Defines the `CompoundUnit` class for representing complex physical units.
-
-This module provides the `CompoundUnit` class, which represents any physical
-unit as a combination of base units raised to various powers (e.g., meters per
-second squared as `m¹·s⁻²`). It supports arithmetic operations (multiplication,
-division, exponentiation) and is responsible for calculating conversion factors
-and determining the physical dimension of a unit within a given `UnitSystem`.
-"""
+# measurekit/domain/measurement/units.py
+"""Defines the CompoundUnit class."""
 
 from __future__ import annotations
 
@@ -16,10 +10,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 import numpy as np
 import sympy as sp
 
+from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.notation.base_entity import BaseExponentEntity
 from measurekit.domain.notation.typing import ExponentsDict
-from measurekit.domain.exceptions import IncompatibleUnitsError
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -30,26 +24,27 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CompoundUnit(BaseExponentEntity):
-    """Represents a unit composed of base units raised to various powers.
-
-    This class is immutable and uses a caching mechanism to ensure that
-    identical units are represented by the same object instance. It provides
-    methods for arithmetic operations, unit conversions, and dimensional
-    analysis within a given unit system.
-
-    Attributes:
-    exponents (ExponentsDict): A dictionary mapping base unit symbols to their
-    floating-point exponents.
-    """
+    """Represents a unit composed of base units raised to various powers."""
 
     _cache: ClassVar[dict[tuple, CompoundUnit]] = {}
 
     def __new__(cls, exponents: ExponentsDict):
         """Create or retrieve a cached CompoundUnit instance."""
-        key = tuple(sorted((k, v) for k, v in exponents.items() if v != 0.0))
+        normalized_exponents = {}
+        for k, v in exponents.items():
+            if v == 0:
+                continue
+            if isinstance(v, float) and v.is_integer():
+                normalized_exponents[k] = int(v)
+            else:
+                normalized_exponents[k] = v
+
+        key = tuple(sorted(normalized_exponents.items()))
+
         if key in cls._cache:
             return cls._cache[key]
-        instance = super().__new__(cls, exponents)
+
+        instance = super().__new__(cls, normalized_exponents)
         cls._cache[key] = cast(CompoundUnit, instance)
         return cast(CompoundUnit, instance)
 
@@ -200,26 +195,11 @@ class CompoundUnit(BaseExponentEntity):
         return super().__str__()
 
     def __format__(self, format_spec: str) -> str:
-        """Format the CompoundUnit using a format specification.
-
-        This method is now primarily for internal use by Quantity.__format__.
-        """
-        # This method is simple now; the complex logic is in to_string
+        """Format the CompoundUnit using a format specification."""
         return self.to_string(use_alias=format_spec.startswith("alias"))
 
     def to_latex(self) -> str:
-        r"""Generate a LaTeX representation of the unit for display.
-
-        This method uses SymPy to produce a properly formatted LaTeX string,
-        handling fractions and exponents correctly.
-
-        Examples:
-        - m/s becomes \frac{m}{s}
-        - kg*m/s^2 becomes \frac{kg \cdot m}{s^{2}}
-
-        Returns:
-        str: The LaTeX formatted string.
-        """
+        """Generate a LaTeX representation of the unit for display."""
         if not self.exponents:
             return ""
 
