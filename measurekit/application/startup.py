@@ -22,6 +22,10 @@ from measurekit.domain.measurement.dimensions import (
 )
 from measurekit.domain.measurement.system import UnitSystem
 from measurekit.domain.measurement.units import CompoundUnit
+from measurekit.domain.measurement.converters import (
+    AffineConverter,
+    LinearConverter,
+)
 
 
 def _load_all_configurations_into(
@@ -160,7 +164,25 @@ class UnitSystemBuilder:
                 parts.remove("noprefix")
 
             factor = float(parts[0])
-            dimension = Dimension.from_string(parts[1])
+            offset = 0.0
+            dim_index = 1
+
+            # Check if there is an offset (for AffineConverter)
+            if len(parts) > 2:
+                try:
+                    # If parts[1] is a float, it's an offset
+                    offset = float(parts[1])
+                    dim_index = 2
+                except ValueError:
+                    # parts[1] is likely the dimension
+                    pass
+
+            dimension = Dimension.from_string(parts[dim_index])
+
+            if offset != 0:
+                converter = AffineConverter(factor, offset)
+            else:
+                converter = LinearConverter(factor)
 
             symbol = aliases[0] if aliases else key
             all_aliases = set([key] + aliases)
@@ -168,7 +190,7 @@ class UnitSystemBuilder:
             self._system.register_unit(
                 symbol,
                 dimension,
-                factor,
+                converter,
                 key,
                 *all_aliases,
                 allow_prefixes=allow_prefixes,

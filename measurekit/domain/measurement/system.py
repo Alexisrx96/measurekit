@@ -9,6 +9,10 @@ from typing import Any, cast
 
 from measurekit.application.factories import QuantityFactory
 from measurekit.domain.measurement.conversions import UnitDefinition
+from measurekit.domain.measurement.converters import (
+    LinearConverter,
+    UnitConverter,
+)
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.ports.unit_repository import IUnitRepository
 from measurekit.domain.measurement.units import CompoundUnit, ExponentsDict
@@ -96,17 +100,18 @@ class UnitSystem(IUnitRepository):
         self,
         symbol: str,
         dimension: Dimension,
-        factor_to_base: float,
+        converter: UnitConverter,
         name: str | None,
         *aliases: str,
         recipe: CompoundUnit | None = None,
         allow_prefixes: bool = True,
     ) -> None:
         """Registers a unit and its aliases with the system."""
+
         unit_def = UnitDefinition(
             symbol,
             dimension,
-            factor_to_base,
+            converter,
             name,
             recipe=recipe,
             allow_prefixes=allow_prefixes,
@@ -145,12 +150,17 @@ class UnitSystem(IUnitRepository):
                         name if (name and unit_name == symbol) else unit_name
                     )
                     prefixed_name = prefix_data["name"] + base_desc_name
-                    prefixed_factor = prefix_data["factor"] * factor_to_base
+
+                    # Prefixes only make sense for linear units
+                    if not isinstance(converter, LinearConverter):
+                        continue
+
+                    prefixed_factor = prefix_data["factor"] * converter.scale
 
                     prefixed_def = UnitDefinition(
                         prefixed_symbol,
                         dimension,
-                        prefixed_factor,
+                        LinearConverter(prefixed_factor),
                         prefixed_name,
                         allow_prefixes=False,
                     )
