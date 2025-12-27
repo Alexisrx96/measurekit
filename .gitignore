@@ -36,3 +36,11 @@ Thumbs.db
 *.sqlite3
 db.sqlite3
 manual_sandbox/
+roadmap.md
+mapper.py
+structure*.txt
+GEMINI.md
+ddd.md
+cleanup.md
+coverage.*
+build.md
