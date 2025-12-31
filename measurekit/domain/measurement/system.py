@@ -201,3 +201,12 @@ class UnitSystem(IUnitRepository):
 
         # Simplify the result of the parsing
         return result.simplify(self)
+
+    def __getattr__(self, name: str) -> CompoundUnit:
+        """Allows accessing units as attributes."""
+        try:
+            return self.get_unit(name)
+        except Exception as e:
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            ) from e
