@@ -76,17 +76,21 @@ def test_compound_unit_conversion_factor(system, dims):
 
     meter = CompoundUnit({"m": 1})
     centimeter = CompoundUnit({"cm": 1})
-    assert meter.conversion_factor_to(centimeter) == 100.0
+    assert meter.conversion_factor_to(centimeter, system) == 100.0
 
     velocity_mps = CompoundUnit({"m": 1, "s": -1})
     velocity_kmph = CompoundUnit({"km": 1, "h": -1})
     assert (
-        pytest.approx(velocity_mps.conversion_factor_to(velocity_kmph)) == 3.6
+        pytest.approx(velocity_mps.conversion_factor_to(velocity_kmph, system))
+        == 3.6
     )
 
     force_newton = CompoundUnit({"kg": 1, "m": 1, "s": -2})
     force_dyne = CompoundUnit({"g": 1, "cm": 1, "s": -2})
-    assert pytest.approx(force_newton.conversion_factor_to(force_dyne)) == 1e5
+    assert (
+        pytest.approx(force_newton.conversion_factor_to(force_dyne, system))
+        == 1e5
+    )
 
     # Test incompatible dimensions
     length_unit = CompoundUnit({"m": 1})

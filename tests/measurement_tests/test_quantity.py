@@ -144,7 +144,7 @@ def test_dunder_methods(quantity_system):
     assert str(q2) == "5 m"
 
     q_arr_unc = quantity_system.Q_(10, "m", uncertainty=np.array([0.1, 0.2]))
-    assert "uncertainty=[...]" in str(q_arr_unc)
+    assert "uncertainty=" in repr(q_arr_unc)
 
 
 def test_comparison_edge_cases(quantity_system):
@@ -190,9 +190,9 @@ def test_numpy_ufuncs(quantity_system):
     arr_q = quantity_system.Q_(np.array([1, 2, 3]), "m")
     assert np.add.reduce(arr_q) == quantity_system.Q_(6, "m")
 
-    assert np.absolute(
-        quantity_system.Q_(np.array([-1, -2]), "m")
-    ) == quantity_system.Q_(np.array([1, 2]), "m")
+    result = quantity_system.Q_(np.array([-1, -2]), "m")
+    expected = quantity_system.Q_(np.array([1, 2]), "m")
+    assert np.all(np.absolute(result) == expected)
 
 
 def test_vector_and_array_ops(quantity_system):

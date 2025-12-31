@@ -159,6 +159,8 @@ class CompoundUnit(BaseExponentEntity):
         """
         factor = 1.0
         for unit, exp in self.exponents.items():
+            if unit == "noprefix":
+                continue
             _unit = system.get_unit(unit)
             dim = _unit.dimension(system)
 
@@ -197,6 +199,8 @@ class CompoundUnit(BaseExponentEntity):
         """
         overall = Dimension({})
         for unit, exp in self.exponents.items():
+            if unit == "noprefix":
+                continue
             if unit in system.UNIT_DIMENSIONS:
                 overall *= system.UNIT_DIMENSIONS[unit] ** exp
             else:

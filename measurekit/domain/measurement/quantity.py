@@ -4,8 +4,7 @@ This module contains the `Quantity` class, which bundles a numerical value
 (magnitude), a `CompoundUnit`, and an optional `Uncertainty`. It is the central
 object that users interact with. The class overloads arithmetic, comparison,
 and other operators to provide intuitive, unit-aware calculations, automatic
-error propagation, and seamless integration with NumPy for handling array
-values.
+error propagation, and seamless integration with various backends (NumPy, etc.).
 """
 
 from __future__ import annotations
@@ -17,18 +16,15 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Literal,
     TypeVar,
     cast,
     overload,
 )
 
-import numpy as np
-import sympy as sp
-from numpy.typing import NDArray
-from scipy import sparse
 from typing_extensions import Self
 
+from measurekit.core.dispatcher import BackendManager
+from measurekit.core.protocols import BackendOps
 from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.uncertainty import Uncertainty
@@ -44,19 +40,9 @@ if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
 
 # --- Generic Type Variables ---
-ValueType = TypeVar("ValueType", float, int, NDArray[Any], sp.Symbol, sp.Expr)
-UncType = TypeVar("UncType", float, NDArray[Any])
-Numeric = int | float | NDArray[Any] | sp.Symbol | sp.Expr
-ScalarValue = TypeVar("ScalarValue", int, float, sp.Symbol, sp.Expr)
-ArrayValue = TypeVar("ArrayValue", bound=NDArray[Any])
-ScalarUnc = TypeVar("ScalarUnc", bound=float)
-ArrayUnc = TypeVar("ArrayUnc", bound=NDArray[Any])
-ScalarValueSelf = TypeVar("ScalarValueSelf", int, float, sp.Symbol, sp.Expr)
-ScalarValueOther = TypeVar("ScalarValueOther", int, float, sp.Symbol, sp.Expr)
-OtherValueType = TypeVar(
-    "OtherValueType", float, int, NDArray[Any], sp.Symbol, sp.Expr
-)
-OtherUncType = TypeVar("OtherUncType", float, NDArray[Any])
+ValueType = TypeVar("ValueType")
+UncType = TypeVar("UncType")
+Numeric = Any  # Ideally strictly typed via protocols, but simplified for now
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,18 +52,21 @@ class Quantity(Generic[ValueType, UncType]):
     magnitude: ValueType
     unit: CompoundUnit
     uncertainty_obj: Uncertainty[UncType] = field(
-        default_factory=lambda: cast(Uncertainty[UncType], Uncertainty(0.0))
+        default_factory=lambda: cast("Uncertainty[UncType]", Uncertainty(0.0))
     )
     fraction: Fraction | None = None
     system: UnitSystem = field(default_factory=get_default_system)
     dimension: Dimension = field(init=False)
-
-    # _cache removed to avoid memory leaks as per requirements
+    _backend: BackendOps = field(init=False, repr=False)
 
     def __post_init__(self):
         """Calculates derived fields after the object is initialized."""
         calculated_dimension = self.unit.dimension(self.system)
         object.__setattr__(self, "dimension", calculated_dimension)
+
+        # Determine and set backend
+        backend = BackendManager.get_backend(self.magnitude)
+        object.__setattr__(self, "_backend", backend)
 
     @classmethod
     def _fast_new(
@@ -87,6 +76,7 @@ class Quantity(Generic[ValueType, UncType]):
         uncertainty: Uncertainty[UncType],
         system: UnitSystem,
         dimension: Dimension,
+        backend: BackendOps | None = None,
     ) -> Self:
         """Bypasses __post_init__ and validation for high-performance creation."""
         obj = object.__new__(cls)
@@ -96,27 +86,12 @@ class Quantity(Generic[ValueType, UncType]):
         object.__setattr__(obj, "system", system)
         object.__setattr__(obj, "dimension", dimension)
         object.__setattr__(obj, "fraction", None)
+
+        if backend is None:
+            backend = BackendManager.get_backend(value)
+        object.__setattr__(obj, "_backend", backend)
+
         return cast(Self, obj)
-
-    @overload
-    @classmethod
-    def from_input(
-        cls,
-        value: ScalarValue,
-        unit: CompoundUnit,
-        system: UnitSystem,
-        uncertainty: float = 0.0,
-    ) -> Quantity[ScalarValue, float]: ...
-
-    @overload
-    @classmethod
-    def from_input(
-        cls,
-        value: ArrayValue,
-        unit: CompoundUnit,
-        system: UnitSystem,
-        uncertainty: ArrayUnc | float = 0.0,
-    ) -> Quantity[ArrayValue, ArrayUnc]: ...
 
     @overload
     @classmethod
@@ -129,7 +104,7 @@ class Quantity(Generic[ValueType, UncType]):
     ) -> Quantity[Any, Any]: ...
 
     @classmethod
-    def from_input(  # type: ignore
+    def from_input(
         cls,
         value: Any,
         unit: CompoundUnit,
@@ -141,27 +116,147 @@ class Quantity(Generic[ValueType, UncType]):
             system if system is not None else get_default_system()
         )
 
-        if isinstance(value, np.ndarray):
-            value.flags.writeable = False
-            # Ensure uncertainty is also an array for vectorized consistency
-            if not isinstance(uncertainty, (np.ndarray, Uncertainty)):
-                uncertainty = np.full(value.shape, uncertainty, dtype=float)
+        backend = BackendManager.get_backend(value)
+
+        # Ensure uncertainty matches backend type if array
+        if backend.is_array(value):
+            if not isinstance(
+                uncertainty, Uncertainty
+            ) and not backend.is_array(uncertainty):
+                try:
+                    shape = backend.shape(value)
+                    # Create array of ones with same shape
+                    ones = backend.ones(shape)
+                    # Multiply by scalar uncertainty to broadcast
+                    uncertainty = backend.mul(ones, uncertainty)
+                except (AttributeError, NotImplementedError):
+                    # Fallback if backend implementation is incomplete
+                    pass
 
         uncertainty_obj = (
             uncertainty
             if isinstance(uncertainty, Uncertainty)
             else Uncertainty.from_standard(uncertainty)
         )
-        if isinstance(uncertainty_obj.std_dev, np.ndarray):
-            uncertainty_obj.std_dev.flags.writeable = False
-        frac = Fraction(str(value)) if np.isscalar(value) else None
+
+        # Check for fraction support (Python backend only usually)
+        frac = None
+        if not backend.is_array(value):
+            try:
+                frac = Fraction(str(value))
+            except (ValueError, TypeError):
+                pass
+
         return cls(
             magnitude=cast(ValueType, value),
             unit=unit,
-            uncertainty_obj=cast(Uncertainty[UncType], uncertainty_obj),
+            uncertainty_obj=cast("Uncertainty[UncType]", uncertainty_obj),
             fraction=frac,
             system=resolved_system,
         )
+
+    def __hash__(self) -> int:
+        """Computes hash of the quantity."""
+        # Note: If magnitude is array, it might not be hashable.
+        # Python arrays are not hashable. Tuple is.
+        # We rely on self.magnitude.__hash__()
+        # If not hashable, it will raise TypeError which is expected behavior for mutable types.
+        try:
+            return hash((self.magnitude, self.unit, self.uncertainty_obj))
+        except TypeError:
+            # Fallback for unhashable magnitude (like numpy array)
+            # Maybe hash bytes? Or raise.
+            # Usually Quantity with array magnitude != hashable.
+            raise TypeError(
+                "unhashable type: 'Quantity' with unhashable magnitude"
+            )
+
+    @property
+    def _has_uncertainty(self) -> bool:
+        """Checks if uncertainty is non-zero, safely handling arrays."""
+        unc = self.uncertainty
+        try:
+            # Backend-aware check
+            if self._backend.is_array(unc):
+                return bool(self._backend.any(self._backend.not_equal(unc, 0)))
+
+            # Standard check (covers safe scalars and Python lists if backend matches)
+            res = unc != 0
+
+            # Handle Truth Value Ambiguity (e.g. Python backend with Numpy array uncertainty)
+            try:
+                if res:
+                    return True
+            except ValueError:
+                # If "The truth value of an array is ambiguous"
+                if hasattr(res, "any"):
+                    return bool(res.any())
+                return True  # Default to True if complex structure
+            return False
+        except Exception:
+            return True  # Fallback for safety
+
+    def __repr__(self) -> str:
+        """Returns a concise string representation."""
+        return (
+            f"Quantity({self.magnitude!r}, {self.unit!r}, "
+            f"uncertainty={self.uncertainty!r})"
+        )
+
+    def __str__(self) -> str:
+        """Returns a user-friendly string representation."""
+        unit_str = self.unit.to_string(self.system)
+        if self._has_uncertainty:
+            return f"({self.magnitude} ± {self.uncertainty}) {unit_str}"
+        return f"{self.magnitude} {unit_str}"
+
+    def __format__(self, format_spec: str) -> str:
+        """Formats the quantity according to the specification."""
+        parts = format_spec.split("|")
+        mag_fmt = ""
+        use_alias = False
+
+        for p in parts:
+            if p == "alias":
+                use_alias = True
+            elif p != "frac":
+                mag_fmt = p
+
+        unit_str = self.unit.to_string(self.system, use_alias=use_alias)
+
+        if "frac" in parts and self.fraction is not None:
+            return f"{self.fraction} {unit_str}"
+
+        if mag_fmt:
+            formatted_mag = format(self.magnitude, mag_fmt)
+            if self._has_uncertainty:
+                # Formatting array uncertainty might fail if format spec is for scalar
+                # Python format() on array delegates to array.__format__ which is limited.
+                # If unsafe, fallback to str?
+                try:
+                    formatted_unc = format(self.uncertainty, mag_fmt)
+                except (TypeError, ValueError):
+                    formatted_unc = str(self.uncertainty)
+                return f"({formatted_mag} ± {formatted_unc}) {unit_str}"
+            return f"{formatted_mag} {unit_str}"
+
+        # Default behavior matches __str__
+        if self._has_uncertainty:
+            return f"({self.magnitude} ± {self.uncertainty}) {unit_str}"
+        return f"{self.magnitude} {unit_str}"
+
+    def to_latex(self) -> str:
+        """Returns the LaTeX representation."""
+        unit_latex = self.unit.to_latex()
+        if self._has_uncertainty:
+            return (
+                f"({self.magnitude} \\pm {self.uncertainty}) \\; {unit_latex}"
+            )
+        return f"{self.magnitude} \\; {unit_latex}"
+
+    def _repr_latex_(self):
+        """Returns LaTeX for Jupyter notebooks."""
+        return f"${self.to_latex()}$"
 
     @property
     def uncertainty(self) -> UncType:
@@ -199,6 +294,7 @@ class Quantity(Generic[ValueType, UncType]):
 
             if source_def and target_def:
                 # Delegate to converters: convert to base, then from base to target
+                # We assume converters handle the backend types or backend objects support ops
                 base_val = source_def.converter.to_base(self.magnitude)
                 new_magnitude = target_def.converter.from_base(base_val)
 
@@ -209,11 +305,23 @@ class Quantity(Generic[ValueType, UncType]):
                 # where we can approximate or fall back.
                 s_scale = getattr(source_def.converter, "scale", 1.0)
                 t_scale = getattr(target_def.converter, "scale", 1.0)
-                scale_ratio = s_scale / t_scale
-                new_uncertainty = cast(Numeric, self.uncertainty) * scale_ratio
+
+                # Use backend for division if needed?
+                # Assuming scales are floats.
+                if isinstance(s_scale, (int, float)) and isinstance(
+                    t_scale, (int, float)
+                ):
+                    scale_ratio = s_scale / t_scale
+                else:
+                    # Fallback if scales are weird
+                    scale_ratio = 1.0
+
+                new_uncertainty = self._backend.mul(
+                    self.uncertainty, scale_ratio
+                )
 
                 return cast(
-                    Quantity[ValueType, UncType],
+                    "Quantity[ValueType, UncType]",
                     Quantity.from_input(
                         new_magnitude,
                         target_unit,
@@ -221,16 +329,19 @@ class Quantity(Generic[ValueType, UncType]):
                         uncertainty=new_uncertainty,
                     ),
                 )
-        # ----------------------------------------------------------
 
         conversion_factor = self.unit.conversion_factor_to(
             target_unit, self.system
         )
-        new_value = cast(Numeric, self.magnitude) * conversion_factor
-        new_uncertainty = cast(Numeric, self.uncertainty) * conversion_factor
+
+        # Using backend for multiplication
+        new_value = self._backend.mul(self.magnitude, conversion_factor)
+        new_uncertainty = self._backend.mul(
+            self.uncertainty, conversion_factor
+        )
 
         return cast(
-            Quantity[ValueType, UncType],
+            "Quantity[ValueType, UncType]",
             Quantity.from_input(
                 new_value,
                 target_unit,
@@ -242,9 +353,9 @@ class Quantity(Generic[ValueType, UncType]):
     def _propagate_vectorized(
         self,
         other: Any,
-        out_magnitude: NDArray[Any],
-        jac_self: sparse.spmatrix | NDArray[Any] | None,
-        jac_other: sparse.spmatrix | NDArray[Any] | None = None,
+        out_magnitude: Any,
+        jac_self: Any,
+        jac_other: Any = None,
     ) -> Uncertainty:
         """Helper to propagate vectorized uncertainty via CovarianceStore."""
         store = CovarianceStore()
@@ -259,20 +370,42 @@ class Quantity(Generic[ValueType, UncType]):
             if isinstance(other, Quantity):
                 in_slices.append(other.uncertainty_obj.ensure_vector_slice())
                 jacobians.append(jac_other)
-            elif isinstance(other, (int, float, np.ndarray)):
-                # Raw value has zero uncertainty, but we still need a Jacobian
-                # if the user provided one, though typically it wouldn't be needed.
-                # However, if it's broadcating a scalar it might be relevant.
+            elif self._backend.is_array(other) or isinstance(
+                other, (int, float)
+            ):
                 pass
 
-        out_size = int(np.prod(out_magnitude.shape))
+        # Compute size using backend
+        shape = self._backend.shape(out_magnitude)
+        # simple product of shape dimensions
+        out_size = 1
+        for dim in shape:
+            out_size *= dim
+
         out_slice = store.allocate(out_size)
 
         store.update_from_propagation(out_slice, in_slices, jacobians)
 
         # Compute std_dev from diagonal for the new Uncertainty object
         out_cov = store.get_covariance_block(out_slice, out_slice)
-        std_dev = np.sqrt(out_cov.diagonal()).reshape(out_magnitude.shape)
+
+        # We need sqrt and diagonal.
+        # out_cov is scipy.sparse. We need to interact with it.
+        # Ideally this logic is in backend, but we are in core.
+        # We assume out_cov has .diagonal() method (scipy sparse has it).
+        diag = out_cov.diagonal()
+
+        # Convert diagonal back to array shape
+        # We use backend.asarray check? No, diag is numpy array usually from scipy.
+        # But we must avoid importing numpy.
+        # We can assume backend.reshape works on `diag` if it's compatible.
+        # or we cast to backend array.
+
+        # IMPORTANT: if backend is Torch, we might have issue here if we mix scipy sparse with torch.
+        # For now, we assume NumpyBackend flow.
+
+        std_dev_flat = self._backend.sqrt(diag)
+        std_dev = self._backend.reshape(std_dev_flat, shape)
 
         return Uncertainty(
             std_dev=cast(UncType, std_dev), vector_slice=out_slice
@@ -283,12 +416,50 @@ class Quantity(Generic[ValueType, UncType]):
         """Handles cases like my_quantity + other."""
         # --- FAST PATH ---
         if type(other) is Quantity and self.unit is other.unit:
-            new_magnitude = self.magnitude + other.magnitude
-            if isinstance(new_magnitude, np.ndarray):
-                # Always use vectorized for arrays even in fast path if unit matches
-                size = int(np.prod(new_magnitude.shape))
-                j_self = sparse.eye(size)
-                j_other = sparse.eye(size)
+            new_magnitude = self._backend.add(self.magnitude, other.magnitude)
+
+            if self._backend.is_array(new_magnitude):
+                size = 1
+                for d in self._backend.shape(new_magnitude):
+                    size *= d
+
+                # Broadcasting for self
+                is_self_scalar = False
+                if (
+                    (
+                        self._backend.shape(self.magnitude) == ()
+                        or len(self._backend.shape(self.magnitude)) == 0
+                    )
+                    or hasattr(self.magnitude, "shape")
+                    and self.magnitude.shape == (1,)
+                ):
+                    is_self_scalar = True
+
+                if is_self_scalar:
+                    j_self = self._backend.ones((size, 1))
+                else:
+                    j_self = self._backend.eye(size, format="csr")
+
+                # Check for broadcasting: if other is scalar-like, broadcast Jacobian
+                is_other_scalar = False
+                if isinstance(other, Quantity):
+                    # If backend supports shape on magnitude, checking shape is robust
+                    if (
+                        self._backend.shape(other.magnitude) == ()
+                        or len(self._backend.shape(other.magnitude)) == 0
+                    ):
+                        is_other_scalar = True
+                    elif hasattr(
+                        other.magnitude, "shape"
+                    ) and other.magnitude.shape == (1,):
+                        # Numpy specific fallback safe for now if backend is numpy
+                        is_other_scalar = True
+
+                if is_other_scalar:
+                    j_other = self._backend.ones((size, 1))
+                else:
+                    j_other = self._backend.eye(size, format="csr")
+
                 new_unc = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
                 )
@@ -298,13 +469,16 @@ class Quantity(Generic[ValueType, UncType]):
                     new_unc,
                     self.system,
                     self.dimension,
+                    self._backend,
                 )
+            # Scalar path
             return self._fast_new(
-                self.magnitude + other.magnitude,
+                new_magnitude,
                 self.unit,
                 self.uncertainty_obj + other.uncertainty_obj,
                 self.system,
                 self.dimension,
+                self._backend,
             )
         # -----------------
 
@@ -314,20 +488,27 @@ class Quantity(Generic[ValueType, UncType]):
         if self.dimension != other.dimension:
             raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
-        new_magnitude = self.magnitude + other_converted.magnitude
+        new_magnitude = self._backend.add(
+            self.magnitude, other_converted.magnitude
+        )
 
-        if isinstance(new_magnitude, np.ndarray):
-            size = int(np.prod(new_magnitude.shape))
-            j_self = (
-                sparse.eye(size)
-                if isinstance(self.magnitude, np.ndarray)
-                else sparse.csr_matrix(np.ones((size, 1)))
-            )
-            j_other = (
-                sparse.eye(size)
-                if isinstance(other_converted.magnitude, np.ndarray)
-                else sparse.csr_matrix(np.ones((size, 1)))
-            )
+        if self._backend.is_array(new_magnitude):
+            size = 1
+            for d in self._backend.shape(new_magnitude):
+                size *= d
+
+            # For sparse matrix construction we need ones/eye.
+            # Delegating to backend.
+            if self._backend.is_array(self.magnitude):
+                j_self = self._backend.eye(size)
+            else:
+                j_self = self._backend.eye(size)
+
+            if self._backend.is_array(other_converted.magnitude):
+                j_other = self._backend.eye(size)
+            else:
+                j_other = self._backend.eye(size)
+
             new_uncertainty_obj = self._propagate_vectorized(
                 other_converted, new_magnitude, j_self, j_other
             )
@@ -347,11 +528,47 @@ class Quantity(Generic[ValueType, UncType]):
         """Handles cases like my_quantity - other."""
         # --- FAST PATH ---
         if type(other) is Quantity and self.unit is other.unit:
-            new_magnitude = self.magnitude - other.magnitude
-            if isinstance(new_magnitude, np.ndarray):
-                size = int(np.prod(new_magnitude.shape))
-                j_self = sparse.eye(size)
-                j_other = -sparse.eye(size)
+            new_magnitude = self._backend.sub(self.magnitude, other.magnitude)
+            if self._backend.is_array(new_magnitude):
+                size = 1
+                for d in self._backend.shape(new_magnitude):
+                    size *= d
+
+                # Broadcasting for self
+                is_self_scalar = False
+                if (
+                    (
+                        self._backend.shape(self.magnitude) == ()
+                        or len(self._backend.shape(self.magnitude)) == 0
+                    )
+                    or hasattr(self.magnitude, "shape")
+                    and self.magnitude.shape == (1,)
+                ):
+                    is_self_scalar = True
+
+                if is_self_scalar:
+                    j_self = self._backend.ones((size, 1))
+                else:
+                    j_self = self._backend.eye(size)
+
+                # Broadcasting for subtraction
+                is_other_scalar = False
+                if isinstance(other, Quantity):
+                    if (
+                        self._backend.shape(other.magnitude) == ()
+                        or len(self._backend.shape(other.magnitude)) == 0
+                        or hasattr(other.magnitude, "shape")
+                        and other.magnitude.shape == (1,)
+                    ):
+                        is_other_scalar = True
+
+                if is_other_scalar:
+                    j_other = self._backend.mul(
+                        self._backend.ones((size, 1)), -1
+                    )
+                else:
+                    j_other = self._backend.mul(self._backend.eye(size), -1)
+
                 new_unc = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
                 )
@@ -361,15 +578,16 @@ class Quantity(Generic[ValueType, UncType]):
                     new_unc,
                     self.system,
                     self.dimension,
+                    self._backend,
                 )
             return self._fast_new(
-                self.magnitude - other.magnitude,
+                new_magnitude,
                 self.unit,
                 self.uncertainty_obj - other.uncertainty_obj,
                 self.system,
                 self.dimension,
+                self._backend,
             )
-        # -----------------
 
         if not isinstance(other, Quantity):
             return NotImplemented
@@ -377,20 +595,17 @@ class Quantity(Generic[ValueType, UncType]):
         if self.dimension != other.dimension:
             raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
-        new_magnitude = self.magnitude - other_converted.magnitude
+        new_magnitude = self._backend.sub(
+            self.magnitude, other_converted.magnitude
+        )
 
-        if isinstance(new_magnitude, np.ndarray):
-            size = int(np.prod(new_magnitude.shape))
-            j_self = (
-                sparse.eye(size)
-                if isinstance(self.magnitude, np.ndarray)
-                else sparse.csr_matrix(np.ones((size, 1)))
-            )
-            j_other = (
-                -sparse.eye(size)
-                if isinstance(other_converted.magnitude, np.ndarray)
-                else -sparse.csr_matrix(np.ones((size, 1)))
-            )
+        if self._backend.is_array(new_magnitude):
+            size = 1
+            for d in self._backend.shape(new_magnitude):
+                size *= d
+            j_self = self._backend.eye(size)
+            j_other = self._backend.mul(self._backend.eye(size), -1)
+
             new_uncertainty_obj = self._propagate_vectorized(
                 other_converted, new_magnitude, j_self, j_other
             )
@@ -407,19 +622,22 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __mul__(self, other: Any) -> Quantity:
-        """Handles cases like my_quantity * other."""
-        if isinstance(other, (int, float, np.ndarray)):
-            new_magnitude = cast(Numeric, self.magnitude) * other
-            if isinstance(new_magnitude, np.ndarray):
-                # z_i = x_i * k_i => dz_i = k_i * dx_i
-                size = int(np.prod(new_magnitude.shape))
-                # other might be scalar or array
-                if isinstance(other, np.ndarray):
-                    j_self = sparse.diags(
-                        diagonals=[other.flatten()], offsets=[0]
-                    )
+        if isinstance(other, (int, float, complex)) or self._backend.is_array(
+            other
+        ):
+            new_magnitude = self._backend.mul(self.magnitude, other)
+            if self._backend.is_array(new_magnitude):
+                size = 1
+                for d in self._backend.shape(new_magnitude):
+                    size *= d
+
+                if self._backend.is_array(other):
+                    # flatten
+                    other_flat = self._backend.reshape(other, (size,))
+                    j_self = self._backend.diags([other_flat], [0])
                 else:
-                    j_self = sparse.eye(size) * other
+                    j_self = self._backend.mul(self._backend.eye(size), other)
+
                 new_uncertainty_obj = self._propagate_vectorized(
                     None, new_magnitude, j_self, None
                 )
@@ -427,7 +645,7 @@ class Quantity(Generic[ValueType, UncType]):
                 new_uncertainty_obj = self.uncertainty_obj.scale(other)
 
             return cast(
-                Quantity[ValueType, UncType],
+                "Quantity[ValueType, UncType]",
                 Quantity.from_input(
                     new_magnitude,
                     self.unit,
@@ -437,31 +655,111 @@ class Quantity(Generic[ValueType, UncType]):
             )
 
         if isinstance(other, Quantity):
-            new_magnitude = self.magnitude * other.magnitude
+            new_magnitude = self._backend.mul(self.magnitude, other.magnitude)
             new_unit = self.unit * other.unit
             new_dimension = self.dimension * other.dimension
 
-            if isinstance(new_magnitude, np.ndarray):
-                # z = x * y => dz = y*dx + x*dy
-                size = int(np.prod(new_magnitude.shape))
-                # Handle broadcasting by tiling/flattening
-                y_flat = np.broadcast_to(
-                    other.magnitude, new_magnitude.shape
-                ).flatten()
-                x_flat = np.broadcast_to(
-                    self.magnitude, new_magnitude.shape
-                ).flatten()
+            if self._backend.is_array(new_magnitude):
+                size = 1
+                for d in self._backend.shape(new_magnitude):
+                    size *= d
 
-                j_self = (
-                    sparse.diags(diagonals=[y_flat], offsets=[0])
-                    if isinstance(self.magnitude, np.ndarray)
-                    else sparse.csr_matrix(y_flat.reshape(-1, 1))
+                # Prepare broadcasted values flattened to (size,)
+                # Note: This relies on backend to handle broadcasting in existing mul op,
+                # here we need explicit flat arrays for Jacobian construction.
+
+                # Flatten/Broadcast other (coefficient for j_self)
+                if self._backend.is_array(other.magnitude):
+                    if self._backend.shape(other.magnitude) == () or (
+                        hasattr(other.magnitude, "shape")
+                        and other.magnitude.shape == (1,)
+                    ):
+                        other_val = (
+                            other.magnitude.item()
+                            if hasattr(other.magnitude, "item")
+                            else other.magnitude
+                        )
+                        other_flat = self._backend.mul(
+                            self._backend.ones(size), other_val
+                        )
+                    elif self._backend.shape(
+                        other.magnitude
+                    ) == self._backend.shape(new_magnitude):
+                        other_flat = self._backend.reshape(
+                            other.magnitude, (size,)
+                        )
+                    else:
+                        # Complex broadcast? Fallback to ones*val if it implicitly broadcasted?
+                        # Or assume correct shape.
+                        other_flat = self._backend.reshape(
+                            other.magnitude, (size,)
+                        )  # Simplistic
+                else:
+                    other_flat = self._backend.mul(
+                        self._backend.ones(size), other.magnitude
+                    )
+
+                # Determine j_self structure
+                is_self_scalar = (
+                    self._backend.shape(self.magnitude) == ()
+                    or len(self._backend.shape(self.magnitude)) == 0
+                    or (
+                        hasattr(self.magnitude, "shape")
+                        and self.magnitude.shape == (1,)
+                    )
                 )
-                j_other = (
-                    sparse.diags(diagonals=[x_flat], offsets=[0])
-                    if isinstance(other.magnitude, np.ndarray)
-                    else sparse.csr_matrix(x_flat.reshape(-1, 1))
+
+                if is_self_scalar:
+                    j_self = self._backend.reshape(other_flat, (size, 1))
+                    # If backend returns dense, it's fine. If sparse required, we might need conversion.
+                    # But CovarianceStore handles dense too.
+                else:
+                    j_self = self._backend.diags([other_flat], [0])
+
+                # Flatten/Broadcast self (coefficient for j_other)
+                if self._backend.is_array(self.magnitude):
+                    if self._backend.shape(self.magnitude) == () or (
+                        hasattr(self.magnitude, "shape")
+                        and self.magnitude.shape == (1,)
+                    ):
+                        self_val = (
+                            self.magnitude.item()
+                            if hasattr(self.magnitude, "item")
+                            else self.magnitude
+                        )
+                        self_flat = self._backend.mul(
+                            self._backend.ones(size), self_val
+                        )
+                    elif self._backend.shape(
+                        self.magnitude
+                    ) == self._backend.shape(new_magnitude):
+                        self_flat = self._backend.reshape(
+                            self.magnitude, (size,)
+                        )
+                    else:
+                        self_flat = self._backend.reshape(
+                            self.magnitude, (size,)
+                        )
+                else:
+                    self_flat = self._backend.mul(
+                        self._backend.ones(size), self.magnitude
+                    )
+
+                # Determine j_other structure
+                is_other_scalar = (
+                    self._backend.shape(other.magnitude) == ()
+                    or len(self._backend.shape(other.magnitude)) == 0
+                    or (
+                        hasattr(other.magnitude, "shape")
+                        and other.magnitude.shape == (1,)
+                    )
                 )
+
+                if is_other_scalar:
+                    j_other = self._backend.reshape(self_flat, (size, 1))
+                else:
+                    j_other = self._backend.diags([self_flat], [0])
+
                 new_uncertainty_obj = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
                 )
@@ -478,7 +776,9 @@ class Quantity(Generic[ValueType, UncType]):
                 new_uncertainty_obj,
                 self.system,
                 new_dimension,
+                self._backend,
             )
+
         if isinstance(other, CompoundUnit):
             new_unit = self.unit * other
             return Quantity.from_input(
@@ -490,18 +790,24 @@ class Quantity(Generic[ValueType, UncType]):
         return NotImplemented
 
     def __truediv__(self, other: Any) -> Quantity:
-        """Handles cases like my_quantity / other."""
-        if isinstance(other, (int, float, np.ndarray)):
-            new_magnitude = cast(Numeric, self.magnitude) / other
-            if isinstance(new_magnitude, np.ndarray):
-                # z_i = x_i / k_i => dz_i = (1/k_i) * dx_i
-                size = int(np.prod(new_magnitude.shape))
-                if isinstance(other, np.ndarray):
-                    j_self = sparse.diags(
-                        diagonals=[1.0 / other.flatten()], offsets=[0]
-                    )
+        if isinstance(other, (int, float, complex)) or self._backend.is_array(
+            other
+        ):
+            new_magnitude = self._backend.truediv(self.magnitude, other)
+            if self._backend.is_array(new_magnitude):
+                size = 1
+                for d in self._backend.shape(new_magnitude):
+                    size *= d
+
+                if self._backend.is_array(other):
+                    other_recip = self._backend.truediv(1.0, other)
+                    other_recip = self._backend.reshape(other_recip, (size,))
+                    j_self = self._backend.diags([other_recip], [0])
                 else:
-                    j_self = sparse.eye(size) * (1.0 / other)
+                    j_self = self._backend.mul(
+                        self._backend.eye(size), 1.0 / other
+                    )
+
                 new_uncertainty_obj = self._propagate_vectorized(
                     None, new_magnitude, j_self, None
                 )
@@ -509,7 +815,7 @@ class Quantity(Generic[ValueType, UncType]):
                 new_uncertainty_obj = self.uncertainty_obj.scale(1.0 / other)
 
             return cast(
-                Quantity[ValueType, UncType],
+                "Quantity[ValueType, UncType]",
                 Quantity.from_input(
                     new_magnitude,
                     self.unit,
@@ -517,35 +823,120 @@ class Quantity(Generic[ValueType, UncType]):
                     uncertainty=new_uncertainty_obj,
                 ),
             )
+
         if isinstance(other, Quantity):
-            new_magnitude = self.magnitude / other.magnitude
+            new_magnitude = self._backend.truediv(
+                self.magnitude, other.magnitude
+            )
             new_unit = self.unit / other.unit
             new_dimension = self.dimension / other.dimension
 
-            if isinstance(new_magnitude, np.ndarray):
-                # z = x / y => dz = (1/y)dx - (x/y^2)dy
-                size = int(np.prod(new_magnitude.shape))
-                y_flat = np.broadcast_to(
-                    other.magnitude, new_magnitude.shape
-                ).flatten()
-                x_flat = np.broadcast_to(
-                    self.magnitude, new_magnitude.shape
-                ).flatten()
+            if self._backend.is_array(new_magnitude):
+                size = 1
+                for d in self._backend.shape(new_magnitude):
+                    size *= d
 
-                j_self = (
-                    sparse.diags(diagonals=[1.0 / y_flat], offsets=[0])
-                    if isinstance(self.magnitude, np.ndarray)
-                    else sparse.csr_matrix((1.0 / y_flat).reshape(-1, 1))
-                )
-                j_other = (
-                    sparse.diags(
-                        diagonals=[-x_flat / (y_flat**2)], offsets=[0]
+                # Prepare broadcasted values flattened to (size,)
+
+                # Term 1: 1/y (coefficient for j_self)
+                # We need 1/other.magnitude
+                # If other is scalar/array...
+                recip_other = self._backend.truediv(1.0, other.magnitude)
+
+                # Broadcast recip_other to (size,)
+                if self._backend.is_array(recip_other):
+                    if self._backend.shape(recip_other) == () or (
+                        hasattr(recip_other, "shape")
+                        and recip_other.shape == (1,)
+                    ):
+                        # Broadcast
+                        val = (
+                            recip_other.item()
+                            if hasattr(recip_other, "item")
+                            else recip_other
+                        )
+                        recip_flat = self._backend.mul(
+                            self._backend.ones(size), val
+                        )
+                    elif self._backend.shape(
+                        recip_other
+                    ) == self._backend.shape(new_magnitude):
+                        recip_flat = self._backend.reshape(
+                            recip_other, (size,)
+                        )
+                    else:
+                        recip_flat = self._backend.reshape(
+                            recip_other, (size,)
+                        )
+                else:
+                    recip_flat = self._backend.mul(
+                        self._backend.ones(size), recip_other
                     )
-                    if isinstance(other.magnitude, np.ndarray)
-                    else sparse.csr_matrix(
-                        (-x_flat / (y_flat**2)).reshape(-1, 1)
+
+                is_self_scalar = (
+                    self._backend.shape(self.magnitude) == ()
+                    or len(self._backend.shape(self.magnitude)) == 0
+                    or (
+                        hasattr(self.magnitude, "shape")
+                        and self.magnitude.shape == (1,)
                     )
                 )
+
+                if is_self_scalar:
+                    j_self = self._backend.reshape(recip_flat, (size, 1))
+                else:
+                    j_self = self._backend.diags([recip_flat], [0])
+
+                # Term 2: -x/y^2 (coefficient for j_other)
+                # factor = - new_magnitude / other.magnitude  ? No (-x/y^2 = -(x/y)/y = -z/y)
+                # factor = - new_magnitude / other.magnitude
+                neg_z_over_y = self._backend.truediv(
+                    self._backend.mul(new_magnitude, -1.0), other.magnitude
+                )
+
+                # Broadcast factor to (size,)
+                if self._backend.is_array(neg_z_over_y):
+                    if self._backend.shape(neg_z_over_y) == () or (
+                        hasattr(neg_z_over_y, "shape")
+                        and neg_z_over_y.shape == (1,)
+                    ):
+                        val = (
+                            neg_z_over_y.item()
+                            if hasattr(neg_z_over_y, "item")
+                            else neg_z_over_y
+                        )
+                        factor_flat = self._backend.mul(
+                            self._backend.ones(size), val
+                        )
+                    elif self._backend.shape(
+                        neg_z_over_y
+                    ) == self._backend.shape(new_magnitude):
+                        factor_flat = self._backend.reshape(
+                            neg_z_over_y, (size,)
+                        )
+                    else:
+                        factor_flat = self._backend.reshape(
+                            neg_z_over_y, (size,)
+                        )
+                else:
+                    factor_flat = self._backend.mul(
+                        self._backend.ones(size), neg_z_over_y
+                    )
+
+                is_other_scalar = (
+                    self._backend.shape(other.magnitude) == ()
+                    or len(self._backend.shape(other.magnitude)) == 0
+                    or (
+                        hasattr(other.magnitude, "shape")
+                        and other.magnitude.shape == (1,)
+                    )
+                )
+
+                if is_other_scalar:
+                    j_other = self._backend.reshape(factor_flat, (size, 1))
+                else:
+                    j_other = self._backend.diags([factor_flat], [0])
+
                 new_uncertainty_obj = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
                 )
@@ -563,7 +954,9 @@ class Quantity(Generic[ValueType, UncType]):
                 new_uncertainty_obj,
                 self.system,
                 new_dimension,
+                self._backend,
             )
+
         if isinstance(other, CompoundUnit):
             new_unit = self.unit / other
             return Quantity.from_input(
@@ -575,13 +968,11 @@ class Quantity(Generic[ValueType, UncType]):
         return NotImplemented
 
     def __pow__(self, exponent: float) -> Quantity:
-        """Handles cases like my_quantity ** power."""
-        new_value = self.magnitude**exponent
+        new_value = self._backend.pow(self.magnitude, exponent)
         new_unit = self.unit**exponent
-        calc_value = np.asarray(self.magnitude, dtype=float)
-        new_uncertainty_obj = self.uncertainty_obj.power(
-            exponent, cast(UncType, calc_value)
-        )
+        # Casting to float is tricky if it's array.
+        # But Uncertainty.power expects Any value usually.
+        new_uncertainty_obj = self.uncertainty_obj.power(exponent, new_value)
         return Quantity.from_input(
             new_value, new_unit, self.system, uncertainty=new_uncertainty_obj
         )
@@ -590,12 +981,11 @@ class Quantity(Generic[ValueType, UncType]):
     __rmul__ = __mul__
 
     def __rtruediv__(self, other: Any) -> Quantity:
-        """Handles right-side division, typically for creating a Quantity."""
-        if np.any(np.asarray(self.magnitude) == 0):
-            raise ZeroDivisionError(
-                "Division by a Quantity with zero magnitude."
-            )
-        new_magnitude = other / self.magnitude
+        # Check for zero.
+        if self._backend.any(self._backend.allclose(self.magnitude, 0)):
+            raise ZeroDivisionError("Division by zero magnitude Quantity")
+
+        new_magnitude = self._backend.truediv(other, self.magnitude)
         new_unit = 1 / self.unit
         other_uncertainty = Uncertainty(0.0)
         new_uncertainty_obj = other_uncertainty.propagate_mul_div(
@@ -609,11 +999,10 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __neg__(self) -> Self:
-        """Returns a new Quantity with negated magnitude."""
         return cast(
             Self,
             Quantity.from_input(
-                -self.magnitude,
+                self._backend.mul(self.magnitude, -1),
                 self.unit,
                 self.system,
                 uncertainty=self.uncertainty_obj.scale(-1.0),
@@ -621,614 +1010,329 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __pos__(self) -> Self:
-        """Returns the Quantity itself."""
         return self
 
     def __abs__(self) -> Self:
-        """Returns the absolute value of the Quantity."""
-        # For abs(x), uncertainty scaling depends on sign
-        # Approximation: scale by sign of magnitude
-        sign = np.sign(self.magnitude)
+        sign = self._backend.sign(self.magnitude)
         return cast(
             Self,
             Quantity.from_input(
-                abs(self.magnitude),
+                self._backend.abs(self.magnitude),
                 self.unit,
                 self.system,
                 self.uncertainty_obj.scale(sign),
             ),
         )
 
-    def __float__(self) -> float:
-        """Converts the Quantity to a float."""
-        return float(self.magnitude)
+    # --- NumPy Integration (Soft Dependency) ---
+    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+        """Handles NumPy ufuncs by delegating to the backend."""
+        try:
+            import numpy as np
+        except ImportError:
+            return NotImplemented
 
-    # --- NumPy Integration ---
-    def __array_ufunc__(
-        self,
-        ufunc: np.ufunc,
-        method: Literal[
-            "__call__", "reduce", "reduceat", "accumulate", "outer", "at"
-        ],
-        *inputs: Any,
-        **kwargs: Any,
-    ) -> Any:
-        """Handles NumPy ufuncs applied to Quantity instances."""
+        # Handle reductions (e.g. np.sum which calls np.add.reduce)
+        if method == "reduce":
+            if ufunc == np.add:
+                # Summation
+                # inputs[0] is the quantity to reduce
+                inp = inputs[0]
+                if isinstance(inp, Quantity):
+                    # Delegate to backend sum
+                    # kwargs might contain 'axis', 'dtype', 'out', 'keepdims'
+                    # We need to handle 'out' carefully or ignore?
+                    # Backend sum usually takes axis.
+                    res_mag = self._backend.sum(
+                        inp.magnitude, axis=kwargs.get("axis")
+                    )
+                    # reduce usually lowers dimension.
+                    return Quantity.from_input(res_mag, inp.unit, self.system)
+            return NotImplemented
+
         if method != "__call__":
-            # For reduce, accumulate, etc.
-            magnitudes = [
-                i.magnitude if isinstance(i, Quantity) else i for i in inputs
-            ]
-            result = getattr(ufunc, method)(*magnitudes, **kwargs)
-            if isinstance(result, (np.ndarray, float, int)):
-                return Quantity.from_input(result, self.unit, self.system)
-            return result
+            return NotImplemented
 
-        # --- FAST PATH for Binary Operations ---
-        if (
-            len(inputs) == 2
-            and isinstance(inputs[0], Quantity)
-            and isinstance(inputs[1], Quantity)
-            and inputs[0].unit is inputs[1].unit
-        ):
-            if ufunc in (np.add, np.subtract):
-                res_mag = ufunc(
-                    inputs[0].magnitude, inputs[1].magnitude, **kwargs
-                )
-                res_unc = inputs[0].uncertainty_obj + inputs[1].uncertainty_obj
-                return Quantity(
-                    res_mag,
-                    inputs[0].unit,
-                    res_unc,
-                    system=inputs[0].system,
-                )
-            if ufunc == np.multiply:
-                res_mag = inputs[0].magnitude * inputs[1].magnitude
-                res_unit = inputs[0].unit * inputs[1].unit
-                res_unc = inputs[0].uncertainty_obj.propagate_mul_div(
-                    inputs[1].uncertainty_obj,
-                    inputs[0].magnitude,
-                    inputs[1].magnitude,
-                    res_mag,
-                )
-                return Quantity(
-                    res_mag, res_unit, res_unc, system=inputs[0].system
-                )
-            if ufunc == np.true_divide:
-                res_mag = inputs[0].magnitude / inputs[1].magnitude
-                res_unit = inputs[0].unit / inputs[1].unit
-                res_unc = inputs[0].uncertainty_obj.propagate_mul_div(
-                    inputs[1].uncertainty_obj,
-                    inputs[0].magnitude,
-                    inputs[1].magnitude,
-                    res_mag,
-                )
-                return Quantity(
-                    res_mag, res_unit, res_unc, system=inputs[0].system
-                )
+        # Standard Dispatch
+        if ufunc == np.add:
+            return self.__add__(inputs[1] if inputs[0] is self else inputs[0])
+        elif ufunc == np.subtract:
+            val = inputs[1] if inputs[0] is self else inputs[0]
+            if inputs[0] is self:
+                return self.__sub__(val)
+            else:
+                return self.__rsub__(val)
+        elif ufunc == np.multiply:
+            return self.__mul__(inputs[1] if inputs[0] is self else inputs[0])
+        elif ufunc == np.true_divide:
+            if inputs[0] is self:
+                return self.__truediv__(inputs[1])
+            else:
+                return self.__rtruediv__(inputs[0])
+        elif ufunc == np.power:
+            if inputs[0] is self:
+                return self.__pow__(inputs[1])
 
-        # Delegate to dunder methods if available for standard arithmetic
-        op_map = {
-            np.add: operator.add,
-            np.subtract: operator.sub,
-            np.multiply: operator.mul,
-            np.true_divide: operator.truediv,
-            np.power: operator.pow,
-        }
-        if ufunc in op_map:
-            return op_map[ufunc](*inputs, **kwargs)
+        # Unary math that changes unit
+        if ufunc == np.sqrt:
+            return self**0.5
+        elif ufunc == np.square:
+            return self**2
 
-        # Handle other ufuncs
-        magnitudes = [
-            i.magnitude if isinstance(i, Quantity) else i for i in inputs
-        ]
-        result_magnitude = ufunc(*magnitudes, **kwargs)
+        # Unary math that preserves unit
+        if ufunc == np.absolute:
+            return abs(self)
 
-        # Expanded list of ufuncs requiring dimensionless arguments
-        strict_ufuncs = (
+        # Trig functions (Require dimensionless)
+        trig_funcs = (
             np.sin,
             np.cos,
             np.tan,
             np.exp,
             np.log,
             np.log10,
-            np.log2,
             np.arcsin,
             np.arccos,
             np.arctan,
-            np.sinh,
-            np.cosh,
-            np.tanh,
         )
+        if ufunc in trig_funcs:
+            # Assume unary
+            inp = inputs[0]
+            if isinstance(inp, Quantity):
+                if not inp.dimension.is_dimensionless:
+                    # Check if it's strictly stateless or effectively dimensionless?
+                    # The test registers 'rad' as dimensionless.
+                    pass
 
-        if ufunc in strict_ufuncs:
-            # Must be dimensionless
-            for _, inp in enumerate(inputs):
-                if (
-                    isinstance(inp, Quantity)
-                    and not inp.unit.dimension(inp.system).is_dimensionless
-                ):
-                    raise IncompatibleUnitsError(inp.unit, CompoundUnit({}))
+                # If dimensionless, units are dropped/cleared in result (e.g. sin(rad) -> 1)
+                # We verify dimensionless but result is pure number (dimensionless Quantity).
+                if inp.dimension.is_dimensionless:
+                    res_mag = ufunc(inp.magnitude, **kwargs)
+                    return Quantity.from_input(
+                        res_mag, CompoundUnit({}), self.system
+                    )
 
-            # Uncertainty propagation (simplified)
-            if isinstance(inputs[0], Quantity):
-                q = inputs[0]
-                deriv = 1.0
-                if ufunc == np.sin:
-                    deriv = np.abs(np.cos(q.magnitude))
-                elif ufunc == np.cos:
-                    deriv = np.abs(-np.sin(q.magnitude))
-                elif ufunc == np.exp:
-                    deriv = np.abs(np.exp(q.magnitude))
-                # Add more derivatives as needed or keep fallback
+                raise IncompatibleUnitsError(inp.unit, CompoundUnit({}))
 
-                res_unc = Uncertainty(deriv * q.uncertainty)
-                return Quantity.from_input(
-                    result_magnitude,
-                    CompoundUnit({}),
-                    q.system,
-                    uncertainty=res_unc,
-                )
-            return result_magnitude
+        return NotImplemented
 
-        if ufunc == np.sqrt:
-            q = inputs[0]
-            res_unit = q.unit**0.5
-            # Simplified uncertainty: rel_unc_res = 0.5 * rel_unc_q
-            rel_unc = (
-                (q.uncertainty / q.magnitude)
-                if np.all(q.magnitude != 0)
-                else 0
-            )
-            res_unc = np.abs(result_magnitude * 0.5) * rel_unc
-            return Quantity.from_input(
-                result_magnitude, res_unit, q.system, uncertainty=res_unc
-            )
-
-        if ufunc in (
-            np.absolute,
-            np.abs,
-            np.fabs,
-            np.floor,
-            np.ceil,
-            np.trunc,
-            np.rint,
-            np.around,
-            np.round,
-            np.negative,
-            np.positive,
-        ):
-            q = next((i for i in inputs if isinstance(i, Quantity)), None)
-            if q:
-                return Quantity.from_input(
-                    result_magnitude, q.unit, q.system, q.uncertainty_obj
-                )
-
-        if ufunc == np.square:
-            q = inputs[0]
-            return Quantity.from_input(result_magnitude, q.unit**2, q.system)
-
-        if ufunc in (
-            np.less,
-            np.less_equal,
-            np.greater,
-            np.greater_equal,
-            np.equal,
-            np.not_equal,
-        ):
-            # Comparison: return plain bool/array
-            return result_magnitude
-
-        # Default: if result is numeric, wrap in dimensionless Quantity if
-        # input was Quantity
-        if isinstance(result_magnitude, (np.ndarray, float, int)):
-            q_input = next(
-                (i for i in inputs if isinstance(i, Quantity)), None
-            )
-            if q_input:
-                return Quantity.from_input(
-                    result_magnitude, CompoundUnit({}), q_input.system
-                )
-
-        return result_magnitude
-
-    def __array_function__(
-        self, func: Any, types: Any, args: Any, kwargs: Any
-    ) -> Any:
-        """Supports NEP-18 high-level NumPy functions."""
-        if func not in HANDLED_FUNCTIONS:
-            # Fallback to default behavior: convert all to magnitude
-            new_args = [
-                a.magnitude if isinstance(a, Quantity) else a for a in args
-            ]
-            return func(*new_args, **kwargs)
-        return HANDLED_FUNCTIONS[func](*args, **kwargs)
-
-    # --- Vector and Other Methods ---
-    def dot(
-        self, other: Quantity[NDArray[Any], Any]
-    ) -> Quantity[float, float]:
-        """Dot product."""
-        if not isinstance(other, Quantity):
+    def __array_function__(self, func, types, args, kwargs):
+        """Handles NumPy functions like np.concatenate, np.mean."""
+        try:
+            import numpy as np
+        except ImportError:
             return NotImplemented
-        result_value = np.dot(self.magnitude, other.magnitude)
-        result_unit = self.unit * other.unit
-        return cast(
-            "Quantity[float, float]",
-            Quantity.from_input(
-                result_value, result_unit, self.system, uncertainty=0.0
-            ),
-        )
 
-    def cross(
-        self, other: Quantity[NDArray[Any], Any]
-    ) -> Quantity[NDArray[Any], NDArray[Any]]:
-        """Cross product."""
-        if not isinstance(other, Quantity):
-            return NotImplemented
-        result_value = np.cross(self.magnitude, other.magnitude)
-        result_unit = self.unit * other.unit
+        if func == np.concatenate:
+            mags = []
+            unit = None
+            for arg in args[0]:
+                if isinstance(arg, Quantity):
+                    if unit is None:
+                        unit = arg.unit
+                    elif arg.unit != unit:
+                        return NotImplemented  # Strict unit check
+                    mags.append(arg.magnitude)
+                else:
+                    return NotImplemented  # All must be Quantity for now
+            res_mag = np.concatenate(mags, **kwargs)
+            return Quantity(res_mag, unit, system=self.system)
+
+        if func == np.mean:
+            # args[0] is self usually
+            q = args[0]
+            if isinstance(q, Quantity):
+                return Quantity(
+                    np.mean(q.magnitude, **kwargs), q.unit, system=q.system
+                )
+
+        return NotImplemented
+
+    # --- Representation ---
+
+    def __int__(self) -> int:
+        return int(self.magnitude)
+
+    def __round__(self, ndigits: int | None = None) -> Quantity:
+        val = round(self.magnitude, ndigits)
         return Quantity.from_input(
-            result_value, result_unit, self.system, uncertainty=0.0
+            val, self.unit, self.system, self.uncertainty
         )
 
-    def __len__(self):
-        """Returns the length if the magnitude is an array."""
-        if isinstance(self.magnitude, np.ndarray):
-            return len(self.magnitude)
-        raise TypeError(
-            f"Object of type '{type(self).__name__}' has no len()."
-        )
+    def __floor__(self) -> Quantity:
+        import math
 
-    def __getitem__(self, key):
-        """Supports indexing and slicing if the magnitude is an array."""
-        if not isinstance(self.magnitude, np.ndarray):
-            raise TypeError(
-                f"'{type(self).__name__}' object is not subscriptable."
-            )
-        sliced_value = self.magnitude[key]
-        sliced_uncertainty = (
-            self.uncertainty[key]
-            if isinstance(self.uncertainty, np.ndarray)
-            else self.uncertainty
-        )
         return Quantity.from_input(
-            sliced_value,
+            math.floor(self.magnitude),
             self.unit,
             self.system,
-            uncertainty=sliced_uncertainty,
+            self.uncertainty,
         )
 
-    def __round__(self, ndigits: int | None = None) -> Self:
-        """Rounds the magnitude to a specified number of digits."""
-        new_value = (
-            np.round(self.magnitude, ndigits)
-            if ndigits is not None
-            else np.round(self.magnitude)
-        )
-        return cast(
-            Self,
-            Quantity.from_input(
-                new_value, self.unit, self.system, self.uncertainty_obj
-            ),
+    def __ceil__(self) -> Quantity:
+        import math
+
+        return Quantity.from_input(
+            math.ceil(self.magnitude), self.unit, self.system, self.uncertainty
         )
 
-    # --- Comparison Dunder Methods ---
-    def __eq__(self, other: object) -> bool:
-        """Equality comparison."""
-        if not isinstance(other, Quantity):
-            return NotImplemented
-        if self.system != other.system or self.dimension != other.dimension:
-            return False
-        other_converted = other.to(self.unit)
-        return cast(
-            bool, np.all(np.isclose(self.magnitude, other_converted.magnitude))
+    def __trunc__(self) -> Quantity:
+        import math
+
+        return Quantity.from_input(
+            math.trunc(self.magnitude),
+            self.unit,
+            self.system,
+            self.uncertainty,
         )
 
-    def __lt__(self, other: Any) -> bool:
-        """Less than."""
+    # --- Container / Array Methods ---
+    # def __array__(self, dtype=None) -> Any:
+    #     """Returns the magnitude as a NumPy array (strips units)."""
+    #     # Note: Ideally avoid importing numpy, but this hook is for numpy.
+    #     # If magnitude is already array, return it.
+    #     # If not, convert.
+    #     try:
+    #         import numpy as np
+    #         if dtype:
+    #             return np.array(self.magnitude, dtype=dtype)
+    #         return np.array(self.magnitude)
+    #     except ImportError:
+    #         # Should not happen if this is called by numpy
+    #         return self.magnitude
+
+    def __float__(self) -> float:
+        return float(self.magnitude)  # May fail for arrays
+
+    # --- Math & Vector Ops ---
+
+    def dot(self, other: Quantity) -> Quantity:
+        """Computes dot product."""
         if not isinstance(other, Quantity):
-            return NotImplemented
-        if self.dimension != other.dimension:
-            raise IncompatibleUnitsError(self.unit, other.unit)
-        other_converted = other.to(self.unit)
-        return self.magnitude < other_converted.magnitude
+            raise TypeError(f"dot requires Quantity, got {type(other)}")
 
-    def __le__(self, other: Any) -> bool:
-        """Less than or equal to."""
+        mag = self._backend.dot(self.magnitude, other.magnitude)
+        new_unit = self.unit * other.unit
+        # Uncertainty ignored for now
+        return Quantity.from_input(mag, new_unit, self.system)
+
+    def cross(self, other: Quantity) -> Quantity:
+        """Computes cross product."""
         if not isinstance(other, Quantity):
-            return NotImplemented
-        if self.dimension != other.dimension:
-            raise IncompatibleUnitsError(self.unit, other.unit)
-        other_converted = other.to(self.unit)
-        return self.magnitude <= other_converted.magnitude
+            raise TypeError(f"cross requires Quantity, got {type(other)}")
 
-    def __gt__(self, other: Any) -> bool:
-        """Greater than."""
-        if not isinstance(other, Quantity):
-            return NotImplemented
-        if self.dimension != other.dimension:
-            raise IncompatibleUnitsError(self.unit, other.unit)
-        other_converted = other.to(self.unit)
-        return self.magnitude > other_converted.magnitude
+        mag = self._backend.cross(self.magnitude, other.magnitude)
+        new_unit = self.unit * other.unit
+        # Uncertainty ignored for now
+        return Quantity.from_input(mag, new_unit, self.system)
 
-    def __ge__(self, other: Any) -> bool:
-        """Greater than or equal to."""
-        if not isinstance(other, Quantity):
-            return NotImplemented
-        if self.dimension != other.dimension:
-            raise IncompatibleUnitsError(self.unit, other.unit)
-        other_converted = other.to(self.unit)
-        return self.magnitude >= other_converted.magnitude
+    def __len__(self) -> int:
+        return len(self.magnitude)
 
-    # --- Formatting Methods ---
-    def __format__(self, format_spec: str) -> str:
-        """Format the quantity as a string."""
-        recognized_unit_formats = {"alias", "full", "latex"}
-        if "|" in format_spec:
-            numeric_format, unit_format = format_spec.split("|", 1)
-        else:
-            is_unit_format = (
-                format_spec in recognized_unit_formats
-                or format_spec.startswith("alias:")
-                or format_spec.startswith("full:")
-                or format_spec.startswith("latex:")
-            )
-            if is_unit_format:
-                numeric_format, unit_format = "", format_spec
-            else:
-                numeric_format, unit_format = format_spec, "full"
+    def __iter__(self):
+        # Yield quantities for each element
+        # This is slow but correct for iteration
+        for i in range(len(self)):
+            yield self[i]
 
-        # --- Unit Formatting ---
-        use_alias = unit_format.startswith("alias")
-        alias_pref = (
-            unit_format.split(":", 1)[1] if ":" in unit_format else None
-        )
-        if unit_format == "latex":
-            unit_str = self.unit.to_latex()
-        else:
-            unit_str = self.unit.to_string(
-                system=self.system,
-                use_alias=use_alias,
-                alias_preference=alias_pref,
-            )
+    def __getitem__(self, key: Any) -> Quantity:
+        """Slices the quantity."""
+        new_mag = self.magnitude[key]
 
-        # --- Numeric and Uncertainty Formatting ---
-        has_unc = np.any(np.asarray(self.uncertainty) > 0)
-
-        if numeric_format == "frac" and self.fraction is not None:
-            numeric_str = str(self.fraction)
-            # Uncertainty not used with fractions
-            return f"{numeric_str} {unit_str}"
-
-        def format_val(val, fmt_spec):
-            if isinstance(val, np.ndarray):
-                return np.array2string(
-                    val,
-                    formatter={"float_kind": lambda x: format(x, fmt_spec)},
-                )
+        # Slicing uncertainty
+        # If uncertainty is array, slice it.
+        # If it's scalar, preserve it (it applies to all).
+        # We need to rely on backend or simple checks since we are in domain.
+        # Check if uncertainty_obj.std_dev is array-like
+        if hasattr(self.uncertainty, "__getitem__") and not isinstance(
+            self.uncertainty, (str, float, int)
+        ):
             try:
-                return format(float(val), fmt_spec)
-            except (ValueError, TypeError):
-                return str(val)
-
-        if has_unc:
-            if unit_format == "latex":
-                mag_str = sp.latex(self.magnitude)
-                unc_str = sp.latex(self.uncertainty)
-                return f"({mag_str} \\pm {unc_str}) \\; {unit_str}"
-            else:
-                mag_str = format_val(self.magnitude, numeric_format)
-                unc_str = format_val(self.uncertainty, numeric_format)
-                return f"({mag_str} ± {unc_str}) {unit_str}"
+                new_unc_val = self.uncertainty[key]
+            except (IndexError, TypeError):
+                # Fallback for scalar uncertainty with array magnitude?
+                new_unc_val = self.uncertainty
         else:
-            numeric_str = format_val(self.magnitude, numeric_format)
-            return f"{numeric_str} {unit_str}"
+            new_unc_val = self.uncertainty
 
-    def to_latex(self):
-        """Return a LaTeX representation of the quantity."""
-        value_latex = sp.latex(self.magnitude)
-        unit_latex = self.unit.to_latex()
-        if np.any(np.asarray(self.uncertainty) > 0):
-            unc_latex = sp.latex(self.uncertainty)
-            return f"({value_latex} \\pm {unc_latex}) \\; {unit_latex}"
-        return f"{value_latex} \\; {unit_latex}"
+        # For now, we create a new trivial Uncertainty object for the slice
+        # Losing correlation tracking for the slice is acceptable for this refactor stage
+        # unless vector_slice logic is enhanced.
+        new_unc_obj = Uncertainty(new_unc_val)
 
-    def __str__(self):
-        """Return a string representation of the quantity."""
-        is_array_unc = isinstance(self.uncertainty, np.ndarray)
-        has_unc = is_array_unc or self.uncertainty > 0
-        if not has_unc:
-            return (
-                f"{self.magnitude} "
-                f"{self.unit.to_string(self.system, use_alias=True)}"
-            )
-        if is_array_unc:
-            return (
-                f"Quantity(value={self.magnitude}, "
-                f"unit={self.unit.to_string(self.system, use_alias=True)}, "
-                "uncertainty=[...])"
-            )
-        return (
-            f"({self.magnitude} ± {self.uncertainty}) "
-            f"{self.unit.to_string(self.system, use_alias=True)}"
+        # If slicing a single element, we might get a scalar magnitude.
+        # backend might need update if it was caching type info?
+        # Quantity._fast_new handles it.
+
+        return self._fast_new(
+            new_mag,
+            self.unit,
+            new_unc_obj,
+            self.system,
+            self.dimension,  # Re-use dimension as it doesn't change
+            self._backend,  # Backend might be same (numpy) or change (scalar python?) but we pass explicit
         )
 
-    def _repr_latex_(self):
-        """Return a LaTeX representation of the quantity for use in Jupyter."""
-        return f"${self.to_latex()}$"
-
-    def __repr__(self) -> str:
-        """Return a string representation of the quantity."""
-        return (
-            f"Quantity({self.magnitude!r}, {self.unit!r}, "
-            f"uncertainty={self.uncertainty!r})"
-        )
-
-
-HANDLED_FUNCTIONS: dict[Any, Any] = {}
-
-
-def implements(numpy_function):
-    """Register an __array_function__ implementation for Quantity objects."""
-
-    def decorator(func):
-        HANDLED_FUNCTIONS[numpy_function] = func
-        return func
-
-    return decorator
-
-
-@implements(np.concatenate)
-def concatenate(items, *args, **kwargs):
-    unit = items[0].unit
-    system = items[0].system
-    if not all(i.unit == unit for i in items):
-        # Could convert all to first unit, but simpler to raise for now
-        raise IncompatibleUnitsError(items[1].unit, unit)
-    magnitudes = [i.magnitude for i in items]
-    uncertainties = []
-    for i in items:
-        val = i.uncertainty
-        if np.isscalar(val):
-            # If magnitudes are arrays, uncertainties should be arrays
-            # for concatenate
-            if isinstance(i.magnitude, np.ndarray):
-                uncertainties.append(
-                    np.full_like(i.magnitude, val, dtype=float)
-                )
-            else:
-                uncertainties.append(val)
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """Sets item in the quantity."""
+        # This mutates magnitude.
+        # We need to ensure units match.
+        if isinstance(value, Quantity):
+            val_converted = value.to(self.unit)
+            self.magnitude[key] = val_converted.magnitude
+            # We should also update uncertainty...
+            # This is complex for immutable/updates.
+            # If magnitude is mutable (numpy), this works for value.
+            # Uncertainty update is ignored here (limitation).
         else:
-            uncertainties.append(val)
-    res_mag = np.concatenate(magnitudes, *args, **kwargs)
-    res_unc = np.concatenate(uncertainties, *args, **kwargs)
-    return Quantity.from_input(res_mag, unit, system, uncertainty=res_unc)
+            # Assume value is magnitude in same unit
+            self.magnitude[key] = value
 
+    # --- Comparison Methods ---
+    def _compare(self, other: Any, op: Any) -> Any:
+        if isinstance(other, Quantity):
+            if self.dimension != other.dimension:
+                raise IncompatibleUnitsError(self.unit, other.unit)
+            # Convert to self unit for comparison
+            # Optimization: check if conversion needed
+            if self.unit == other.unit:
+                return op(self.magnitude, other.magnitude)
 
-@implements(np.mean)
-def mean(a, *args, **kwargs):
-    res_mag = np.mean(a.magnitude, *args, **kwargs)
-    # Uncertainty of mean with potential correlations
-    n = len(a)
-    new_lineage = {
-        uid: coeff / n for uid, coeff in a.uncertainty_obj.lineage.items()
-    }
-    res_unc = Uncertainty(
-        std_dev=a.uncertainty_obj._compute_std_dev(new_lineage),
-        lineage=new_lineage,
-    )
-    return Quantity.from_input(res_mag, a.unit, a.system, uncertainty=res_unc)
+            other_converted = other.to(self.unit)
+            return op(self.magnitude, other_converted.magnitude)
 
+        # If comparing to 0, allowed regardless of unit (sometimes?)
+        # But generally strictly typed.
+        if hasattr(other, "magnitude"):  # Duck typing
+            return NotImplemented
 
-@implements(np.linalg.norm)
-def norm(a, *args, **kwargs):
-    res_mag = np.linalg.norm(a.magnitude, *args, **kwargs)
-    # Simplified propagation for norm: reuse scaling
-    return Quantity.from_input(res_mag, a.unit, a.system)
+        return NotImplemented
 
+    def __eq__(self, other: object) -> Any:
+        # Dataclass __eq__ is overridden to handle units logic if we want semantic equality
+        # But frozen dataclass uses fields.
+        # We should allow semantic equality: 1 m == 100 cm
+        if isinstance(other, Quantity):
+            if self.dimension != other.dimension:
+                return False
+            try:
+                other_converted = other.to(self.unit)
+                return self.magnitude == other_converted.magnitude
+            except Exception:
+                return False
+        return False
 
-@implements(np.dot)
-def dot(a, b, *args, **kwargs):
-    if not isinstance(a, Quantity) or not isinstance(b, Quantity):
-        res_mag = np.dot(
-            a.magnitude if isinstance(a, Quantity) else a,
-            b.magnitude if isinstance(b, Quantity) else b,
-            **kwargs,
-        )
-        q = a if isinstance(a, Quantity) else b
-        return Quantity.from_input(res_mag, q.unit, q.system)
+    def __ne__(self, other: object) -> Any:
+        return not self.__eq__(other)
 
-    res_mag = np.dot(a.magnitude, b.magnitude, **kwargs)
-    res_unit = a.unit * b.unit
+    def __lt__(self, other: Any) -> Any:
+        return self._compare(other, operator.lt)
 
-    # Uncertainty propagation for dot: L(z) = L(a) * b + a * L(b)
-    # Using * handles both scalar and array coefficients correctly for linear ops
-    new_lineage = {}
-    u1 = a.uncertainty_obj
-    u2 = b.uncertainty_obj
+    def __le__(self, other: Any) -> Any:
+        return self._compare(other, operator.le)
 
-    for uid, coeff in u1.lineage.items():
-        new_lineage[uid] = np.dot(coeff, b.magnitude)
+    def __gt__(self, other: Any) -> Any:
+        return self._compare(other, operator.gt)
 
-    for uid, coeff in u2.lineage.items():
-        val = np.dot(a.magnitude, coeff)
-        if uid in new_lineage:
-            new_lineage[uid] = new_lineage[uid] + val
-        else:
-            new_lineage[uid] = val
-
-    res_unc = Uncertainty(
-        std_dev=u1._compute_std_dev(new_lineage), lineage=new_lineage
-    )
-    return Quantity.from_input(
-        res_mag, res_unit, a.system, uncertainty=res_unc
-    )
-
-
-@implements(np.matmul)
-def matmul(a, b, *args, **kwargs):
-    if not isinstance(a, Quantity) or not isinstance(b, Quantity):
-        res_mag = np.matmul(
-            a.magnitude if isinstance(a, Quantity) else a,
-            b.magnitude if isinstance(b, Quantity) else b,
-            **kwargs,
-        )
-        q = a if isinstance(a, Quantity) else b
-        return Quantity.from_input(res_mag, q.unit, q.system)
-
-    res_mag = np.matmul(a.magnitude, b.magnitude, **kwargs)
-    res_unit = a.unit * b.unit
-
-    # Uncertainty propagation for matmul: L(z) = L(a) @ b + a @ L(b)
-    new_lineage = {}
-    u1 = a.uncertainty_obj
-    u2 = b.uncertainty_obj
-
-    for uid, coeff in u1.lineage.items():
-        # Use np.matmul but wrap coeff in array if it's scalar to avoid error
-        c = np.asarray(coeff)
-        if c.ndim == 0:
-            new_lineage[uid] = coeff * b.magnitude
-        else:
-            new_lineage[uid] = np.matmul(coeff, b.magnitude)
-
-    for uid, coeff in u2.lineage.items():
-        c = np.asarray(coeff)
-        if c.ndim == 0:
-            val = a.magnitude * coeff
-        else:
-            val = np.matmul(a.magnitude, coeff)
-
-        if uid in new_lineage:
-            new_lineage[uid] = new_lineage[uid] + val
-        else:
-            new_lineage[uid] = val
-
-    res_unc = Uncertainty(
-        std_dev=u1._compute_std_dev(new_lineage), lineage=new_lineage
-    )
-    return Quantity.from_input(
-        res_mag, res_unit, a.system, uncertainty=res_unc
-    )
-
-
-@implements(np.einsum)
-def einsum(subscripts, *operands, **kwargs):
-    raw_ops = [
-        op.magnitude if isinstance(op, Quantity) else op for op in operands
-    ]
-    res_mag = np.einsum(subscripts, *raw_ops, **kwargs)
-
-    # Unit is the product of all units
-    res_unit = CompoundUnit({})
-    system = None
-    for op in operands:
-        if isinstance(op, Quantity):
-            res_unit *= op.unit
-            system = op.system
-
-    return Quantity.from_input(res_mag, res_unit, system)
-
-
-__all__ = ["Quantity"]
+    def __ge__(self, other: Any) -> Any:
+        return self._compare(other, operator.ge)
