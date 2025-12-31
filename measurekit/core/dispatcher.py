@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import math
 from collections.abc import Sequence
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 from measurekit.core.protocols import BackendOps
 
@@ -65,16 +65,12 @@ class PythonBackend(BackendOps):
     def sign(self, x: Any) -> Any:
         return math.copysign(1, x)
 
-    def sum(
-        self, obj: Any, axis: Union[int, Sequence[int], None] = None
-    ) -> Any:
+    def sum(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
         if isinstance(obj, (list, tuple)):
             return sum(obj)
         return obj
 
-    def mean(
-        self, obj: Any, axis: Union[int, Sequence[int], None] = None
-    ) -> Any:
+    def mean(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
         if isinstance(obj, (list, tuple)):
             return sum(obj) / len(obj)
         return obj
@@ -161,8 +157,8 @@ class PythonBackend(BackendOps):
 class BackendManager:
     """Manages backend dispatching and lazy loading."""
 
-    _backends: Dict[str, BackendOps] = {}
-    _python_backend: Optional[BackendOps] = None
+    _backends: dict[str, BackendOps] = {}
+    _python_backend: BackendOps | None = None
 
     @classmethod
     def get_backend(cls, data_obj: Any) -> BackendOps:
@@ -178,7 +174,7 @@ class BackendManager:
             or "ndarray" in str(type(data_obj)).lower()
         ):
             return cls._get_or_load_backend("numpy")
-        if module.startswith("jax"):
+        if module.startswith("jax") or module.startswith("jaxlib"):
             return cls._get_or_load_backend("jax")
 
         if isinstance(data_obj, (int, float, complex, list, tuple)):
@@ -202,6 +198,14 @@ class BackendManager:
                     "measurekit.backends.torch_backend"
                 )
                 cls._backends[name] = module.TorchBackend()
+            elif name == "jax":
+                module = importlib.import_module(
+                    "measurekit.backends.jax_backend"
+                )
+                cls._backends[name] = module.JaxBackend()
+                # Trigger JAX Pytree registration
+                if hasattr(module, "register_jax_behavior"):
+                    module.register_jax_behavior()
             else:
                 raise ValueError(f"Backend '{name}' not supported yet.")
         return cls._backends[name]

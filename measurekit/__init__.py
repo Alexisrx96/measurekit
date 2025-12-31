@@ -19,6 +19,7 @@ default_system: UnitSystem = create_default_system(
 )  # <- This is the long-running call
 
 _set_global_default_system(default_system)
+u = default_system
 
 # breakpoint()
 # 2. Expose the primary factory method (Inbound Port) from our configured
@@ -56,6 +57,7 @@ __all__ = [
     "default_system",
     "system_context",
     "get_active_system",
+    "u",
 ]
 
 __version__ = "0.0.2"
