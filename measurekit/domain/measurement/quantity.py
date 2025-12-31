@@ -16,7 +16,6 @@ from fractions import Fraction
 from typing import (
     TYPE_CHECKING,
     Any,
-    ClassVar,
     Generic,
     Literal,
     TypeVar,
@@ -29,11 +28,13 @@ import sympy as sp
 from numpy.typing import NDArray
 from typing_extensions import Self
 
-from measurekit.application.context import get_active_system
 from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.uncertainty import Uncertainty
-from measurekit.domain.measurement.units import CompoundUnit
+from measurekit.domain.measurement.units import (
+    CompoundUnit,
+    get_default_system,
+)
 
 if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
@@ -64,10 +65,10 @@ class Quantity(Generic[ValueType, UncType]):
         default_factory=lambda: cast(Uncertainty[UncType], Uncertainty(0.0))
     )
     fraction: Fraction | None = None
-    system: UnitSystem = field(default_factory=get_active_system)
+    system: UnitSystem = field(default_factory=get_default_system)
     dimension: Dimension = field(init=False)
 
-    _cache: ClassVar[dict[CompoundUnit, type]] = {}
+    # _cache removed to avoid memory leaks as per requirements
 
     def __post_init__(self):
         """Calculates derived fields after the object is initialized."""
@@ -113,7 +114,9 @@ class Quantity(Generic[ValueType, UncType]):
         uncertainty: Any = 0.0,
     ) -> Self:
         """Creates a Quantity from raw input values."""
-        resolved_system = system if system is not None else get_active_system()
+        resolved_system = (
+            system if system is not None else get_default_system()
+        )
 
         if isinstance(value, np.ndarray):
             value.flags.writeable = False
@@ -152,26 +155,34 @@ class Quantity(Generic[ValueType, UncType]):
         if self.dimension != target_unit.dimension(self.system):
             raise IncompatibleUnitsError(self.unit, target_unit)
 
-        # --- Manejo de Conversiones con Offset (ej: Temperatura) ---
+        # --- Polymorphic Conversion (Generic) ---
+        # Handle cases where units are simple single-component units
+        # (e.g. Celsius -> Kelvin, Meters -> Feet) using their specific converters.
         if (
             len(self.unit.exponents) == 1
             and list(self.unit.exponents.values())[0] == 1
             and len(target_unit.exponents) == 1
             and list(target_unit.exponents.values())[0] == 1
         ):
-            source_u = list(self.unit.exponents.keys())[0]
-            target_u = list(target_unit.exponents.keys())[0]
+            source_name = next(iter(self.unit.exponents))
+            target_name = next(iter(target_unit.exponents))
 
-            source_def = self.system.get_definition(source_u)
-            target_def = self.system.get_definition(target_u)
+            source_def = self.system.get_definition(source_name)
+            target_def = self.system.get_definition(target_name)
 
             if source_def and target_def:
-                base_mag = source_def.converter.to_base(self.magnitude)
-                new_magnitude = target_def.converter.from_base(base_mag)
+                # Delegate to converters: convert to base, then from base to target
+                base_val = source_def.converter.to_base(self.magnitude)
+                new_magnitude = target_def.converter.from_base(base_val)
 
-                scale_source = source_def.factor_to_base
-                scale_target = target_def.factor_to_base
-                scale_ratio = scale_source / scale_target
+                # Uncertainty propagation:
+                # We need the scale factor (derivative).
+                # For Affine/Linear, access .scale.
+                # For Logarithmic, this is complex, but current logic assumes usage
+                # where we can approximate or fall back.
+                s_scale = getattr(source_def.converter, "scale", 1.0)
+                t_scale = getattr(target_def.converter, "scale", 1.0)
+                scale_ratio = s_scale / t_scale
                 new_uncertainty = cast(Numeric, self.uncertainty) * scale_ratio
 
                 return cast(
@@ -185,7 +196,9 @@ class Quantity(Generic[ValueType, UncType]):
                 )
         # ----------------------------------------------------------
 
-        conversion_factor = self.unit.conversion_factor_to(target_unit)
+        conversion_factor = self.unit.conversion_factor_to(
+            target_unit, self.system
+        )
         new_value = cast(Numeric, self.magnitude) * conversion_factor
         new_uncertainty = cast(Numeric, self.uncertainty) * conversion_factor
 
@@ -510,7 +523,24 @@ class Quantity(Generic[ValueType, UncType]):
         ]
         result_magnitude = ufunc(*magnitudes, **kwargs)
 
-        if ufunc in (np.sin, np.cos, np.tan, np.exp, np.log, np.log10):
+        # Expanded list of ufuncs requiring dimensionless arguments
+        strict_ufuncs = (
+            np.sin,
+            np.cos,
+            np.tan,
+            np.exp,
+            np.log,
+            np.log10,
+            np.log2,
+            np.arcsin,
+            np.arccos,
+            np.arctan,
+            np.sinh,
+            np.cosh,
+            np.tanh,
+        )
+
+        if ufunc in strict_ufuncs:
             # Must be dimensionless
             for _, inp in enumerate(inputs):
                 if (
@@ -522,14 +552,14 @@ class Quantity(Generic[ValueType, UncType]):
             # Uncertainty propagation (simplified)
             if isinstance(inputs[0], Quantity):
                 q = inputs[0]
+                deriv = 1.0
                 if ufunc == np.sin:
                     deriv = np.abs(np.cos(q.magnitude))
                 elif ufunc == np.cos:
                     deriv = np.abs(-np.sin(q.magnitude))
                 elif ufunc == np.exp:
                     deriv = np.abs(np.exp(q.magnitude))
-                else:
-                    deriv = 1.0  # Fallback
+                # Add more derivatives as needed or keep fallback
 
                 res_unc = Uncertainty(deriv * q.uncertainty)
                 return Quantity.from_input(

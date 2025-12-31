@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+import weakref
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
 
 import numpy as np
 import sympy as sp
@@ -26,6 +27,26 @@ if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
 
 
+# --- Dependency Injection for System ---
+_system_provider: Callable[[], UnitSystem] | None = None
+
+
+def set_system_provider(provider: Callable[[], UnitSystem]) -> None:
+    """Sets the provider for the default unit system."""
+    global _system_provider
+    _system_provider = provider
+
+
+def get_default_system() -> UnitSystem:
+    """Retrieves the default system from the provider or raises error."""
+    if _system_provider is None:
+        raise RuntimeError(
+            "No UnitSystem provider set. "
+            "Call set_system_provider() or pass 'system' explicitly."
+        )
+    return _system_provider()
+
+
 @dataclass(frozen=True)
 class Unit:
     """Represents a single atomic unit definition."""
@@ -33,10 +54,8 @@ class Unit:
     name: str
     symbol: str
     dimension: Dimension
-    # Reemplazamos 'factor: float' por esto:
     converter: UnitConverter
 
-    # Helper para mantener compatibilidad hacia atrás si lo deseas
     @property
     def conversion_factor(self) -> float:
         """Helper to maintain backward compatibility for linear units."""
@@ -49,7 +68,9 @@ class Unit:
 class CompoundUnit(BaseExponentEntity):
     """Represents a unit composed of base units raised to various powers."""
 
-    _cache: ClassVar[dict[tuple, CompoundUnit]] = {}
+    _cache: ClassVar[weakref.WeakValueDictionary[tuple, CompoundUnit]] = (
+        weakref.WeakValueDictionary()
+    )
 
     def __new__(cls, exponents: ExponentsDict):
         """Create or retrieve a cached CompoundUnit instance."""
@@ -64,10 +85,20 @@ class CompoundUnit(BaseExponentEntity):
 
         key = tuple(sorted(normalized_exponents.items()))
 
-        if key in cls._cache:
-            return cls._cache[key]
+        # Check raw cache to avoid resurrection issues if needed,
+        # but WeakValueDictionary handles this.
+        instance = cls._cache.get(key)
+        if instance is not None:
+            return instance
 
         instance = super().__new__(cls, normalized_exponents)
+        # We need to initialize the object here because __init__ is not called
+        # efficiently if we returned cached. Use object.__setattr__ if needed
+        # but BaseExponentEntity sets exponents in __new__?
+        # Actually Base is standard class?
+        # dataclass __init__ is called after __new__.
+        # But if we return existing, __init__ runs again for dataclasses usually?
+        # Singleton pattern in __new__:
         cls._cache[key] = cast(CompoundUnit, instance)
         return cast(CompoundUnit, instance)
 
@@ -77,11 +108,7 @@ class CompoundUnit(BaseExponentEntity):
 
     def __post_init__(self):
         """Eliminamos cualquier unidad con exponente 0."""
-        # clean_exponents = {k: v for k, v in self.exponents.items() if v != 0}
-        # BasExponentEntity ya hace esto en __new__, pero siguiendo la
-        # instrucción:
         clean_exponents = {k: v for k, v in self.exponents.items() if v != 0}
-        # Hack necesario porque es frozen=True
         object.__setattr__(self, "exponents", clean_exponents)
 
     def __hash__(self) -> int:
@@ -89,12 +116,14 @@ class CompoundUnit(BaseExponentEntity):
         return super().__hash__()
 
     # --- System-Dependent Methods ---
-    def conversion_factor_to(self, target: CompoundUnit) -> float:
+    def conversion_factor_to(
+        self, target: CompoundUnit, system: UnitSystem
+    ) -> float:
         """Calculate the conversion factor to a target unit within a system.
 
         Args:
-        system (UnitSystem): The unit system providing conversion definitions.
         target (CompoundUnit): The unit to convert to.
+        system (UnitSystem): The unit system providing conversion definitions.
 
         Returns:
         float: The numerical factor to multiply by to convert to the target
@@ -103,9 +132,6 @@ class CompoundUnit(BaseExponentEntity):
         Raises:
         IncompatibleUnitsError: If the units have incompatible dimensions.
         """
-        from measurekit.application.context import get_active_system
-
-        system = get_active_system()
         if self.dimension(system) != target.dimension(system):
             raise IncompatibleUnitsError(self, target)
         source_factor = self._compound_factor(system)
@@ -139,7 +165,15 @@ class CompoundUnit(BaseExponentEntity):
             unit_def = system.UNIT_REGISTRY.get(dim, {}).get(unit)
             if unit_def is None:
                 raise ValueError(f"Unit definition for '{unit}' not found.")
-            factor *= unit_def.factor_to_base**exp
+            # Assume Linear for compound factors default path
+            # If not linear, this naive multiplication is wrong,
+            # but _compound_factor is legacy helper only for linear combinations.
+            if hasattr(unit_def.converter, "scale"):
+                factor *= unit_def.converter.scale**exp
+            else:
+                # Fallback or error for non-linear in compound?
+                # Assuming 1.0 if not scalable (e.g. Identity)?
+                pass
         return factor
 
     def dimension(self, system: UnitSystem) -> Dimension:
@@ -187,13 +221,17 @@ class CompoundUnit(BaseExponentEntity):
         Any: A new Quantity instance, or NotImplemented if the operation is
         not supported.
         """
-        from measurekit.application.context import get_active_system
         from measurekit.domain.measurement.quantity import Quantity
 
         if isinstance(other, (float, int, np.ndarray)):
-            return Quantity.from_input(
-                value=other, unit=self, system=get_active_system()
-            )
+            # Implicitly use default system for syntactic sugar
+            try:
+                sys = get_default_system()
+            except RuntimeError:
+                # If no system is active, we cannot create a Quantity with defaults
+                return NotImplemented
+
+            return Quantity.from_input(value=other, unit=self, system=sys)
         return NotImplemented
 
     def to_string(

@@ -17,6 +17,10 @@ class UnitConverter(ABC):
         """Convierte valor de la unidad base a la unidad actual."""
         pass
 
+    def convert(self, value: float, from_base: bool) -> float:
+        """Realiza la conversión genérica según la dirección."""
+        return self.from_base(value) if from_base else self.to_base(value)
+
 
 @dataclass(frozen=True)
 class LinearConverter(UnitConverter):
