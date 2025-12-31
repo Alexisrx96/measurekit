@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, overload
+from dataclasses import dataclass, field
+from typing import Any, Generic, TypeVar, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,45 +16,17 @@ Numeric = int | float | np.ndarray
 
 @dataclass(frozen=True)
 class Uncertainty(Generic[UncType]):
-    """Represents the uncertainty of a quantity.
+    """Represents the uncertainty of a quantity with lineage tracking.
 
-    The uncertainty is a measure of the precision of a quantity,
-    typically represented by a standard deviation.
-
-    Parameters:
-    ----------
-    std_dev : UncType
-        The standard deviation of the uncertainty.
-
-    Notes:
-    -----
-    In the context of the measurement system, the uncertainty is used
-    to propagate errors during arithmetic operations between quantities.
-
-    Examples:
-    --------
-    >>> from measurekit import get_unit
-    >>> from measurekit.domain.measurement.quantity import Quantity
-    >>> from measurekit.domain.measurement.uncertainty import Uncertainty
-    >>> u = get_unit("m")
-    >>> q = Quantity.from_input(1.0, u, None, uncertainty=Uncertainty(0.1))
-    >>> q.uncertainty
-    0.1
+    Supports correlated error propagation by tracking the linear coefficients
+    of independent error sources (lineage).
     """
 
-    __slots__ = ("std_dev",)
-
     std_dev: UncType
+    lineage: dict[str, UncType] = field(default_factory=dict)
 
     def __post_init__(self):
-        """Validates the data after initialization.
-
-        Checks that the standard deviation is not negative and that it is
-        immutable (if it is an array).
-
-        Raises:
-        ValueError: If the standard deviation is negative.
-        """
+        """Validates the data after initialization."""
         if np.any(np.asarray(self.std_dev) < 0):
             raise ValueError("Standard deviation cannot be negative.")
 
@@ -65,125 +37,149 @@ class Uncertainty(Generic[UncType]):
             self.std_dev.flags.writeable = False
 
     def __repr__(self) -> str:
-        """Readable representation of the uncertainty.
-
-        Returns:
-            str: A string formatted as "Uncertainty(std_dev=<value>)".
-        """
+        """Readable representation of the uncertainty."""
         return f"Uncertainty(std_dev={self.std_dev})"
 
-    def add(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
-        """Calculate the uncertainty of a sum or difference.
+    def __hash__(self) -> int:
+        """Returns a hash for the uncertainty object."""
+        # lineage is a dict, so we convert it to a sorted tuple of items for hashing
+        # if std_dev is an array, we hash its bytes or similar, but normally it's numeric
+        std_dev_hashable = (
+            tuple(self.std_dev.tolist())
+            if isinstance(self.std_dev, np.ndarray)
+            else self.std_dev
+        )
+        lineage_hashable = frozenset(self.lineage.items())
+        return hash((std_dev_hashable, lineage_hashable))
 
-        For z = x ± y, the absolute uncertainties (δx, δy) are added in
-        quadrature, assuming that the errors are not correlated.
+    @classmethod
+    def from_standard(
+        cls, std_dev: UncType, measurement_id: str | None = None
+    ) -> Uncertainty[UncType]:
+        """Creates an uncertainty from a standard deviation.
 
-        Formula: δz = sqrt( (δx)² + (δy)² )
-
-        Parameters:
-        ----------
-        other : Uncertainty[UncType]
-            The uncertainty of the other value.
-
-        Returns:
-        -------
-        Uncertainty[UncType]
-            The new uncertainty object for the result.
+        If measurement_id is provided, it marks this as a primary source of error.
         """
-        new_std_dev = (self.std_dev**2 + other.std_dev**2) ** 0.5
-        return Uncertainty(new_std_dev)
+        import uuid
+
+        uid = measurement_id or str(uuid.uuid4())
+        lineage = {uid: std_dev} if np.any(np.asarray(std_dev) > 0) else {}
+        return cls(std_dev=std_dev, lineage=lineage)
+
+    def _compute_std_dev(self, lineage: dict[str, UncType]) -> UncType:
+        """Computes total std_dev from lineage using sum of squares."""
+        if not lineage:
+            return cast(UncType, 0.0)
+
+        squares = [np.asarray(v) ** 2 for v in lineage.values()]
+        sum_sq = sum(squares)
+        return cast(UncType, np.sqrt(sum_sq))
+
+    def add(
+        self, other: Uncertainty[UncType], scale: float = 1.0
+    ) -> Uncertainty[UncType]:
+        """Propagates uncertainty for addition/subtraction (correlated)."""
+        new_lineage = self.lineage.copy()
+        for uid, coeff in other.lineage.items():
+            val = scale * coeff
+            if uid in new_lineage:
+                new_lineage[uid] = new_lineage[uid] + val
+            else:
+                new_lineage[uid] = val
+
+        # Clean up zero terms to keep lineage lightweight
+        filtered_lineage = {
+            k: v for k, v in new_lineage.items() if np.any(np.asarray(v) != 0)
+        }
+        return Uncertainty(
+            std_dev=self._compute_std_dev(filtered_lineage),
+            lineage=filtered_lineage,
+        )
 
     def __add__(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
         """Alias for add()."""
         return self.add(other)
 
-    @overload
-    def propagate_mul_div(
-        self: Uncertainty[NDArray[Any]],
-        other: Any,
-        val1: Any,
-        val2: Any,
-        result_value: Any,
-    ) -> Uncertainty[NDArray[Any]]: ...
-    @overload
-    def propagate_mul_div(
-        self,
-        other: Uncertainty[NDArray[Any]],
-        val1: Any,
-        val2: Any,
-        result_value: Any,
-    ) -> Uncertainty[NDArray[Any]]: ...
-    @overload
-    def propagate_mul_div(
-        self, other: Any, val1: NDArray[Any], val2: Any, result_value: Any
-    ) -> Uncertainty[NDArray[Any]]: ...
-    @overload
-    def propagate_mul_div(
-        self, other: Any, val1: Any, val2: NDArray[Any], result_value: Any
-    ) -> Uncertainty[NDArray[Any]]: ...
-    @overload
-    def propagate_mul_div(
-        self, other: Any, val1: Any, val2: Any, result_value: NDArray[Any]
-    ) -> Uncertainty[NDArray[Any]]: ...
-
-    @overload
-    def propagate_mul_div(
-        self,
-        other: Uncertainty[float],
-        val1: float,
-        val2: float,
-        result_value: float,
-    ) -> Uncertainty[float]: ...
+    def __sub__(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
+        """Propagates uncertainty for subtraction."""
+        return self.add(other, scale=-1.0)
 
     def propagate_mul_div(
-        self, other: Any, val1: Any, val2: Any, result_value: Any
-    ) -> Any:
-        """Calculates the uncertainty for multiplication or division.
-
-        This method adds relative uncertainties in quadrature.
-        """
-        if np.any(np.asarray(val1) == 0) or np.any(np.asarray(val2) == 0):
+        self, other: Uncertainty[Any], val1: Any, val2: Any, result_value: Any
+    ) -> Uncertainty[Any]:
+        """Correlated propagation for multiplication or division."""
+        if np.any(np.asarray(val1) == 0) and np.any(np.asarray(val2) == 0):
             if isinstance(result_value, np.ndarray):
-                return Uncertainty(np.zeros_like(result_value, dtype=float))
+                return Uncertainty(np.zeros_like(result_value))
             return Uncertainty(0.0)
 
-        if hasattr(result_value, "free_symbols"):
-            import sympy as sp
+        # Check if it's division by looking at result_value vs val1*val2
+        is_division = False
+        try:
+            # result_value approx val1 / val2
+            # Use a slightly more robust check
+            v1 = np.asarray(val1)
+            v2 = np.asarray(val2)
+            rv = np.asarray(result_value)
+            if np.all(v2 != 0) and np.allclose(rv, v1 / v2):
+                is_division = True
+        except (ValueError, TypeError):
+            pass
 
-            rel_unc1_sq = (self.std_dev / sp.Abs(val1)) ** 2
-            rel_unc2_sq = (other.std_dev / sp.Abs(val2)) ** 2
+        if is_division:
+            # z = x/y => dz = (1/y)dx - (x/y^2)dy
+            f_x = 1.0 / val2
+            f_y = -val1 / (val2**2)
         else:
-            rel_unc1_sq = (self.std_dev / np.abs(val1)) ** 2
-            rel_unc2_sq = (other.std_dev / np.abs(val2)) ** 2
+            # z = x*y => dz = y*dx + x*dy
+            f_x = val2
+            f_y = val1
 
-        if hasattr(result_value, "free_symbols"):
-            # Symbolic magnitude (SymPy)
-            import sympy as sp
+        new_lineage = {}
+        for uid, coeff in self.lineage.items():
+            new_lineage[uid] = f_x * coeff
 
-            new_std_dev = sp.Abs(result_value) * sp.sqrt(
-                rel_unc1_sq + rel_unc2_sq
-            )
-        else:
-            new_std_dev = np.abs(result_value) * np.sqrt(
-                rel_unc1_sq + rel_unc2_sq
-            )
-        return Uncertainty(new_std_dev)
+        for uid, coeff in other.lineage.items():
+            val = f_y * coeff
+            if uid in new_lineage:
+                new_lineage[uid] = new_lineage[uid] + val
+            else:
+                new_lineage[uid] = val
 
-    def power(self, exponent: float, value: UncType) -> Uncertainty[UncType]:
-        """Calculates the uncertainty of a power operation.
+        filtered_lineage = {
+            k: v for k, v in new_lineage.items() if np.any(np.asarray(v) != 0)
+        }
+        return Uncertainty(
+            std_dev=self._compute_std_dev(filtered_lineage),
+            lineage=filtered_lineage,
+        )
 
-        For z = x^n, the relative uncertainty is multiplied by the
-        absolute value of the exponent.
-
-        Formula: δz = |z| * |n| * (δx / |x|)
-        """
+    def power(self, exponent: float, value: Any) -> Uncertainty[Any]:
+        """Correlated propagation for power: z = x^n => dz = n * x^(n-1) * dx."""
         if np.any(np.asarray(value) == 0):
-            if isinstance(value, np.ndarray):
-                return Uncertainty(np.zeros_like(value))
             return Uncertainty(0.0)
 
-        new_value = value**exponent
-        rel_unc = self.std_dev / value
+        deriv = exponent * (value ** (exponent - 1))
+        new_lineage = {
+            uid: deriv * coeff for uid, coeff in self.lineage.items()
+        }
+        filtered_lineage = {
+            k: v for k, v in new_lineage.items() if np.any(np.asarray(v) != 0)
+        }
 
-        new_std_dev = np.abs(new_value * exponent) * rel_unc
-        return Uncertainty(new_std_dev)
+        return Uncertainty(
+            std_dev=self._compute_std_dev(filtered_lineage),
+            lineage=filtered_lineage,
+        )
+
+    def scale(self, factor: float | NDArray[Any]) -> Uncertainty[UncType]:
+        """Scales the uncertainty by a factor."""
+        # Use abs(factor) for std_dev but original factor for lineage
+        # Wait, $z = kx \implies dz = k dx$. So coefficients should be scaled by k.
+        # std_dev will naturally be sqrt(sum((k c_i)^2)) = |k| sqrt(sum(c_i^2)).
+        new_lineage = {
+            uid: factor * coeff for uid, coeff in self.lineage.items()
+        }
+        return Uncertainty(
+            std_dev=np.abs(factor) * self.std_dev, lineage=new_lineage
+        )

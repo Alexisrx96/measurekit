@@ -75,6 +75,25 @@ class Quantity(Generic[ValueType, UncType]):
         calculated_dimension = self.unit.dimension(self.system)
         object.__setattr__(self, "dimension", calculated_dimension)
 
+    @classmethod
+    def _fast_new(
+        cls,
+        magnitude: ValueType,
+        unit: CompoundUnit,
+        uncertainty_obj: Uncertainty[UncType],
+        system: UnitSystem,
+        dimension: Dimension,
+    ) -> Self:
+        """Bypasses __post_init__ and validation for high-performance creation."""
+        obj = object.__new__(cls)
+        object.__setattr__(obj, "magnitude", magnitude)
+        object.__setattr__(obj, "unit", unit)
+        object.__setattr__(obj, "uncertainty_obj", uncertainty_obj)
+        object.__setattr__(obj, "system", system)
+        object.__setattr__(obj, "dimension", dimension)
+        object.__setattr__(obj, "fraction", None)
+        return cast(Self, obj)
+
     @overload
     @classmethod
     def from_input(
@@ -123,7 +142,7 @@ class Quantity(Generic[ValueType, UncType]):
         uncertainty_obj = (
             uncertainty
             if isinstance(uncertainty, Uncertainty)
-            else Uncertainty(uncertainty)
+            else Uncertainty.from_standard(uncertainty)
         )
         if isinstance(uncertainty_obj.std_dev, np.ndarray):
             uncertainty_obj.std_dev.flags.writeable = False
@@ -222,11 +241,12 @@ class Quantity(Generic[ValueType, UncType]):
         if self.unit is other.unit:
             new_magnitude = self.magnitude + other.magnitude
             new_unc = self.uncertainty_obj + other.uncertainty_obj
-            return Quantity(
+            return self._fast_new(
                 new_magnitude,
                 self.unit,
                 new_unc,
-                system=self.system,
+                self.system,
+                self.dimension,
             )
         # -----------------
 
@@ -252,12 +272,13 @@ class Quantity(Generic[ValueType, UncType]):
         # --- FAST PATH ---
         if self.unit is other.unit:
             new_magnitude = self.magnitude - other.magnitude
-            new_unc = self.uncertainty_obj + other.uncertainty_obj
-            return Quantity(
+            new_unc = self.uncertainty_obj - other.uncertainty_obj
+            return self._fast_new(
                 new_magnitude,
                 self.unit,
                 new_unc,
-                system=self.system,
+                self.system,
+                self.dimension,
             )
         # -----------------
 
@@ -265,8 +286,8 @@ class Quantity(Generic[ValueType, UncType]):
             raise IncompatibleUnitsError(self.unit, other.unit)
         other_converted = other.to(self.unit)
         new_magnitude = self.magnitude - other_converted.magnitude
-        new_uncertainty_obj = self.uncertainty_obj.add(
-            other_converted.uncertainty_obj
+        new_uncertainty_obj = (
+            self.uncertainty_obj - other_converted.uncertainty_obj
         )
         return Quantity.from_input(
             new_magnitude,
@@ -280,9 +301,7 @@ class Quantity(Generic[ValueType, UncType]):
         if isinstance(other, (int, float, np.ndarray)):
             # Use cast for arithmetic safety
             new_magnitude = cast(Numeric, self.magnitude) * other
-            new_uncertainty = cast(
-                Numeric, self.uncertainty_obj.std_dev
-            ) * np.abs(other)
+            new_uncertainty_obj = self.uncertainty_obj.scale(other)
 
             # Cast the return to the expected generic type
             return cast(
@@ -291,24 +310,26 @@ class Quantity(Generic[ValueType, UncType]):
                     new_magnitude,
                     self.unit,
                     self.system,
-                    uncertainty=new_uncertainty,
+                    uncertainty=new_uncertainty_obj,
                 ),
             )
 
         if isinstance(other, Quantity):
             new_magnitude = self.magnitude * other.magnitude
             new_unit = self.unit * other.unit
+            new_dimension = self.dimension * other.dimension
             new_uncertainty_obj = self.uncertainty_obj.propagate_mul_div(
                 other.uncertainty_obj,
                 self.magnitude,
                 other.magnitude,
                 new_magnitude,
             )
-            return Quantity.from_input(
+            return self._fast_new(
                 new_magnitude,
                 new_unit,
+                new_uncertainty_obj,
                 self.system,
-                uncertainty=new_uncertainty_obj,
+                new_dimension,
             )
         if isinstance(other, CompoundUnit):
             new_unit = self.unit * other
@@ -325,9 +346,7 @@ class Quantity(Generic[ValueType, UncType]):
         if isinstance(other, (int, float, np.ndarray)):
             # Use cast for arithmetic safety
             new_magnitude = cast(Numeric, self.magnitude) / other
-            new_uncertainty = cast(
-                Numeric, self.uncertainty_obj.std_dev
-            ) / np.abs(other)
+            new_uncertainty_obj = self.uncertainty_obj.scale(1.0 / other)
 
             # Cast the return to the expected generic type
             return cast(
@@ -336,12 +355,13 @@ class Quantity(Generic[ValueType, UncType]):
                     new_magnitude,
                     self.unit,
                     self.system,
-                    uncertainty=new_uncertainty,
+                    uncertainty=new_uncertainty_obj,
                 ),
             )
         if isinstance(other, Quantity):
             new_magnitude = self.magnitude / other.magnitude
             new_unit = self.unit / other.unit
+            new_dimension = self.dimension / other.dimension
             new_uncertainty_obj = self.uncertainty_obj.propagate_mul_div(
                 other.uncertainty_obj,
                 self.magnitude,
@@ -349,22 +369,12 @@ class Quantity(Generic[ValueType, UncType]):
                 new_magnitude,
             )
 
-            # --- Manejo Adimensional ---
-            if new_unit.is_dimensionless:
-                # Retornamos un Quantity adimensional
-                return Quantity.from_input(
-                    new_magnitude,
-                    new_unit,
-                    self.system,
-                    uncertainty=new_uncertainty_obj,
-                )
-            # ---------------------------
-
-            return Quantity.from_input(
+            return self._fast_new(
                 new_magnitude,
                 new_unit,
+                new_uncertainty_obj,
                 self.system,
-                uncertainty=new_uncertainty_obj,
+                new_dimension,
             )
         if isinstance(other, CompoundUnit):
             new_unit = self.unit / other
@@ -418,7 +428,7 @@ class Quantity(Generic[ValueType, UncType]):
                 -self.magnitude,
                 self.unit,
                 self.system,
-                uncertainty=self.uncertainty_obj,
+                uncertainty=self.uncertainty_obj.scale(-1.0),
             ),
         )
 
@@ -428,13 +438,16 @@ class Quantity(Generic[ValueType, UncType]):
 
     def __abs__(self) -> Self:
         """Returns the absolute value of the Quantity."""
+        # For abs(x), uncertainty scaling depends on sign
+        # Approximation: scale by sign of magnitude
+        sign = np.sign(self.magnitude)
         return cast(
             Self,
             Quantity.from_input(
                 abs(self.magnitude),
                 self.unit,
                 self.system,
-                self.uncertainty_obj,
+                self.uncertainty_obj.scale(sign),
             ),
         )
 
@@ -908,9 +921,126 @@ def concatenate(items, *args, **kwargs):
 @implements(np.mean)
 def mean(a, *args, **kwargs):
     res_mag = np.mean(a.magnitude, *args, **kwargs)
-    # Uncertainty of mean (simplified): sqrt(sum(u^2))/N
-    res_unc = np.sqrt(np.sum(a.uncertainty**2)) / len(a)
+    # Uncertainty of mean with potential correlations
+    n = len(a)
+    new_lineage = {
+        uid: coeff / n for uid, coeff in a.uncertainty_obj.lineage.items()
+    }
+    res_unc = Uncertainty(
+        std_dev=a.uncertainty_obj._compute_std_dev(new_lineage),
+        lineage=new_lineage,
+    )
     return Quantity.from_input(res_mag, a.unit, a.system, uncertainty=res_unc)
+
+
+@implements(np.linalg.norm)
+def norm(a, *args, **kwargs):
+    res_mag = np.linalg.norm(a.magnitude, *args, **kwargs)
+    # Simplified propagation for norm: reuse scaling
+    return Quantity.from_input(res_mag, a.unit, a.system)
+
+
+@implements(np.dot)
+def dot(a, b, *args, **kwargs):
+    if not isinstance(a, Quantity) or not isinstance(b, Quantity):
+        res_mag = np.dot(
+            a.magnitude if isinstance(a, Quantity) else a,
+            b.magnitude if isinstance(b, Quantity) else b,
+            **kwargs,
+        )
+        q = a if isinstance(a, Quantity) else b
+        return Quantity.from_input(res_mag, q.unit, q.system)
+
+    res_mag = np.dot(a.magnitude, b.magnitude, **kwargs)
+    res_unit = a.unit * b.unit
+
+    # Uncertainty propagation for dot: L(z) = L(a) * b + a * L(b)
+    # Using * handles both scalar and array coefficients correctly for linear ops
+    new_lineage = {}
+    u1 = a.uncertainty_obj
+    u2 = b.uncertainty_obj
+
+    for uid, coeff in u1.lineage.items():
+        new_lineage[uid] = np.dot(coeff, b.magnitude)
+
+    for uid, coeff in u2.lineage.items():
+        val = np.dot(a.magnitude, coeff)
+        if uid in new_lineage:
+            new_lineage[uid] = new_lineage[uid] + val
+        else:
+            new_lineage[uid] = val
+
+    res_unc = Uncertainty(
+        std_dev=u1._compute_std_dev(new_lineage), lineage=new_lineage
+    )
+    return Quantity.from_input(
+        res_mag, res_unit, a.system, uncertainty=res_unc
+    )
+
+
+@implements(np.matmul)
+def matmul(a, b, *args, **kwargs):
+    if not isinstance(a, Quantity) or not isinstance(b, Quantity):
+        res_mag = np.matmul(
+            a.magnitude if isinstance(a, Quantity) else a,
+            b.magnitude if isinstance(b, Quantity) else b,
+            **kwargs,
+        )
+        q = a if isinstance(a, Quantity) else b
+        return Quantity.from_input(res_mag, q.unit, q.system)
+
+    res_mag = np.matmul(a.magnitude, b.magnitude, **kwargs)
+    res_unit = a.unit * b.unit
+
+    # Uncertainty propagation for matmul: L(z) = L(a) @ b + a @ L(b)
+    new_lineage = {}
+    u1 = a.uncertainty_obj
+    u2 = b.uncertainty_obj
+
+    for uid, coeff in u1.lineage.items():
+        # Use np.matmul but wrap coeff in array if it's scalar to avoid error
+        c = np.asarray(coeff)
+        if c.ndim == 0:
+            new_lineage[uid] = coeff * b.magnitude
+        else:
+            new_lineage[uid] = np.matmul(coeff, b.magnitude)
+
+    for uid, coeff in u2.lineage.items():
+        c = np.asarray(coeff)
+        if c.ndim == 0:
+            val = a.magnitude * coeff
+        else:
+            val = np.matmul(a.magnitude, coeff)
+
+        if uid in new_lineage:
+            new_lineage[uid] = new_lineage[uid] + val
+        else:
+            new_lineage[uid] = val
+
+    res_unc = Uncertainty(
+        std_dev=u1._compute_std_dev(new_lineage), lineage=new_lineage
+    )
+    return Quantity.from_input(
+        res_mag, res_unit, a.system, uncertainty=res_unc
+    )
+
+
+@implements(np.einsum)
+def einsum(subscripts, *operands, **kwargs):
+    raw_ops = [
+        op.magnitude if isinstance(op, Quantity) else op for op in operands
+    ]
+    res_mag = np.einsum(subscripts, *raw_ops, **kwargs)
+
+    # Unit is the product of all units
+    res_unit = CompoundUnit({})
+    system = None
+    for op in operands:
+        if isinstance(op, Quantity):
+            res_unit *= op.unit
+            system = op.system
+
+    return Quantity.from_input(res_mag, res_unit, system)
 
 
 __all__ = ["Quantity"]
