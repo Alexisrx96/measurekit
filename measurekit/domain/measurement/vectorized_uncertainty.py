@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
+try:
     import numpy as np
-    from numpy.typing import NDArray
+except ImportError:
+    np = None
+
+try:
     from scipy import sparse
+except ImportError:
+    sparse = None
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 class CovarianceStore:

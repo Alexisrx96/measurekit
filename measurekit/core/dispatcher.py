@@ -146,11 +146,13 @@ class PythonBackend(BackendOps):
         offsets: Sequence[int],
         format: str = "csr",
     ) -> Any:
+        """Constructs a sparse matrix from diagonals."""
         raise NotImplementedError(
             "Sparse matrices not supported in PythonBackend"
         )
 
     def ones(self, shape: tuple[int, ...]) -> Any:
+        """Returns an array of ones."""
         raise NotImplementedError(
             "Ones array creation not supported in PythonBackend"
         )
@@ -165,13 +167,18 @@ class BackendManager:
     @classmethod
     def get_backend(cls, data_obj: Any) -> BackendOps:
         """Determines the appropriate backend for the given data object."""
-        type_str = str(type(data_obj)).lower()
+        # Use module-based detection to avoid eager imports
+        module = getattr(data_obj.__class__, "__module__", "")
 
-        if "numpy" in type_str or "ndarray" in type_str:
-            return cls._get_or_load_backend("numpy")
-        elif "torch" in type_str:
+        if module.startswith("torch"):
             return cls._get_or_load_backend("torch")
-        elif "jax" in type_str:
+        if (
+            module.startswith("numpy")
+            or "numpy" in str(type(data_obj)).lower()
+            or "ndarray" in str(type(data_obj)).lower()
+        ):
+            return cls._get_or_load_backend("numpy")
+        if module.startswith("jax"):
             return cls._get_or_load_backend("jax")
 
         if isinstance(data_obj, (int, float, complex, list, tuple)):
@@ -190,6 +197,11 @@ class BackendManager:
                     "measurekit.backends.numpy_backend"
                 )
                 cls._backends[name] = module.NumpyBackend()
+            elif name == "torch":
+                module = importlib.import_module(
+                    "measurekit.backends.torch_backend"
+                )
+                cls._backends[name] = module.TorchBackend()
             else:
                 raise ValueError(f"Backend '{name}' not supported yet.")
         return cls._backends[name]

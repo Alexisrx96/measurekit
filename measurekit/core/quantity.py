@@ -243,6 +243,14 @@ class Quantity(Generic[ValueType, UncType]):
         self, target_unit: CompoundUnit | str
     ) -> Quantity[ValueType, UncType]:
         if isinstance(target_unit, str):
+            # Check if it's potentially a device string (heuristic)
+            if target_unit.lower() in (
+                "cuda",
+                "cpu",
+                "mps",
+            ) or target_unit.lower().startswith("cuda:"):
+                return self.to_device(target_unit)
+
             target_unit = self.system.get_unit(target_unit)
 
         if target_unit == self.unit:
@@ -307,6 +315,30 @@ class Quantity(Generic[ValueType, UncType]):
                 self.system,
                 uncertainty=new_uncertainty,
             ),
+        )
+
+    def to_device(self, device: str) -> Self:
+        """Moves the quantity's magnitude and uncertainty to the specified device."""
+        new_mag = self._backend.to_device(self.magnitude, device)
+        # Move uncertainty if it's an array/tensor
+        new_std = self._backend.to_device(self.uncertainty_obj.std_dev, device)
+        new_unc = Uncertainty(new_std)
+
+        return self._fast_new(
+            new_mag,
+            self.unit,
+            new_unc,
+            self.system,
+            self.dimension,
+            self._backend,
+        )
+
+    def backward(self, *args: Any, **kwargs: Any) -> Any:
+        """Delegates backward() call to the magnitude (for Autograd support)."""
+        if hasattr(self.magnitude, "backward"):
+            return self.magnitude.backward(*args, **kwargs)
+        raise AttributeError(
+            f"Magnitude of type {type(self.magnitude)} has no attribute 'backward'"
         )
 
     def _propagate_vectorized(
@@ -1029,6 +1061,48 @@ class Quantity(Generic[ValueType, UncType]):
                 return Quantity(res_mag, q.unit, system=q.system)
 
         return NotImplemented
+
+    def __torch_function__(self, func, types, args=(), kwargs=None):
+        """Handles Torch functions like torch.mean, torch.relu for Quantity objects.
+
+        This method allows Quantity objects to be passed directly to torch functions.
+        It unwraps the Quantity magnitudes, performs the torch operation, and
+        wraps the results back into a Quantity if appropriate.
+        """
+        if kwargs is None:
+            kwargs = {}
+
+        def unwrap(obj):
+            if isinstance(obj, Quantity):
+                return obj.magnitude
+            if isinstance(obj, (list, tuple)):
+                return type(obj)(unwrap(x) for x in obj)
+            return obj
+
+        unwrapped_args = tuple(unwrap(arg) for arg in args)
+        unwrapped_kwargs = {k: unwrap(v) for k, v in kwargs.items()}
+
+        # Call the original torch function
+        result = func(*unwrapped_args, **unwrapped_kwargs)
+
+        # Find representative Quantity for metadata
+        source_q = None
+        for arg in args:
+            if isinstance(arg, Quantity):
+                source_q = arg
+                break
+
+        # print(f"DEBUG: source_q={source_q}, args={args}")
+
+        res_module = getattr(result.__class__, "__module__", "")
+        if source_q and res_module.startswith("torch"):
+            return type(self)(
+                magnitude=result,
+                unit=source_q.unit,
+                system=source_q.system,
+            )
+
+        return result
 
     # --- Representation ---
 
