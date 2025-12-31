@@ -32,6 +32,10 @@ def _set_global_default_system(system: UnitSystem) -> None:
     global _global_default_system
     _global_default_system = system
 
+    from measurekit.domain.measurement.units import set_system_provider
+
+    set_system_provider(get_active_system)
+
 
 # 3. Create a context variable to hold the active system.
 _active_system: ContextVar[UnitSystem] = ContextVar("active_system")
