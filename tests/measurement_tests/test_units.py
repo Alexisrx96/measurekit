@@ -74,9 +74,9 @@ def test_conversion_methods(unit_system):
     kilometer = CompoundUnit({"km": 1})
 
     # Test conversion factor calculation using the system
-    assert meter.conversion_factor_to(centimeter) == 100.0
-    assert centimeter.conversion_factor_to(meter) == 0.01
-    assert kilometer.conversion_factor_to(meter) == 1000.0
+    assert meter.conversion_factor_to(centimeter, unit_system) == 100.0
+    assert centimeter.conversion_factor_to(meter, unit_system) == 0.01
+    assert kilometer.conversion_factor_to(meter, unit_system) == 1000.0
 
 
 def test_get_unit_simple():
