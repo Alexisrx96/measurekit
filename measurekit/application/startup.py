@@ -17,9 +17,9 @@ from typing import cast
 from measurekit.application.context import use_system
 from measurekit.domain.measurement.conversions import UnitDefinition
 from measurekit.domain.measurement.converters import (
-    AffineConverter,
     LinearConverter,
     LogarithmicConverter,
+    OffsetConverter,
 )
 from measurekit.domain.measurement.dimensions import (
     Dimension,
@@ -178,7 +178,7 @@ class UnitSystemBuilder:
                 offset = 0.0
                 dim_index = 1
 
-                # Check if there is an offset (for AffineConverter)
+                # Check if there is an offset (for OffsetConverter)
                 if len(parts) > 2:
                     try:
                         # If parts[1] is a float, it's an offset
@@ -191,7 +191,7 @@ class UnitSystemBuilder:
                 dimension = Dimension.from_string(parts[dim_index])
 
                 if offset != 0:
-                    converter = AffineConverter(factor, offset)
+                    converter = OffsetConverter(factor, offset)
                 else:
                     converter = LinearConverter(factor)
 

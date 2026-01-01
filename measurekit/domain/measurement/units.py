@@ -179,6 +179,16 @@ class CompoundUnit(BaseExponentEntity):
                 pass
         return factor
 
+    def is_linear(self, system: UnitSystem) -> bool:
+        """Checks if all components of the unit use linear converters."""
+        for unit, _ in self.exponents.items():
+            if unit == "noprefix":
+                continue
+            unit_def = system.get_definition(unit)
+            if unit_def and not unit_def.converter.is_linear:
+                return False
+        return True
+
     def dimension(self, system: UnitSystem) -> Dimension:
         """Determine the physical dimension of the unit within a system.
 

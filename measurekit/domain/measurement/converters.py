@@ -12,6 +12,12 @@ class UnitConverter(ABC):
         """Convierte valor de la unidad actual a la unidad base del sistema."""
         pass
 
+    @property
+    @abstractmethod
+    def is_linear(self) -> bool:
+        """Returns True if the conversion is linear (y = ax)."""
+        pass
+
     @abstractmethod
     def from_base(self, value: float) -> float:
         """Convierte valor de la unidad base a la unidad actual."""
@@ -28,6 +34,10 @@ class LinearConverter(UnitConverter):
 
     scale: float
 
+    @property
+    def is_linear(self) -> bool:
+        return True
+
     def to_base(self, value: float) -> float:
         """Converts value to base unit."""
         return value * self.scale
@@ -38,11 +48,15 @@ class LinearConverter(UnitConverter):
 
 
 @dataclass(frozen=True)
-class AffineConverter(UnitConverter):
+class OffsetConverter(UnitConverter):
     """Para unidades con desplazamiento: y = ax + b (ej: Celsius a Kelvin)."""
 
     scale: float
     offset: float
+
+    @property
+    def is_linear(self) -> bool:
+        return False
 
     def to_base(self, value: float) -> float:
         """Converts value to base unit."""
@@ -51,6 +65,10 @@ class AffineConverter(UnitConverter):
     def from_base(self, value: float) -> float:
         """Converts value from base unit."""
         return (value - self.offset) / self.scale
+
+
+# Alias for backward compatibility
+AffineConverter = OffsetConverter
 
 
 @dataclass(frozen=True)
@@ -64,6 +82,10 @@ class LogarithmicConverter(UnitConverter):
 
     factor: float
     reference: float = 1.0
+
+    @property
+    def is_linear(self) -> bool:
+        return False
 
     def to_base(self, value: float) -> float:
         """Converts logarithmic value to linear base value."""

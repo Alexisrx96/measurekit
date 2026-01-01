@@ -78,11 +78,11 @@ class UnitDefinition:
     def factor_to_base(self) -> float:
         """Backward compatibility helper returning linear scale."""
         from measurekit.domain.measurement.converters import (
-            AffineConverter,
             LinearConverter,
+            OffsetConverter,
         )
 
-        if isinstance(self.converter, (LinearConverter, AffineConverter)):
+        if isinstance(self.converter, (LinearConverter, OffsetConverter)):
             return self.converter.scale
         return 1.0
 
