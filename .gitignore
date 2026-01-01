@@ -27,7 +27,6 @@ venv/
 ENV/
 
 # uv
-uv.lock
 
 # Tools
 .pytest_cache/
