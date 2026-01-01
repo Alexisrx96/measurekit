@@ -107,6 +107,13 @@ class CompoundUnit(BaseExponentEntity):
         clean_exponents = {k: v for k, v in self.exponents.items() if v != 0}
         object.__setattr__(self, "exponents", clean_exponents)
 
+    def __reduce__(self):
+        """Custom pickling to ensure Flyweight pattern (cache) is used on deserialization.
+
+        By returning (cls, (args,)), pickle calls cls(args) which hits __new__.
+        """
+        return (self.__class__, (self.exponents,))
+
     def __hash__(self) -> int:
         """Returns a hash value for the compound unit."""
         return super().__hash__()

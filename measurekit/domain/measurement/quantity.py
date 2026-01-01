@@ -91,6 +91,26 @@ class Quantity(Generic[ValueType, UncType]):
         backend = BackendManager.get_backend(self.magnitude)
         object.__setattr__(self, "_backend", backend)
 
+    def __getstate__(self):
+        """Custom pickling to exclude _backend."""
+        return {
+            "magnitude": self.magnitude,
+            "unit": self.unit,
+            "uncertainty_obj": self.uncertainty_obj,
+            "fraction": self.fraction,
+            "system": self.system,
+            "dimension": self.dimension,
+        }
+
+    def __setstate__(self, state):
+        """Restore state and re-derive backend."""
+        for k, v in state.items():
+            object.__setattr__(self, k, v)
+
+        # Re-derive backend
+        backend = BackendManager.get_backend(self.magnitude)
+        object.__setattr__(self, "_backend", backend)
+
     @classmethod
     def _fast_new(
         cls,
@@ -284,6 +304,32 @@ class Quantity(Generic[ValueType, UncType]):
         if self._has_uncertainty:
             return f"({self.magnitude} ± {self.uncertainty}) {unit_str}"
         return f"{self.magnitude} {unit_str}"
+
+    def __rich__(self) -> Any:
+        """Rich console protocol for beautiful output."""
+        try:
+            from rich.text import Text
+        except ImportError:
+            return self.__str__()
+
+        # Unit string
+        unit_str = self.unit.to_string(self.system)
+
+        # Magnitude formatting
+        mag_str = str(self.magnitude)
+
+        # Text construction
+        text = Text()
+        text.append(mag_str, style="bold green")
+
+        if self._has_uncertainty:
+            unc_str = str(self.uncertainty)
+            text.append(f" ± {unc_str}", style="dim")
+
+        text.append(" ", style="none")
+        text.append(unit_str, style="bold blue")
+
+        return text
 
     def __format__(self, format_spec: str) -> str:
         """Formats the quantity according to the specification."""

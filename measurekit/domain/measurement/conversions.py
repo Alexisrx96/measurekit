@@ -9,7 +9,7 @@ and dimensional analysis.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from measurekit.domain.measurement.converters import UnitConverter
@@ -24,7 +24,7 @@ class UnitDefinition:
     symbol, dimension, and conversion factor to the system's base unit.
     """
 
-    _instances = {}
+    _instances: ClassVar[dict[str, UnitDefinition]] = {}
     symbol: str
     dimension: Dimension
     converter: UnitConverter
@@ -73,6 +73,17 @@ class UnitDefinition:
         self.name = name
         self.recipe = recipe
         self.allow_prefixes = allow_prefixes
+
+    def __getnewargs__(self):
+        """Arguments for __new__ during unpickling."""
+        return (
+            self.symbol,
+            self.dimension,
+            self.converter,
+            self.name,
+            self.recipe,
+            self.allow_prefixes,
+        )
 
     @property
     def factor_to_base(self) -> float:
