@@ -11,6 +11,8 @@ worrying about the intricacies of unit management.
 # The default system is now lazily loaded by context.get_current_system().
 # We expose a proxy or simply rely on get_current_system().
 
+from typing import TYPE_CHECKING, Any
+
 from measurekit.application.context import (
     get_current_system,
     use_system,
@@ -49,6 +51,7 @@ __all__ = [
     "Quantity",
     "Uncertainty",
     "UnitNotFoundError",
+    "default_system",
     "get_active_system",
     "get_current_system",
     "get_unit",
@@ -56,6 +59,14 @@ __all__ = [
 ]
 
 __version__ = "0.0.3"
+
+
+def __getattr__(name: str) -> Any:
+    """Implement lazy loading for default_system."""
+    if name == "default_system":
+        return get_default_system()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Register Pandas Accessor if pandas is available
 try:
