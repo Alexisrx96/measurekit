@@ -36,6 +36,11 @@ from measurekit.domain.measurement.units import (
 if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
 
+try:
+    from pydantic_core import core_schema
+except ImportError:
+    core_schema = None
+
 # --- Generic Type Variables ---
 ValueType = TypeVar("ValueType")
 UncType = TypeVar("UncType")
@@ -44,7 +49,18 @@ Numeric = Any  # Ideally strictly typed via protocols, but simplified for now
 
 @dataclass(frozen=True, slots=True)
 class Quantity(Generic[ValueType, UncType]):
-    """Represents a physical quantity with magnitude, unit, and uncertainty."""
+    """Represents a physical quantity with magnitude, unit, and uncertainty.
+
+    Examples:
+        >>> from measurekit import Q_
+        >>> length = Q_(10, "m")
+        >>> time = Q_(2, "s")
+        >>> velocity = length / time
+        >>> print(velocity)
+        5.0 m/s
+        >>> velocity.to("km/h")
+        Quantity(18.0, km/h)
+    """
 
     magnitude: ValueType
     unit: CompoundUnit
@@ -88,7 +104,7 @@ class Quantity(Generic[ValueType, UncType]):
             backend = BackendManager.get_backend(value)
         object.__setattr__(obj, "_backend", backend)
 
-        return cast(Self, obj)
+        return cast("Self", obj)
 
     @overload
     @classmethod
@@ -145,11 +161,61 @@ class Quantity(Generic[ValueType, UncType]):
                 pass
 
         return cls(
-            magnitude=cast(ValueType, value),
+            magnitude=cast("ValueType", value),
             unit=unit,
             uncertainty_obj=cast("Uncertainty[UncType]", uncertainty_obj),
             fraction=frac,
             system=resolved_system,
+        )
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: Any
+    ) -> core_schema.CoreSchema:
+        """Defines the Pydantic Core Schema for validation."""
+        if core_schema is None:
+            raise ImportError("pydantic-core is required for validation.")
+
+        def validate_from_str(value: Any) -> Quantity:
+            if isinstance(value, Quantity):
+                return value
+            if isinstance(value, str):
+                from measurekit.application.factories import QuantityFactory
+
+                # We use the factory because it handles strings with units
+                q = QuantityFactory()(value)
+                return q
+            raise ValueError(
+                f"No se puede validar Quantity desde {type(value)}"
+            )
+
+        def validate_from_dict(value: Any) -> Quantity:
+            if isinstance(value, dict):
+                mag = value.get("magnitude")
+                unit = value.get("unit")
+                system_name = value.get("system", "SI")
+                # Lazy import to avoid circular dependencies
+                from measurekit.application.startup import create_system
+
+                sys = create_system(f"{system_name.lower()}.conf")
+                u = sys.get_unit(unit)
+                return Quantity.from_input(mag, u, sys)
+            raise ValueError(
+                f"No se puede validar Quantity desde {type(value)}"
+            )
+
+        return core_schema.union_schema(
+            [
+                core_schema.is_instance_schema(Quantity),
+                core_schema.no_info_after_validator_function(
+                    validate_from_str,
+                    core_schema.any_schema(),
+                ),
+                core_schema.no_info_after_validator_function(
+                    validate_from_dict,
+                    core_schema.dict_schema(),
+                ),
+            ]
         )
 
     def __hash__(self) -> int:
@@ -194,11 +260,13 @@ class Quantity(Generic[ValueType, UncType]):
             return True  # Fallback for safety
 
     def __repr__(self) -> str:
-        """Returns a concise string representation."""
-        return (
-            f"Quantity({self.magnitude!r}, {self.unit!r}, "
-            f"uncertainty={self.uncertainty!r})"
-        )
+        unit_str = self.unit.to_string(self.system)
+        if self._has_uncertainty:
+            return (
+                f"Quantity({self.magnitude!r}, {unit_str}, "
+                f"uncertainty={self.uncertainty!r})"
+            )
+        return f"Quantity({self.magnitude!r}, {unit_str})"
 
     def __str__(self) -> str:
         """Returns a user-friendly string representation."""
@@ -269,9 +337,8 @@ class Quantity(Generic[ValueType, UncType]):
             # We assume units don't typically have these names exactly without prefixes.
             # But more robustly, if target_unit is not in system and looks like a device:
             devices = {"cuda", "cpu", "mps"}
-            if (
-                target_unit.lower() in devices
-                or ":" in target_unit
+            if target_unit.lower() in devices or (
+                ":" in target_unit
                 and target_unit.split(":")[0].lower() in devices
             ):
                 return self.to_device(target_unit)
@@ -420,7 +487,7 @@ class Quantity(Generic[ValueType, UncType]):
         std_dev = self._backend.reshape(std_dev_flat, shape)
 
         return Uncertainty(
-            std_dev=cast(UncType, std_dev), vector_slice=out_slice
+            std_dev=cast("UncType", std_dev), vector_slice=out_slice
         )
 
     # --- Arithmetic Dunder Methods ---
@@ -438,11 +505,10 @@ class Quantity(Generic[ValueType, UncType]):
                 # Broadcasting for self
                 is_self_scalar = False
                 if (
-                    (
-                        self._backend.shape(self.magnitude) == ()
-                        or len(self._backend.shape(self.magnitude)) == 0
-                    )
-                    or hasattr(self.magnitude, "shape")
+                    self._backend.shape(self.magnitude) == ()
+                    or len(self._backend.shape(self.magnitude)) == 0
+                ) or (
+                    hasattr(self.magnitude, "shape")
                     and self.magnitude.shape == (1,)
                 ):
                     is_self_scalar = True
@@ -549,11 +615,10 @@ class Quantity(Generic[ValueType, UncType]):
                 # Broadcasting for self
                 is_self_scalar = False
                 if (
-                    (
-                        self._backend.shape(self.magnitude) == ()
-                        or len(self._backend.shape(self.magnitude)) == 0
-                    )
-                    or hasattr(self.magnitude, "shape")
+                    self._backend.shape(self.magnitude) == ()
+                    or len(self._backend.shape(self.magnitude)) == 0
+                ) or (
+                    hasattr(self.magnitude, "shape")
                     and self.magnitude.shape == (1,)
                 ):
                     is_self_scalar = True
@@ -569,8 +634,10 @@ class Quantity(Generic[ValueType, UncType]):
                     if (
                         self._backend.shape(other.magnitude) == ()
                         or len(self._backend.shape(other.magnitude)) == 0
-                        or hasattr(other.magnitude, "shape")
-                        and other.magnitude.shape == (1,)
+                        or (
+                            hasattr(other.magnitude, "shape")
+                            and other.magnitude.shape == (1,)
+                        )
                     ):
                         is_other_scalar = True
 
@@ -1012,7 +1079,7 @@ class Quantity(Generic[ValueType, UncType]):
 
     def __neg__(self) -> Self:
         return cast(
-            Self,
+            "Self",
             Quantity.from_input(
                 self._backend.mul(self.magnitude, -1),
                 self.unit,
@@ -1027,7 +1094,7 @@ class Quantity(Generic[ValueType, UncType]):
     def __abs__(self) -> Self:
         sign = self._backend.sign(self.magnitude)
         return cast(
-            Self,
+            "Self",
             Quantity.from_input(
                 self._backend.abs(self.magnitude),
                 self.unit,
@@ -1068,27 +1135,25 @@ class Quantity(Generic[ValueType, UncType]):
         # Standard Dispatch
         if ufunc == np.add:
             return self.__add__(inputs[1] if inputs[0] is self else inputs[0])
-        elif ufunc == np.subtract:
+        if ufunc == np.subtract:
             val = inputs[1] if inputs[0] is self else inputs[0]
             if inputs[0] is self:
                 return self.__sub__(val)
-            else:
-                return self.__rsub__(val)
-        elif ufunc == np.multiply:
+            return self.__rsub__(val)
+        if ufunc == np.multiply:
             return self.__mul__(inputs[1] if inputs[0] is self else inputs[0])
-        elif ufunc == np.true_divide:
+        if ufunc == np.true_divide:
             if inputs[0] is self:
                 return self.__truediv__(inputs[1])
-            else:
-                return self.__rtruediv__(inputs[0])
-        elif ufunc == np.power:
+            return self.__rtruediv__(inputs[0])
+        if ufunc == np.power:
             if inputs[0] is self:
                 return self.__pow__(inputs[1])
 
         # Unary math that changes unit
         if ufunc == np.sqrt:
             return self**0.5
-        elif ufunc == np.square:
+        if ufunc == np.square:
             return self**2
 
         # Unary math that preserves unit

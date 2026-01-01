@@ -1,122 +1,185 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
+from jaxtyping import Array, Bool, Float
 from scipy import sparse
 
 from measurekit.core.protocols import BackendOps
+
+log = logging.getLogger(__name__)
 
 
 class NumpyBackend(BackendOps):
     """NumPy-based implementation of BackendOps."""
 
     def is_array(self, obj: Any) -> bool:
+        """Checks if the object is a NumPy array."""
         return isinstance(obj, np.ndarray)
 
-    def asarray(self, obj: Any) -> np.ndarray:
+    def asarray(self, obj: Any) -> Array:
+        """Converts input to a NumPy array."""
         return np.asarray(obj)
 
     def to_device(self, obj: Any, device: str) -> Any:
+        """No-op for NumPy backend."""
         return obj
 
-    def add(self, x: Any, y: Any) -> Any:
+    def add(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Element-wise addition."""
         return np.add(x, y)
 
-    def sub(self, x: Any, y: Any) -> Any:
+    def sub(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Element-wise subtraction."""
         return np.subtract(x, y)
 
-    def mul(self, x: Any, y: Any) -> Any:
+    def mul(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Element-wise multiplication."""
         return np.multiply(x, y)
 
-    def truediv(self, x: Any, y: Any) -> Any:
+    def truediv(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Element-wise true division."""
         return np.true_divide(x, y)
 
-    def pow(self, x: Any, y: Any) -> Any:
+    def pow(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Element-wise power."""
         return np.power(x, y)
 
-    def sqrt(self, x: Any) -> Any:
+    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise square root."""
         return np.sqrt(x)
 
-    def exp(self, x: Any) -> Any:
+    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise exponential."""
         return np.exp(x)
 
-    def log(self, x: Any) -> Any:
+    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise natural logarithm."""
         return np.log(x)
 
-    def sin(self, x: Any) -> Any:
+    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise sine."""
         return np.sin(x)
 
-    def cos(self, x: Any) -> Any:
+    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise cosine."""
         return np.cos(x)
 
-    def tan(self, x: Any) -> Any:
+    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise tangent."""
         return np.tan(x)
 
-    def dot(self, x: Any, y: Any) -> Any:
+    def dot(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Dot product or matrix multiplication."""
         return np.dot(x, y)
 
-    def cross(self, x: Any, y: Any) -> Any:
+    def cross(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
+        """Cross product."""
         return np.cross(x, y)
 
-    def abs(self, x: Any) -> Any:
+    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise absolute value."""
         return np.abs(x)
 
-    def sign(self, x: Any) -> Any:
+    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Element-wise sign."""
         return np.sign(x)
 
     def sum(
-        self, obj: Any, axis: Union[int, Sequence[int], None] = None
-    ) -> Any:
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
+        """Sum of elements."""
         return np.sum(obj, axis=axis)
 
     def mean(
-        self, obj: Any, axis: Union[int, Sequence[int], None] = None
-    ) -> Any:
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
+        """Mean of elements."""
         return np.mean(obj, axis=axis)
 
-    def any(self, obj: Any) -> bool:
+    def any(self, obj: Bool[Array, ...]) -> bool:
+        """Returns True if any element is True."""
         return bool(np.any(obj))
 
-    def all(self, obj: Any) -> bool:
+    def all(self, obj: Bool[Array, ...]) -> bool:
+        """Returns True if all elements are True."""
         return bool(np.all(obj))
 
     def allclose(
-        self, a: Any, b: Any, rtol: float = 1e-5, atol: float = 1e-8
+        self,
+        a: Float[Array, ...],
+        b: Float[Array, ...],
+        rtol: float = 1e-5,
+        atol: float = 1e-8,
     ) -> bool:
+        """Checks if all elements are close."""
         return bool(np.allclose(a, b, rtol=rtol, atol=atol))
 
-    def equal(self, x: Any, y: Any) -> Any:
+    def equal(self, x: Any, y: Any) -> Bool[Array, ...]:
+        """Element-wise equality."""
         return np.equal(x, y)
 
-    def not_equal(self, x: Any, y: Any) -> Any:
+    def not_equal(self, x: Any, y: Any) -> Bool[Array, ...]:
+        """Element-wise inequality."""
         return np.not_equal(x, y)
 
-    def less(self, x: Any, y: Any) -> Any:
+    def less(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
+        """Element-wise less than."""
         return np.less(x, y)
 
-    def less_equal(self, x: Any, y: Any) -> Any:
+    def less_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
+        """Element-wise less than or equal."""
         return np.less_equal(x, y)
 
-    def greater(self, x: Any, y: Any) -> Any:
+    def greater(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
+        """Element-wise greater than."""
         return np.greater(x, y)
 
-    def greater_equal(self, x: Any, y: Any) -> Any:
+    def greater_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
+        """Element-wise greater than or equal."""
         return np.greater_equal(x, y)
 
-    def shape(self, obj: Any) -> tuple[int, ...]:
+    def shape(self, obj: Array) -> tuple[int, ...]:
+        """Returns the shape of the array."""
         if hasattr(obj, "shape"):
             return obj.shape
         return np.shape(obj)
 
-    def reshape(self, obj: Any, shape: tuple[int, ...]) -> Any:
+    def reshape(self, obj: Array, shape: tuple[int, ...]) -> Array:
+        """Reshapes the array."""
         return np.reshape(obj, shape)
 
-    def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Any:
+    def concatenate(self, arrays: Sequence[Array], axis: int = 0) -> Array:
+        """Concatenates arrays."""
         return np.concatenate(arrays, axis=axis)
 
     def eye(self, N: int, format: str = "csr") -> Any:
+        """Returns an identity matrix."""
         return sparse.eye(N, format=format)
 
     def diags(
@@ -125,9 +188,11 @@ class NumpyBackend(BackendOps):
         offsets: Sequence[int],
         format: str = "csr",
     ) -> Any:
+        """Constructs a diagonal matrix."""
         return sparse.diags(
             diagonals=diagonals, offsets=offsets, format=format
         )
 
-    def ones(self, shape: tuple[int, ...]) -> Any:
+    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
+        """Returns an array of ones."""
         return np.ones(shape)

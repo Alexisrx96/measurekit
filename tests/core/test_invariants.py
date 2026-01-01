@@ -4,7 +4,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from measurekit.core.quantity import Quantity
+from measurekit.domain.measurement.quantity import Quantity
 
 # Strategies for generating values
 floats = st.floats(min_value=-1e12, max_value=1e12)

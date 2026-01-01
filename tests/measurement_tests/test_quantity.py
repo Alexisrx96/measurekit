@@ -136,10 +136,7 @@ def test_dunder_methods(quantity_system):
     assert abs(quantity_system.Q_(-5, "m")).magnitude == 5
     assert float(q2) == 5.0
 
-    assert (
-        repr(q1)
-        == "Quantity(10, CompoundUnit(exponents={'m': 1}), uncertainty=0.1)"
-    )
+    assert repr(q1) == "Quantity(10, m, uncertainty=0.1)"
     assert str(q1) == "(10 ± 0.1) m"
     assert str(q2) == "5 m"
 

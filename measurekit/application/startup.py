@@ -220,10 +220,14 @@ class UnitSystemBuilder:
             else:
                 main_part = value_str
 
-            parts = [p.strip() for p in main_part.split(",") if p.strip()]
+            parts = [
+                p.strip()
+                for p in main_part.split(",")
+                if p.strip() and p.strip() != "noprefix"
+            ]
 
             symbol = aliases[0] if aliases else key
-            all_aliases = [key] + aliases
+            all_aliases = [key, *aliases]
 
             if parts[0].lower() == "log":
                 continue
@@ -244,7 +248,7 @@ class UnitSystemBuilder:
 
             if recipe_str:
                 unit_def = cast(
-                    UnitDefinition, self._system.get_definition(key)
+                    "UnitDefinition", self._system.get_definition(key)
                 )
                 if unit_def and not unit_def.recipe:
                     # Obtain the CompoundUnit object from the recipe.

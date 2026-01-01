@@ -1,4 +1,4 @@
-from measurekit.core.quantity import Quantity
+from measurekit.domain.measurement.quantity import Quantity
 from measurekit.domain.measurement.units import CompoundUnit
 
 

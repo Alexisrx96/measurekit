@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, TypeVar, Union, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
+
+from jaxtyping import Array, Bool, Float
 
 T = TypeVar("T")
 
@@ -15,93 +17,107 @@ class BackendOps(Protocol):
         """Returns True if the object is an array type supported by this backend."""
         ...
 
-    def asarray(self, obj: Any) -> Any:
+    def asarray(self, obj: Any) -> Array:
         """Converts the input to an array type supported by this backend."""
         ...
 
-    def to_device(self, obj: Any, device: str) -> Any:
+    def to_device(self, obj: Any, device: str) -> Array:
         """Moves the object to the specified device (e.g., 'cpu', 'cuda')."""
         ...
 
     # Math Operations
-    def add(self, x: Any, y: Any) -> Any:
+    def add(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Performs element-wise addition."""
         ...
 
-    def sub(self, x: Any, y: Any) -> Any:
+    def sub(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Performs element-wise subtraction."""
         ...
 
-    def mul(self, x: Any, y: Any) -> Any:
+    def mul(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Performs element-wise multiplication."""
         ...
 
-    def truediv(self, x: Any, y: Any) -> Any:
+    def truediv(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Performs element-wise true division."""
         ...
 
-    def pow(self, x: Any, y: Any) -> Any:
+    def pow(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Performs element-wise power."""
         ...
 
-    def sqrt(self, x: Any) -> Any:
+    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise square root."""
         ...
 
-    def exp(self, x: Any) -> Any:
+    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise exponential."""
         ...
 
-    def log(self, x: Any) -> Any:
+    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise natural logarithm."""
         ...
 
-    def sin(self, x: Any) -> Any:
+    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise sine."""
         ...
 
-    def cos(self, x: Any) -> Any:
+    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise cosine."""
         ...
 
-    def tan(self, x: Any) -> Any:
+    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise tangent."""
         ...
 
-    def dot(self, x: Any, y: Any) -> Any:
+    def dot(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Computes dot product."""
         ...
 
-    def cross(self, x: Any, y: Any) -> Any:
+    def cross(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Computes cross product."""
         ...
 
-    def abs(self, x: Any) -> Any:
+    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise absolute value."""
         ...
 
-    def sign(self, x: Any) -> Any:
+    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Computes element-wise sign."""
         ...
 
     # Reduction Operations
     def sum(
-        self, obj: Any, axis: Union[int, Sequence[int], None] = None
-    ) -> Any:
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         """Computes the sum of elements along the specified axis."""
         ...
 
     def mean(
-        self, obj: Any, axis: Union[int, Sequence[int], None] = None
-    ) -> Any:
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         """Computes the mean of elements along the specified axis."""
         ...
 
-    def any(self, obj: Any) -> bool:
+    def any(self, obj: Bool[Array, ...]) -> bool:
         """Returns True if any element is True."""
         ...
 
-    def all(self, obj: Any) -> bool:
+    def all(self, obj: Bool[Array, ...]) -> bool:
         """Returns True if all elements are True."""
         ...
 
@@ -111,27 +127,39 @@ class BackendOps(Protocol):
         """Returns True if two arrays are element-wise equal within a tolerance."""
         ...
 
-    def equal(self, x: Any, y: Any) -> Any:
+    def equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise equality."""
         ...
 
-    def not_equal(self, x: Any, y: Any) -> Any:
+    def not_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise inequality."""
         ...
 
-    def less(self, x: Any, y: Any) -> Any:
+    def less(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise less than."""
         ...
 
-    def less_equal(self, x: Any, y: Any) -> Any:
+    def less_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise less than or equal."""
         ...
 
-    def greater(self, x: Any, y: Any) -> Any:
+    def greater(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise greater than."""
         ...
 
-    def greater_equal(self, x: Any, y: Any) -> Any:
+    def greater_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise greater than or equal."""
         ...
 
@@ -149,8 +177,8 @@ class BackendOps(Protocol):
         ...
 
     # Sparse / Jacobian Helper
-    def eye(self, N: int, format: str = "csr") -> Any:
-        """Returns an N x N identity matrix, potentially sparse."""
+    def eye(self, n: int, format: str = "csr") -> Any:
+        """Returns an n x n identity matrix, potentially sparse."""
         ...
 
     def diags(

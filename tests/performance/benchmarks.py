@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from measurekit.core.quantity import Quantity
 from measurekit.domain.measurement.converters import LinearConverter
 from measurekit.domain.measurement.dimensions import Dimension
+from measurekit.domain.measurement.quantity import Quantity
 from measurekit.domain.measurement.system import UnitSystem
 
 

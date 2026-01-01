@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from jax.core import Tracer
+from jaxtyping import Array, Bool, Float
 
 from measurekit.core.protocols import BackendOps
 
@@ -38,11 +39,12 @@ class JaxBackend(BackendOps):
         except (NameError, AttributeError):
             return False
 
-    def asarray(self, obj: Any) -> jax.Array:
+    def asarray(self, obj: Any) -> Array:
         """Converts input to a JAX array."""
         return jnp.asarray(obj)
 
     def to_device(self, obj: Any, device: str) -> Any:
+        # Implementation remains the same but signatures are updated
         """Moves a JAX array to a specified device."""
         if self.is_array(obj) and not self._is_tracer(obj):
             try:
@@ -53,131 +55,161 @@ class JaxBackend(BackendOps):
                 log.debug(f"Failed to move JAX array to device {device}: {e}")
         return obj
 
-    def add(self, x: Any, y: Any) -> Any:
+    def add(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise addition."""
         return jnp.add(x, y)
 
-    def sub(self, x: Any, y: Any) -> Any:
+    def sub(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise subtraction."""
         return jnp.subtract(x, y)
 
-    def mul(self, x: Any, y: Any) -> Any:
+    def mul(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise multiplication."""
         return jnp.multiply(x, y)
 
-    def truediv(self, x: Any, y: Any) -> Any:
+    def truediv(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise true division."""
         return jnp.true_divide(x, y)
 
-    def pow(self, x: Any, y: Any) -> Any:
+    def pow(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise power."""
         return jnp.power(x, y)
 
-    def sqrt(self, x: Any) -> Any:
+    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise square root."""
         return jnp.sqrt(x)
 
-    def exp(self, x: Any) -> Any:
+    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise exponential."""
         return jnp.exp(x)
 
-    def log(self, x: Any) -> Any:
+    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise natural logarithm."""
         return jnp.log(x)
 
-    def sin(self, x: Any) -> Any:
+    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise sine."""
         return jnp.sin(x)
 
-    def cos(self, x: Any) -> Any:
+    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise cosine."""
         return jnp.cos(x)
 
-    def tan(self, x: Any) -> Any:
+    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise tangent."""
         return jnp.tan(x)
 
-    def dot(self, x: Any, y: Any) -> Any:
+    def dot(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Dot product or matrix multiplication."""
         return jnp.dot(x, y)
 
-    def cross(self, x: Any, y: Any) -> Any:
+    def cross(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Cross product."""
         return jnp.cross(x, y)
 
-    def abs(self, x: Any) -> Any:
+    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise absolute value."""
         return jnp.abs(x)
 
-    def sign(self, x: Any) -> Any:
+    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise sign."""
         return jnp.sign(x)
 
-    def sum(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
+    def sum(
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         """Sum of elements."""
         return jnp.sum(obj, axis=axis)
 
-    def mean(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
+    def mean(
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         """Mean of elements."""
         return jnp.mean(obj, axis=axis)
 
-    def any(self, obj: Any) -> bool:
+    def any(self, obj: Bool[Array, ...]) -> bool:
         """Returns True if any element is True. Returns False for Tracers."""
         if self._is_tracer(obj):
             return False
         return bool(jnp.any(obj))
 
-    def all(self, obj: Any) -> bool:
+    def all(self, obj: Bool[Array, ...]) -> bool:
         """Returns True if all elements are True. Returns False for Tracers."""
         if self._is_tracer(obj):
             return False
         return bool(jnp.all(obj))
 
     def allclose(
-        self, a: Any, b: Any, rtol: float = 1e-5, atol: float = 1e-8
+        self,
+        a: Float[Array, ...],
+        b: Float[Array, ...],
+        rtol: float = 1e-5,
+        atol: float = 1e-8,
     ) -> bool:
         """Checks if all elements are close. Returns False for Tracers."""
         if self._is_tracer(a) or self._is_tracer(b):
             return False
         return bool(jnp.allclose(a, b, rtol=rtol, atol=atol))
 
-    def equal(self, x: Any, y: Any) -> Any:
+    def equal(self, x: Any, y: Any) -> Bool[Array, ...]:
         """Element-wise equality."""
         return jnp.equal(x, y)
 
-    def not_equal(self, x: Any, y: Any) -> Any:
+    def not_equal(self, x: Any, y: Any) -> Bool[Array, ...]:
         """Element-wise inequality."""
         return jnp.not_equal(x, y)
 
-    def less(self, x: Any, y: Any) -> Any:
+    def less(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise less than."""
         return jnp.less(x, y)
 
-    def less_equal(self, x: Any, y: Any) -> Any:
+    def less_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise less than or equal."""
         return jnp.less_equal(x, y)
 
-    def greater(self, x: Any, y: Any) -> Any:
+    def greater(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise greater than."""
         return jnp.greater(x, y)
 
-    def greater_equal(self, x: Any, y: Any) -> Any:
+    def greater_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise greater than or equal."""
         return jnp.greater_equal(x, y)
 
-    def shape(self, obj: Any) -> tuple[int, ...]:
+    def shape(self, obj: Array) -> tuple[int, ...]:
         """Returns the shape of the array."""
         return jnp.shape(obj)
 
-    def reshape(self, obj: Any, shape: tuple[int, ...]) -> Any:
+    def reshape(self, obj: Array, shape: tuple[int, ...]) -> Array:
         """Reshapes the array."""
         return jnp.reshape(obj, shape)
 
-    def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Any:
+    def concatenate(self, arrays: Sequence[Array], axis: int = 0) -> Array:
         """Concatenates arrays."""
         return jnp.concatenate(arrays, axis=axis)
 
-    def eye(self, n: int, format: str = "csr") -> Any:
+    def eye(self, n: int, format: str = "csr") -> Float[Array, "n n"]:
         """Returns an identity matrix."""
         return jnp.eye(n)
 
@@ -186,7 +218,7 @@ class JaxBackend(BackendOps):
         diagonals: Sequence[Any],
         offsets: Sequence[int],
         format: str = "csr",
-    ) -> Any:
+    ) -> Float[Array, ...]:
         """Constructs a diagonal matrix."""
         if not diagonals:
             return jnp.zeros((0, 0))
@@ -198,7 +230,7 @@ class JaxBackend(BackendOps):
             res = res + jnp.diag(diag, k=offset)
         return res
 
-    def ones(self, shape: tuple[int, ...]) -> Any:
+    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
         """Returns an array of ones."""
         return jnp.ones(shape)
 
@@ -230,22 +262,6 @@ def register_jax_behavior():
                 DomainQuantity, aux, children
             ),
         )
-
-        try:
-            from measurekit.core.quantity import (
-                Quantity as CoreQuantity,
-            )
-
-            if CoreQuantity is not DomainQuantity:
-                jax.tree_util.register_pytree_node(
-                    CoreQuantity,
-                    flatten_quantity,
-                    lambda aux, children: unflatten_quantity_base(
-                        CoreQuantity, aux, children
-                    ),
-                )
-        except ImportError:
-            pass
 
     except (ImportError, NameError):
         pass

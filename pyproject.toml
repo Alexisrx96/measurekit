@@ -32,6 +32,7 @@ classifiers = [
 dependencies = [
     "sympy>=1.13.0",
     "typing-extensions>=4.15.0",
+    "jaxtyping>=0.2.28",
 ]
 
 [project.optional-dependencies]
@@ -59,8 +60,9 @@ dev = [
     "ruff>=0.3.0",
 ]
 docs = [
-    "sphinx>=7.2.0",
-    "sphinx-rtd-theme>=2.0.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.24.0",
+    "mkdocs-jupyter>=0.24.0",
 ]
 
 [project.urls]
@@ -117,8 +119,8 @@ known-first-party = ["measurekit"]
 docstring-code-format = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra --benchmark-disable"
+testpaths = ["tests", "measurekit"]
+addopts = "-ra --benchmark-disable --doctest-modules"
 
 [tool.coverage.run]
 source = ["measurekit"]

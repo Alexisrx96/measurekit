@@ -1,6 +1,6 @@
 import pytest
 
-from measurekit.core.quantity import Quantity
+from measurekit import Quantity
 
 try:
     import pydantic_core

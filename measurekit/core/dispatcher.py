@@ -5,6 +5,8 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from jaxtyping import Array, Bool, Float
+
 from measurekit.core.protocols import BackendOps
 
 
@@ -14,73 +16,91 @@ class PythonBackend(BackendOps):
     def is_array(self, obj: Any) -> bool:
         return False
 
-    def asarray(self, obj: Any) -> Any:
+    def asarray(self, obj: Any) -> Array:
         return obj
 
-    def to_device(self, obj: Any, device: str) -> Any:
+    def to_device(self, obj: Any, device: str) -> Array:
         return obj
 
-    def add(self, x: Any, y: Any) -> Any:
+    def add(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         return x + y
 
-    def sub(self, x: Any, y: Any) -> Any:
+    def sub(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         return x - y
 
-    def mul(self, x: Any, y: Any) -> Any:
+    def mul(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         return x * y
 
-    def truediv(self, x: Any, y: Any) -> Any:
+    def truediv(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         return x / y
 
-    def pow(self, x: Any, y: Any) -> Any:
+    def pow(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         return x**y
 
-    def sqrt(self, x: Any) -> Any:
+    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.sqrt(x)
 
-    def exp(self, x: Any) -> Any:
+    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.exp(x)
 
-    def log(self, x: Any) -> Any:
+    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.log(x)
 
-    def sin(self, x: Any) -> Any:
+    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.sin(x)
 
-    def cos(self, x: Any) -> Any:
+    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.cos(x)
 
-    def tan(self, x: Any) -> Any:
+    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.tan(x)
 
-    def dot(self, x: Any, y: Any) -> Any:
+    def dot(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         return x * y
 
-    def cross(self, x: Any, y: Any) -> Any:
+    def cross(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         raise NotImplementedError("Cross product not supported for scalars")
 
-    def abs(self, x: Any) -> Any:
+    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return abs(x)
 
-    def sign(self, x: Any) -> Any:
+    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
         return math.copysign(1, x)
 
-    def sum(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
+    def sum(
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         if isinstance(obj, (list, tuple)):
             return sum(obj)
         return obj
 
-    def mean(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
+    def mean(
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         if isinstance(obj, (list, tuple)):
             return sum(obj) / len(obj)
         return obj
 
-    def any(self, obj: Any) -> bool:
+    def any(self, obj: Bool[Array, ...]) -> bool:
         if isinstance(obj, (list, tuple)):
             return any(obj)
         return bool(obj)
 
-    def all(self, obj: Any) -> bool:
+    def all(self, obj: Bool[Array, ...]) -> bool:
         if isinstance(obj, (list, tuple)):
             return all(obj)
         return bool(obj)
@@ -90,22 +110,34 @@ class PythonBackend(BackendOps):
     ) -> bool:
         return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
 
-    def equal(self, x: Any, y: Any) -> Any:
+    def equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         return x == y
 
-    def not_equal(self, x: Any, y: Any) -> Any:
+    def not_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         return x != y
 
-    def less(self, x: Any, y: Any) -> Any:
+    def less(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         return x < y
 
-    def less_equal(self, x: Any, y: Any) -> Any:
+    def less_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         return x <= y
 
-    def greater(self, x: Any, y: Any) -> Any:
+    def greater(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         return x > y
 
-    def greater_equal(self, x: Any, y: Any) -> Any:
+    def greater_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         return x >= y
 
     def shape(self, obj: Any) -> tuple[int, ...]:
@@ -131,7 +163,7 @@ class PythonBackend(BackendOps):
                 result.append(arr)
         return result
 
-    def eye(self, N: int, format: str = "csr") -> Any:
+    def eye(self, n: int, format: str = "csr") -> Any:
         raise NotImplementedError(
             "Sparse matrices not supported in PythonBackend"
         )

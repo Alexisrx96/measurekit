@@ -1,13 +1,15 @@
-"""Torch backend implementation for measurekit."""
-
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Any
 
 import torch
+from jaxtyping import Array, Bool, Float
 
 from measurekit.core.protocols import BackendOps
+
+log = logging.getLogger(__name__)
 
 
 class TorchBackend(BackendOps):
@@ -17,7 +19,7 @@ class TorchBackend(BackendOps):
         """Checks if the object is a torch Tensor."""
         return isinstance(obj, torch.Tensor)
 
-    def asarray(self, obj: Any) -> torch.Tensor:
+    def asarray(self, obj: Any) -> Array:
         """Converts input to a torch Tensor."""
         if isinstance(obj, torch.Tensor):
             return obj
@@ -29,11 +31,15 @@ class TorchBackend(BackendOps):
             return obj.to(device)
         return obj
 
-    def add(self, x: Any, y: Any) -> Any:
+    def add(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise addition."""
         return torch.add(self.asarray(x), self.asarray(y))
 
-    def sub(self, x: Any, y: Any) -> Any:
+    def sub(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise subtraction."""
         x_t = self.asarray(x)
         y_t = self.asarray(y)
@@ -43,7 +49,9 @@ class TorchBackend(BackendOps):
             else torch.sub(x_t, y_t)
         )
 
-    def mul(self, x: Any, y: Any) -> Any:
+    def mul(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise multiplication."""
         x_t = self.asarray(x)
         y_t = self.asarray(y)
@@ -53,7 +61,9 @@ class TorchBackend(BackendOps):
             else torch.mul(x_t, y_t)
         )
 
-    def truediv(self, x: Any, y: Any) -> Any:
+    def truediv(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise true division."""
         x_t = self.asarray(x)
         y_t = self.asarray(y)
@@ -63,35 +73,39 @@ class TorchBackend(BackendOps):
             else torch.div(x_t, y_t)
         )
 
-    def pow(self, x: Any, y: Any) -> Any:
+    def pow(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Element-wise power."""
         return torch.pow(self.asarray(x), self.asarray(y))
 
-    def sqrt(self, x: Any) -> Any:
+    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise square root."""
         return torch.sqrt(self.asarray(x))
 
-    def exp(self, x: Any) -> Any:
+    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise exponential."""
         return torch.exp(x)
 
-    def log(self, x: Any) -> Any:
+    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise natural logarithm."""
         return torch.log(x)
 
-    def sin(self, x: Any) -> Any:
+    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise sine."""
         return torch.sin(x)
 
-    def cos(self, x: Any) -> Any:
+    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise cosine."""
         return torch.cos(x)
 
-    def tan(self, x: Any) -> Any:
+    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise tangent."""
         return torch.tan(x)
 
-    def dot(self, x: Any, y: Any) -> Any:
+    def dot(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Dot product or matrix multiplication."""
         if (
             hasattr(x, "ndim")
@@ -102,81 +116,99 @@ class TorchBackend(BackendOps):
             return torch.dot(x, y)
         return torch.matmul(x, y)
 
-    def cross(self, x: Any, y: Any) -> Any:
+    def cross(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Float[Array, ...]:
         """Cross product."""
         return torch.cross(x, y)
 
-    def abs(self, x: Any) -> Any:
+    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise absolute value."""
         return torch.abs(x)
 
-    def sign(self, x: Any) -> Any:
+    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Element-wise sign."""
         return torch.sign(x)
 
-    def sum(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
+    def sum(
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         """Sum of elements."""
         if axis is None:
             return torch.sum(obj)
         return torch.sum(obj, dim=axis)
 
-    def mean(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
+    def mean(
+        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
+    ) -> Float[Array, ...]:
         """Mean of elements."""
         if axis is None:
             return torch.mean(obj)
         return torch.mean(obj, dim=axis)
 
-    def any(self, obj: Any) -> bool:
+    def any(self, obj: Bool[Array, ...]) -> bool:
         """Returns True if any element is True."""
         return bool(torch.any(obj))
 
-    def all(self, obj: Any) -> bool:
+    def all(self, obj: Bool[Array, ...]) -> bool:
         """Returns True if all elements are True."""
         return bool(torch.all(obj))
 
     def allclose(
-        self, a: Any, b: Any, rtol: float = 1e-5, atol: float = 1e-8
+        self,
+        a: Float[Array, ...],
+        b: Float[Array, ...],
+        rtol: float = 1e-5,
+        atol: float = 1e-8,
     ) -> bool:
         """Checks if all elements are close."""
         return bool(torch.allclose(a, b, rtol=rtol, atol=atol))
 
-    def equal(self, x: Any, y: Any) -> Any:
+    def equal(self, x: Any, y: Any) -> Bool[Array, ...]:
         """Element-wise equality."""
         return torch.eq(x, y)
 
-    def not_equal(self, x: Any, y: Any) -> Any:
+    def not_equal(self, x: Any, y: Any) -> Bool[Array, ...]:
         """Element-wise inequality."""
         return torch.ne(x, y)
 
-    def less(self, x: Any, y: Any) -> Any:
+    def less(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise less than."""
         return torch.lt(x, y)
 
-    def less_equal(self, x: Any, y: Any) -> Any:
+    def less_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise less than or equal."""
         return torch.le(x, y)
 
-    def greater(self, x: Any, y: Any) -> Any:
+    def greater(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise greater than."""
         return torch.gt(x, y)
 
-    def greater_equal(self, x: Any, y: Any) -> Any:
+    def greater_equal(
+        self, x: Float[Array, ...], y: Float[Array, ...]
+    ) -> Bool[Array, ...]:
         """Element-wise greater than or equal."""
         return torch.ge(x, y)
 
-    def shape(self, obj: Any) -> tuple[int, ...]:
+    def shape(self, obj: Array) -> tuple[int, ...]:
         """Returns the shape of the tensor."""
         return tuple(obj.shape)
 
-    def reshape(self, obj: Any, shape: tuple[int, ...]) -> Any:
+    def reshape(self, obj: Array, shape: tuple[int, ...]) -> Array:
         """Reshapes the tensor."""
         return torch.reshape(obj, shape)
 
-    def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Any:
+    def concatenate(self, arrays: Sequence[Array], axis: int = 0) -> Array:
         """Concatenates tensors."""
         return torch.cat(arrays, dim=axis)
 
-    def eye(self, N: int, format: str = "csr") -> Any:
+    def eye(self, N: int, format: str = "csr") -> Float[Array, "N N"]:
         """Returns an identity matrix."""
         return torch.eye(N)
 
@@ -185,7 +217,7 @@ class TorchBackend(BackendOps):
         diagonals: Sequence[Any],
         offsets: Sequence[int],
         format: str = "csr",
-    ) -> Any:
+    ) -> Float[Array, ...]:
         """Constructs a diagonal matrix."""
         if len(diagonals) == 1:
             return torch.diag(diagonals[0], diagonal=offsets[0])
@@ -195,6 +227,6 @@ class TorchBackend(BackendOps):
             res = res + torch.diag(diagonals[i], diagonal=offsets[i])
         return res
 
-    def ones(self, shape: tuple[int, ...]) -> Any:
+    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
         """Returns a tensor of ones."""
         return torch.ones(shape)
