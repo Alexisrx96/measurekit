@@ -36,9 +36,10 @@ def test_temperature_difference():
     diff = t1 - t2
     # Con el Fast Path:
     # diff.magnitude = 100 - 90 = 10
-    # diff.unit = celsius
+    # diff.unit = Kelvin (Delta)
     assert diff.magnitude == 10
-    assert diff.unit == celsius
+    # T - T results in Delta unit (Kelvin for SI Temperature)
+    assert diff.unit == system.get_unit("K")
 
 
 def test_performance_benchmark():
