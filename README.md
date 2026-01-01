@@ -102,6 +102,32 @@ data = SensorData(
 
 ---
 
+## 📊 Benchmarks
+
+MeasureKit is designed for high performance. To run the benchmark suite:
+
+```bash
+uv run pytest --benchmark-enable tests/performance/benchmarks.py
+```
+
+CI/CD automatically tracks performance regressions using `pytest-benchmark`.
+
+## 📚 Documentation
+
+The documentation is built with **MkDocs Material** and includes API references and interactive Jupyter tutorials.
+
+To build and serve the documentation locally:
+
+```bash
+uv run mkdocs serve
+```
+
+Documentation includes:
+
+- **API Reference**: Automatically generated from docstrings.
+- **Tutorials**: Executable Jupyter notebooks (e.g., getting started with JAX).
+- **Core Concepts**: Explanations of the Quantity and UnitSystem.
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please see our [ROADMAP.md](ROADMAP.md) for future vision and [MK-001_Best_Practices.md](MK-001_Best_Practices.md) for coding standards.
