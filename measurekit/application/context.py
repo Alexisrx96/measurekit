@@ -1,10 +1,9 @@
 """Manages the active unit system context for the MeasureKit library.
 
-This module provides functions to get the currently active unit system and a
-context manager to temporarily switch to a different system. This is crucial
-for ensuring that quantity operations are performed within the correct set of
-unit definitions, especially in applications that may need to work with
-multiple, distinct unit systems simultaneously.
+This module provides the mechanism for managing the "current" unit system
+in a thread-safe and async-safe manner using Python's `contextvars`.
+It eliminates global mutable state, ensuring that concurrent requests or tasks
+can operate with different unit systems (e.g. SI vs Imperial) without interference.
 """
 
 from __future__ import annotations
@@ -18,66 +17,77 @@ if TYPE_CHECKING:
 
     from measurekit.domain.measurement.system import UnitSystem
 
-# 1. Global mutable placeholder for the UnitSystem
-# This will be set by measurekit/__init__.py after initialization completes.
+# 1. Context Variable for Thread/Task Isolation
+# Stores the active UnitSystem for the current context.
+_current_unit_system: ContextVar[UnitSystem | None] = ContextVar(
+    "current_unit_system", default=None
+)
+
+# 2. Global fallback for the default system (SI)
+# Loaded lazily to avoid circular imports and startup costs.
 _global_default_system: UnitSystem | None = None
 
 
-# 2. Internal function for setting the global default system
-def _set_global_default_system(system: UnitSystem) -> None:
-    """Internal function to set the global default system after it's built.
+def get_current_system() -> UnitSystem:
+    """Returns the currently active UnitSystem.
 
-    This replaces the implicit import from measurekit.
+    Resolution order:
+    1. Check `_current_unit_system` ContextVar (set via `use_system`).
+    2. Check `_global_default_system` (cache).
+    3. Lazily load the default "International" (SI) system.
+
+    Returns:
+        UnitSystem: The active system.
     """
-    global _global_default_system
-    _global_default_system = system
-
-    from measurekit.domain.measurement.units import set_system_provider
-
-    set_system_provider(get_active_system)
-
-
-# 3. Create a context variable to hold the active system.
-_active_system: ContextVar[UnitSystem] = ContextVar("active_system")
-
-
-def get_active_system() -> UnitSystem:
-    """Returns the currently active unit system from the context.
-
-    If no system is set in the context, it falls back to the global
-    default_system set by _set_global_default_system.
-    """
-    # First, check the context variable for a temporary system
-    system = _active_system.get(None)
+    # 1. Check ContextVar
+    system = _current_unit_system.get()
     if system is not None:
         return system
 
-    # Fall back to the global default system placeholder
-    if _global_default_system is None:
-        # If this happens, it means code is calling get_active_system()
-        # before the system has been fully created and set.
-        # The calling code (e.g., in startup.py) should explicitly pass the
-        # UnitSystem object it is currently building during this bootstrap
-        # phase.
-        raise RuntimeError(
-            "Attempted to access the default UnitSystem before its "
-            "initialization was complete. Pass the current system explicitly "
-            "to the Quantity factory during setup."
-        )
+    # 2. Check Global Cache
+    global _global_default_system
+    if _global_default_system is not None:
+        return _global_default_system
 
+    # 3. Lazy Load Default System (SI)
+    # Import here to avoid circular dependency: context -> startup -> units -> context
+    from measurekit.application.startup import create_default_system
+
+    _global_default_system = create_default_system()
     return _global_default_system
 
 
 @contextmanager
-def system_context(system: UnitSystem) -> Iterator[None]:
-    """A context manager to temporarily set the active unit system."""
-    token = _active_system.set(system)
+def use_system(system_name_or_obj: str | UnitSystem) -> Iterator[None]:
+    """Context manager to temporarily switch the active unit system.
+
+    This change is isolated to the current thread or asyncio task.
+
+    Args:
+        system_name_or_obj: A `UnitSystem` instance or a string name
+                            (e.g., "imperial") to load from config.
+    """
+    system: UnitSystem
+
+    if isinstance(system_name_or_obj, str):
+        # Lazy import to avoid top-level cycles
+        from measurekit.application.startup import create_system
+
+        # We assume the user passed a config name like "imperial"
+        # If they passed "imperial", we look for "imperial.conf"
+        config_name = system_name_or_obj
+        if not config_name.endswith(".conf"):
+            config_name += ".conf"
+        system = create_system(config_name)
+    else:
+        system = system_name_or_obj
+
+    token = _current_unit_system.set(system)
     try:
         yield
     finally:
-        _active_system.reset(token)
+        _current_unit_system.reset(token)
 
 
-# --- Expose Core Domain Objects and Exceptions ---
-# IMPORTANT: The public functions remain:
-# from measurekit.context import get_active_system, system_context
+# For backward compatibility if needed, though get_current_system is preferred.
+get_active_system = get_current_system

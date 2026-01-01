@@ -16,7 +16,8 @@ from measurekit.domain.measurement.converters import (
 )
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.ports.unit_repository import IUnitRepository
-from measurekit.domain.measurement.units import CompoundUnit, ExponentsDict
+from measurekit.domain.measurement.units import CompoundUnit
+from measurekit.domain.notation.typing import ExponentsDict
 
 log = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ class UnitSystem(IUnitRepository):
 
         # Parse as a compound expression
         result = cast(
-            CompoundUnit, parse_unit_string(unit_expression, CompoundUnit)
+            "CompoundUnit", parse_unit_string(unit_expression, CompoundUnit)
         )
 
         # Simplify the result of the parsing

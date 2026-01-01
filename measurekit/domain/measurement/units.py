@@ -6,7 +6,7 @@ from __future__ import annotations
 import weakref
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 import sympy as sp
 
@@ -18,33 +18,29 @@ from measurekit.domain.measurement.converters import (
 )
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.notation.base_entity import BaseExponentEntity
-from measurekit.domain.notation.typing import ExponentsDict
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from measurekit.domain.measurement.quantity import Quantity
     from measurekit.domain.measurement.system import UnitSystem
+    from measurekit.domain.notation.typing import ExponentsDict
 
 
 # --- Dependency Injection for System ---
-_system_provider: Callable[[], UnitSystem] | None = None
-
-
-def set_system_provider(provider: Callable[[], UnitSystem]) -> None:
-    """Sets the provider for the default unit system."""
-    global _system_provider
-    _system_provider = provider
 
 
 def get_default_system() -> UnitSystem:
-    """Retrieves the default system from the provider or raises error."""
-    if _system_provider is None:
-        raise RuntimeError(
-            "No UnitSystem provider set. "
-            "Call set_system_provider() or pass 'system' explicitly."
-        )
-    return _system_provider()
+    """Retrieves the currently active UnitSystem from the context.
+
+    This proxies to `measurekit.application.context.get_current_system()`,
+    ensuring thread-safety and correct context isolation.
+    """
+    # Import inside function to avoid circular import at module level
+    # units -> context (ok) but safer if context imports units later indirectly
+    from measurekit.application.context import get_current_system
+
+    return get_current_system()
 
 
 @dataclass(frozen=True)
@@ -99,8 +95,8 @@ class CompoundUnit(BaseExponentEntity):
         # But if we return existing, __init__ runs again for
         # dataclasses usually?
         # Singleton pattern in __new__:
-        cls._cache[key] = cast(CompoundUnit, instance)
-        return cast(CompoundUnit, instance)
+        cls._cache[key] = cast("CompoundUnit", instance)
+        return cast("CompoundUnit", instance)
 
     def __init__(self, exponents: ExponentsDict) -> None:
         """Initializes the compound unit with a dictionary of exponents."""
@@ -234,7 +230,7 @@ class CompoundUnit(BaseExponentEntity):
 
         backend = BackendManager.get_backend(other)
         # Check if scalar (int/float) or array via backend
-        is_valid = isinstance(other, (float, int)) or backend.is_array(other)
+        is_valid = isinstance(other, float | int) or backend.is_array(other)
 
         if is_valid:
             # Implicitly use default system for syntactic sugar

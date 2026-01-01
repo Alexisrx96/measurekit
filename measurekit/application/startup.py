@@ -14,7 +14,7 @@ from importlib import resources
 from pathlib import Path
 from typing import cast
 
-from measurekit.application.context import system_context
+from measurekit.application.context import use_system
 from measurekit.domain.measurement.conversions import UnitDefinition
 from measurekit.domain.measurement.converters import (
     AffineConverter,
@@ -288,7 +288,7 @@ class UnitSystemBuilder:
                 if unit_str.strip() != "1"
                 else CompoundUnit({})
             )
-            with system_context(self._system):
+            with use_system(self._system):
                 _ = self._system.Q_(value, unit)
         return self
 

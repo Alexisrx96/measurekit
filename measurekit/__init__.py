@@ -7,35 +7,31 @@ use, allowing developers to focus on the logic of their calculations without
 worrying about the intricacies of unit management.
 """
 
-from measurekit.application.context import _set_global_default_system
-from measurekit.application.factories import QuantityFactory
-from measurekit.application.startup import create_default_system
-from measurekit.domain.measurement.system import UnitSystem
-
 # --- Application Assembly ---
-# 1. Create the concrete adapter instance. This is our main application object.
-default_system: UnitSystem = create_default_system(
-    True
-)  # <- This is the long-running call
+# The default system is now lazily loaded by context.get_current_system().
+# We expose a proxy or simply rely on get_current_system().
 
-_set_global_default_system(default_system)
-u = default_system
+from measurekit.application.context import (
+    get_current_system,
+    use_system,
+)
+from measurekit.application.factories import QuantityFactory
+from measurekit.domain.measurement.units import get_default_system
 
-# breakpoint()
-# 2. Expose the primary factory method (Inbound Port) from our configured
-# system.
-#    This binds the `Q_` factory to our fully configured `default_system`.
+# Expose the primary factory method (Inbound Port)
+# QuantityFactory will use get_default_system() internally if no system provided.
 Q_ = QuantityFactory()
 
 
 # 3. Expose the `get_unit` function from the configured system instance.
 def get_unit(unit_expression):
     """Retrieve a unit by its expression from the active unit system."""
-    return get_active_system().get_unit(unit_expression)
+    return get_current_system().get_unit(unit_expression)
 
 
 # --- Expose Core Domain Objects and Exceptions ---
-from measurekit.application.context import get_active_system, system_context
+# IMPORTANT: get_active_system is an alias for get_current_system
+from measurekit.application.context import get_active_system
 from measurekit.domain.exceptions import (
     ConversionError,
     MeasureKitError,
@@ -47,26 +43,25 @@ from measurekit.domain.measurement.units import CompoundUnit
 
 __all__ = [
     "Q_",
-    "get_unit",
-    "Quantity",
     "CompoundUnit",
-    "Uncertainty",
-    "MeasureKitError",
     "ConversionError",
+    "MeasureKitError",
+    "Quantity",
+    "Uncertainty",
     "UnitNotFoundError",
-    "default_system",
-    "system_context",
     "get_active_system",
-    "u",
+    "get_current_system",
+    "get_unit",
+    "use_system",
 ]
 
 __version__ = "0.0.3"
 
 # Register Pandas Accessor if pandas is available
 try:
-    import pandas as pd  # noqa: F401
+    import pandas as pd
 
-    from measurekit.ext import pandas_support  # noqa: F401
+    from measurekit.ext import pandas_support
 except ImportError:
     pass
 
