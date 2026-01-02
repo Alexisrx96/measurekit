@@ -110,9 +110,9 @@ class CompoundUnit(BaseExponentEntity):
     def __reduce__(self):
         """Custom pickling to ensure Flyweight pattern (cache) is used on deserialization.
 
-        By returning (cls, (args,)), pickle calls cls(args) which hits __new__.
+        By returning (_rebuild_compound_unit, (args,)), pickle calls the helper.
         """
-        return (self.__class__, (self.exponents,))
+        return (_rebuild_compound_unit, (self.exponents,))
 
     def __hash__(self) -> int:
         """Returns a hash value for the compound unit."""
@@ -351,3 +351,8 @@ class CompoundUnit(BaseExponentEntity):
                 new_exponents[unit_symbol] += exponent
 
         return CompoundUnit(new_exponents)
+
+
+def _rebuild_compound_unit(exponents: ExponentsDict) -> CompoundUnit:
+    """Helper function to rebuild CompoundUnit during unpickling."""
+    return CompoundUnit(exponents)
