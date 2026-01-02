@@ -78,3 +78,33 @@ def test_rich_protocol_existence():
     except ImportError:
         assert isinstance(res, str)
         assert "10" in res
+
+
+def test_compound_unit_shadowing_resilience():
+    """Verify deserialization succeeds even if CompoundUnit is shadowed."""
+    import measurekit.domain.measurement.units as units_module
+
+    # Create a valid unit first (ensures factory is working/cached)
+    q = Q_(1, "m")
+    payload = pickle.dumps(q.unit)
+
+    # Save original class
+    real_compound_unit_class = units_module.CompoundUnit
+
+    try:
+        # Shadow the class with a non-callable object
+        # This simulates a user accidentally naming a variable 'CompoundUnit'
+        # or a bad import shadowing it.
+        units_module.CompoundUnit = "Imposter"  # type: ignore
+
+        # Attempt unpickle
+        # Without fix: fails because it tries to call "Imposter"()
+        # With fix: uses reconstruct_compound_unit factory which falls back
+        # to stable ref
+        loaded_unit = pickle.loads(payload)
+
+        assert loaded_unit is q.unit
+
+    finally:
+        # Restore original class
+        units_module.CompoundUnit = real_compound_unit_class

@@ -60,6 +60,29 @@ class Unit:
         raise ValueError(f"La unidad {self.name} no es lineal.")
 
 
+def reconstruct_compound_unit(exponents: ExponentsDict) -> CompoundUnit:
+    """Factory function to reconstruct CompoundUnit instances.
+
+    This implements the Reconstruct-by-Value pattern to decouple serialization
+    from runtime namespace pollution.
+    """
+    from measurekit.domain.measurement.units import (
+        CompoundUnit,
+        _CompoundUnit,
+        get_default_system,
+    )
+
+    # Ensure active system context to prevent registry detachment
+    get_default_system()
+
+    # Use the stable reference if the public one is corrupted
+    cls = CompoundUnit
+    if not isinstance(cls, type):
+        cls = _CompoundUnit
+
+    return cls(exponents)
+
+
 @dataclass(frozen=True)
 class CompoundUnit(BaseExponentEntity):
     """Represents a unit composed of base units raised to various powers."""
@@ -110,10 +133,10 @@ class CompoundUnit(BaseExponentEntity):
     def __reduce__(self):
         """Custom pickling to ensure Flyweight pattern (cache) is used on deserialization.
 
-        By returning (CompoundUnit, (args,)), pickle calls the class constructor,
-        which triggers __new__ (and our caching logic).
+        By returning (reconstruct_compound_unit, (args,)), we bypass direct
+        class lookups that can be corrupted by namespace shadowing.
         """
-        return (CompoundUnit, (self.exponents,))
+        return (reconstruct_compound_unit, (self.exponents,))
 
     def __hash__(self) -> int:
         """Returns a hash value for the compound unit."""
@@ -351,4 +374,8 @@ class CompoundUnit(BaseExponentEntity):
             else:
                 new_exponents[unit_symbol] += exponent
 
-        return CompoundUnit(new_exponents)
+        return _CompoundUnit(new_exponents)
+
+
+# Capture a stable reference to the class to survive namespace shadowing
+_CompoundUnit = CompoundUnit
