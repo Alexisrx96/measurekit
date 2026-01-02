@@ -1,11 +1,11 @@
 import pickle
 
-from measurekit import Q_, get_default_system
+from measurekit import Q_
 
 
 def test_unit_identity_preservation():
     """Verify that CompoundUnits maintain identity after unpickling (Flyweight)."""
-    system = get_default_system()
+    # get_default_system() is implicitly active
 
     # Create via factory
     q_m = Q_(1, "m")

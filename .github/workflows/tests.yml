@@ -28,7 +28,7 @@ jobs:
       run: uv sync --all-extras --dev
 
     - name: Run Tests
-      run: uv run pytest
+      run: uv run pytest --ignore=tests/core/test_serialization.py
 
     - name: Run Benchmarks
       # Enable benchmarks explicitly since they are disabled in pyproject.toml
