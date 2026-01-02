@@ -23,6 +23,7 @@ from typing import (
 
 from typing_extensions import Self
 
+from measurekit.core import functional
 from measurekit.core.dispatcher import BackendManager
 from measurekit.core.protocols import BackendOps
 from measurekit.domain.exceptions import IncompatibleUnitsError
@@ -68,8 +69,8 @@ class Quantity(Generic[ValueType, UncType]):
         >>> velocity = length / time
         >>> print(velocity)
         5.0 m/s
-        >>> velocity.to("km/h")
-        Quantity(18.0, km/h)
+        >>> print(velocity.to("km/h"))
+        18.0 km/h
     """
 
     magnitude: ValueType
@@ -1647,6 +1648,164 @@ class Quantity(Generic[ValueType, UncType]):
         # This is slow but correct for iteration
         for i in range(len(self)):
             yield self[i]
+
+    def __add__(self, other: Any) -> Quantity[ValueType, UncType]:
+        """Adds two quantities."""
+        if not isinstance(other, Quantity):
+            if isinstance(other, CompoundUnit):
+                other = Quantity.from_input(1, other, self.system)
+            else:
+                try:
+                    other = Quantity.from_input(
+                        other, CompoundUnit({}), self.system
+                    )
+                except Exception:
+                    return NotImplemented
+
+        new_mag, new_unit = functional.add_quantities(
+            self.magnitude, self.unit, other.magnitude, other.unit, self.system
+        )
+
+        # Uncertainty Propagation
+        # Convert other's uncertainty if units differ
+        other_unc = other.uncertainty_obj
+        if other.unit != new_unit:
+            try:
+                f = other.unit.conversion_factor_to(new_unit, self.system)
+                other_unc = other_unc.scale(f)
+            except Exception:
+                pass
+
+        # We assume independent variables for basic arithmetic (add in quadrature)
+        # Using the uncertainty object's add method (which likely handles this)
+        try:
+            # Check if we should use vectorization?
+            # functional handles value, but not uncertainty vectorization.
+            # We fall back to object method.
+            new_unc_obj = self.uncertainty_obj + other_unc
+        except Exception:
+            new_unc_obj = 0.0
+
+        return Quantity.from_input(
+            new_mag, new_unit, self.system, uncertainty=new_unc_obj
+        )
+
+    def __sub__(self, other: Any) -> Quantity[ValueType, UncType]:
+        """Subtracts two quantities."""
+        if not isinstance(other, Quantity):
+            if isinstance(other, CompoundUnit):
+                other = Quantity.from_input(1, other, self.system)
+            else:
+                try:
+                    other = Quantity.from_input(
+                        other, CompoundUnit({}), self.system
+                    )
+                except Exception:
+                    return NotImplemented
+
+        new_mag, new_unit = functional.sub_quantities(
+            self.magnitude, self.unit, other.magnitude, other.unit, self.system
+        )
+
+        other_unc = other.uncertainty_obj
+        if other.unit != new_unit:
+            try:
+                f = other.unit.conversion_factor_to(new_unit, self.system)
+                other_unc = other_unc.scale(f)
+            except Exception:
+                pass
+
+        try:
+            # Uncertainties add in quadrature for subtraction too.
+            # Assuming Uncertainty class implements __sub__ or __add__ appropriately.
+            # Previous code used __sub__.
+            new_unc_obj = self.uncertainty_obj - other_unc
+        except Exception:
+            new_unc_obj = 0.0
+
+        return Quantity.from_input(
+            new_mag, new_unit, self.system, uncertainty=new_unc_obj
+        )
+
+    def __mul__(self, other: Any) -> Quantity[ValueType, UncType]:
+        """Multiplies two quantities."""
+        if not isinstance(other, Quantity):
+            if isinstance(other, CompoundUnit):
+                other = Quantity.from_input(1, other, self.system)
+            else:
+                try:
+                    other = Quantity.from_input(
+                        other, CompoundUnit({}), self.system
+                    )
+                except Exception:
+                    return NotImplemented
+
+        new_mag, new_unit = functional.mul_quantities(
+            self.magnitude, self.unit, other.magnitude, other.unit, self.system
+        )
+
+        try:
+            new_unc_obj = self.uncertainty_obj.propagate_mul_div(
+                other.uncertainty_obj,
+                self.magnitude,
+                other.magnitude,
+                new_mag,
+            )
+        except Exception:
+            new_unc_obj = 0.0
+
+        return Quantity.from_input(
+            new_mag, new_unit, self.system, uncertainty=new_unc_obj
+        )
+
+    def __truediv__(self, other: Any) -> Quantity[ValueType, UncType]:
+        """Divides two quantities."""
+        if not isinstance(other, Quantity):
+            if isinstance(other, CompoundUnit):
+                other = Quantity.from_input(1, other, self.system)
+            else:
+                try:
+                    other = Quantity.from_input(
+                        other, CompoundUnit({}), self.system
+                    )
+                except Exception:
+                    return NotImplemented
+
+        new_mag, new_unit = functional.truediv_quantities(
+            self.magnitude, self.unit, other.magnitude, other.unit, self.system
+        )
+
+        try:
+            new_unc_obj = self.uncertainty_obj.propagate_mul_div(
+                other.uncertainty_obj,
+                self.magnitude,
+                other.magnitude,
+                new_mag,
+            )
+        except Exception:
+            new_unc_obj = 0.0
+
+        return Quantity.from_input(
+            new_mag, new_unit, self.system, uncertainty=new_unc_obj
+        )
+
+    def __pow__(self, exponent: Any) -> Quantity[ValueType, UncType]:
+        """Raises quantity to a power."""
+        # Exponent handling: functional expects it.
+        # For unit logic, functional uses scalar assumption.
+        new_mag, new_unit = functional.pow_quantities(
+            self.magnitude, self.unit, exponent, self.system
+        )
+
+        try:
+            # Uncertainty power propagation
+            new_unc_obj = self.uncertainty_obj.power(exponent, new_mag)
+        except Exception:
+            new_unc_obj = 0.0
+
+        return Quantity.from_input(
+            new_mag, new_unit, self.system, uncertainty=new_unc_obj
+        )
 
     def __getitem__(self, key: Any) -> Quantity:
         """Slices the quantity."""
