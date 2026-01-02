@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import array_api_compat
+try:
+    import array_api_compat
+except (ImportError, ModuleNotFoundError):
+    array_api_compat = None
+
 
 from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.converters import (
@@ -321,13 +325,50 @@ def pow_quantities(
     result_mag = xp.pow(val1, exponent)
 
     try:
-        scalar_exp = float(exponent)
-    except Exception:
-        if hasattr(exponent, "item"):
-            scalar_exp = exponent.item()
-        else:
+        # Check if we can extract a constant scalar (safe for static units)
+        # If it's a JAX Tracer, this might fail or return a Tracer which fails float() cast
+        # We try to keep it as is if it's array-like
+        if hasattr(exponent, "shape") and exponent.shape == ():
+            # It's a scalar array/tensor
+            # If we invoke float(), it forces concretization -> Error in JIT
+            # So we shoud NOT cast to float if it's an array/tracer.
             scalar_exp = exponent
+        elif isinstance(exponent, (int, float)):
+            scalar_exp = exponent
+        else:
+            # Fallback
+            scalar_exp = exponent
+    except Exception:
+        scalar_exp = exponent
 
-    new_exponents = {u: e * scalar_exp for u, e in unit1.exponents.items()}
+    # Update units
+    # If scalar_exp is a Tracer, we CANNOT update unit exponents (which keys must be values)
+    # Unit exponents are static metadata.
+    # Therefore, we CANNOT raise a Quantity to a dynamic (traced) power if that power affects dimensions.
+    # e.g. m^x where x is input to JIT -> m^x is not a valid static unit unless x is constant.
+    # JAX JIT requires static shapes/units.
+    # If x is dynamic, the unit is undefined/dynamic.
+    # MeasureKit units must be static.
+    # So we MUST try to cast to float. If it fails (ConcretizationTypeError), we must fail or warn.
+    # But usually power on units is integer arithmetic.
+    # If user does q ** 2 (2 is const), valid.
+    # If user does q ** param (param is arg), valid only if param is marked static in JAX.
+
+    # We will try to cast to float/int for the unit logic.
+    # If it fails, we let the error propagate (JAX's ConcretizationTypeError),
+    # which informs the user they need to make the exponent static.
+    # We can't really "fix" this for dynamic exponents because our design relies on static units.
+    try:
+        s_exp = float(scalar_exp)
+    except Exception:
+        # If we can't cast, we assume it's dynamic and valid logic is impossible for Unit exponents.
+        # But maybe the operation is dimensionless?
+        # If unit is dimensionless, new unit is valid (dimensionless).
+        if len(unit1.exponents) == 0:
+            s_exp = 1.0  # arbitrary, unit doesn't change
+        else:
+            raise
+
+    new_exponents = {u: e * s_exp for u, e in unit1.exponents.items()}
     result_unit = CompoundUnit(new_exponents)
     return result_mag, result_unit

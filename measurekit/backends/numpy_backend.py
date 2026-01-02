@@ -4,9 +4,26 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-import numpy as np
-from jaxtyping import Array, Bool, Float
-from scipy import sparse
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+
+try:
+    from jaxtyping import Array, Bool, Float
+except (ImportError, ModuleNotFoundError):
+    from typing import Any
+
+    Array = Any
+    Bool = Any
+    Float = Any
+
+try:
+    from scipy import sparse
+except (ImportError, ModuleNotFoundError):
+    sparse = None
+
 
 from measurekit.core.protocols import BackendOps
 
@@ -15,6 +32,10 @@ log = logging.getLogger(__name__)
 
 class NumpyBackend(BackendOps):
     """NumPy-based implementation of BackendOps."""
+
+    def __init__(self):
+        if np is None:
+            raise ImportError("NumPy is not available.")
 
     def is_array(self, obj: Any) -> bool:
         """Checks if the object is a NumPy array."""

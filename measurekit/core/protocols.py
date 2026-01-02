@@ -3,7 +3,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
-from jaxtyping import Array, Bool, Float
+try:
+    from jaxtyping import Array, Bool, Float
+except (ImportError, ModuleNotFoundError):
+    from typing import Any
+
+    Array = Any
+    Bool = Any
+    Float = Any
+
 
 T = TypeVar("T")
 

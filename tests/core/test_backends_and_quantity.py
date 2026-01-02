@@ -1,7 +1,15 @@
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 import pytest
 
-from measurekit.backends.numpy_backend import NumpyBackend
+try:
+    from measurekit.backends.numpy_backend import NumpyBackend
+except (ImportError, AttributeError):
+    NumpyBackend = None
+
 
 # PythonBackend is defined in dispatcher usually or separate file but we put it in dispatcher.py
 from measurekit.core.dispatcher import (
@@ -46,6 +54,7 @@ def test_python_backend_compliance():
     assert isinstance(backend, BackendOps)
 
 
+@pytest.mark.skipif(NumpyBackend is None, reason="numpy not available")
 class TestNumpyBackend:
     @pytest.fixture
     def backend(self):
@@ -135,6 +144,7 @@ class TestQuantityBackendIntegration:
         s.register_unit("m", L, LinearConverter(1.0), "meter")
         return s
 
+    @pytest.mark.skipif(np is None, reason="numpy not available")
     def test_numpy_operations(self, system):
         # Create Quantity with NumPy array
         m = CompoundUnit({"m": 1})
@@ -157,6 +167,7 @@ class TestQuantityBackendIntegration:
         assert res.magnitude == 2.0
         assert res._backend.is_array(res.magnitude) is False
 
+    @pytest.mark.skipif(np is None, reason="numpy not available")
     def test_cross_backend_interaction(self, system):
         # Array + Scalar (native python)
         m = CompoundUnit({"m": 1})

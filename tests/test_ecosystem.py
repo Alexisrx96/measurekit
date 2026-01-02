@@ -1,5 +1,14 @@
 import numpy as np
-import pandas as pd
+
+try:
+    import pandas as pd
+
+    # Verify minimal functionality
+    _ = pd.Series
+    _ = pd.api
+except (ImportError, AttributeError):
+    pd = None
+
 import pytest
 import sympy as sp
 
@@ -40,6 +49,7 @@ def test_numpy_functions():
     assert v_mean.unit == v1.unit
 
 
+@pytest.mark.skipif(pd is None, reason="pandas not available or broken")
 def test_pandas_integration():
     data = [Q_(1, "m"), Q_(2, "m"), Q_(3, "m")]
     ser = pd.Series(MeasureKitArray(data))

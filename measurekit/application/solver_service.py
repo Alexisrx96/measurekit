@@ -9,10 +9,15 @@ preventing common errors in physics and engineering simulations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-import numpy as np
-from scipy.integrate import solve_ivp
+try:
+    import numpy as np
+    from scipy.integrate import solve_ivp
+except (ImportError, ModuleNotFoundError):
+    np = None
+    solve_ivp = None
 
 from measurekit.domain.measurement.quantity import Quantity
 

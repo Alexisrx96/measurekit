@@ -2,13 +2,22 @@
 
 import math
 
-import numpy as np
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError):
+    np = None
+
 import pytest
 
-from measurekit.application.solver_service import (
-    ODESolution,
-    solve_unit_aware_ivp,
-)
+try:
+    from measurekit.application.solver_service import (
+        ODESolution,
+        solve_unit_aware_ivp,
+    )
+except (ImportError, AttributeError):
+    # Solver service might fail if numpy/scipy missing
+    ODESolution = None
+    solve_unit_aware_ivp = None
 from measurekit.domain.measurement.converters import LinearConverter
 from measurekit.domain.measurement.dimensions import Dimension
 
@@ -25,6 +34,7 @@ def solver_system(system):
     return system
 
 
+@pytest.mark.skipif(ODESolution is None, reason="solver dependencies missing")
 def test_odesolution_init_and_repr(solver_system):
     """Test the initialization and representation for ODESolution."""
     t_quantities = solver_system.Q_(np.linspace(0, 1, 5), "s")
@@ -47,6 +57,9 @@ def test_odesolution_init_and_repr(solver_system):
     assert repr(sol) == expected_repr
 
 
+@pytest.mark.skipif(
+    solve_unit_aware_ivp is None, reason="solver dependencies missing"
+)
 def test_solve_unit_aware_ivp_simple_decay(solver_system):
     """Test with a simple first-order ODE: dy/dt = -k*y."""
     k = solver_system.Q_(0.1, "1/s")

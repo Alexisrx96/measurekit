@@ -4,8 +4,20 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-import torch
-from jaxtyping import Array, Bool, Float
+try:
+    import torch
+except (ImportError, ModuleNotFoundError):
+    torch = None
+
+try:
+    from jaxtyping import Array, Bool, Float
+except (ImportError, ModuleNotFoundError):
+    from typing import Any
+
+    Array = Any
+    Bool = Any
+    Float = Any
+
 
 from measurekit.core.protocols import BackendOps
 
@@ -14,6 +26,10 @@ log = logging.getLogger(__name__)
 
 class TorchBackend(BackendOps):
     """PyTorch-based implementation of BackendOps."""
+
+    def __init__(self):
+        if torch is None:
+            raise ImportError("PyTorch is not available.")
 
     def is_array(self, obj: Any) -> bool:
         """Checks if the object is a torch Tensor."""
