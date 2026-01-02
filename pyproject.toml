@@ -33,6 +33,7 @@ dependencies = [
     "sympy>=1.13.0",
     "typing-extensions>=4.15.0",
     "jaxtyping>=0.2.28",
+    "array-api-compat>=1.4",
 ]
 
 [project.optional-dependencies]
@@ -79,7 +80,9 @@ packages = ["measurekit"]
 
 [tool.uv]
 managed = true
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
