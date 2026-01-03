@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import sympy as sp
 
@@ -14,6 +15,7 @@ from measurekit.domain.measurement.units import CompoundUnit
 
 if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
+    from measurekit.domain.symbolic.quantity import SymbolicQuantity
 
 
 class SymbolicExpression:
@@ -186,3 +188,53 @@ class SymbolicExpression:
         return SymbolicExpression(
             new_expr, self.unit, self.system, self.variables
         )
+
+    def diff(
+        self, variable: SymbolicQuantity, n: int = 1
+    ) -> SymbolicExpression:
+        """Differentiates the expression with respect to a variable.
+
+        Updates units: unit(df/dx) = unit(f) / unit(x).
+        """
+        if not hasattr(variable, "unit"):
+            raise TypeError(
+                "Differentiation variable must be a SymbolicQuantity with units."
+            )
+
+        # 1. SymPy Operation
+        new_expr = sp.diff(self.expr, variable.expr, n)
+
+        # 2. Unit Operation (Derivative rule: unit / var_unit^n)
+        variable_unit = variable.unit
+        new_unit = self.unit / (variable_unit**n)
+
+        # 3. Variable Tracking
+        variable_vars = getattr(variable, "variables", set())
+        new_vars = self.variables | variable_vars
+
+        return SymbolicExpression(new_expr, new_unit, self.system, new_vars)
+
+    def integrate(
+        self, variable: SymbolicQuantity, **kwargs
+    ) -> SymbolicExpression:
+        """Integrates the expression with respect to a variable.
+
+        Updates units: unit(int f dx) = unit(f) * unit(x).
+        """
+        if not hasattr(variable, "unit"):
+            raise TypeError(
+                "Integration variable must be a SymbolicQuantity with units."
+            )
+
+        # 1. SymPy Operation
+        new_expr = sp.integrate(self.expr, variable.expr, **kwargs)
+
+        # 2. Unit Operation (Integral rule: unit * var_unit)
+        variable_unit = variable.unit
+        new_unit = self.unit * variable_unit
+
+        # 3. Variable Tracking
+        variable_vars = getattr(variable, "variables", set())
+        new_vars = self.variables | variable_vars
+
+        return SymbolicExpression(new_expr, new_unit, self.system, new_vars)
