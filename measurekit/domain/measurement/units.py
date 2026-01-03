@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 import sympy as sp
 
 from measurekit.core.dispatcher import BackendManager
+from measurekit.core.registry import UnitRegistry
 from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.converters import (
     LinearConverter,
@@ -379,3 +380,52 @@ class CompoundUnit(BaseExponentEntity):
 
 # Capture a stable reference to the class to survive namespace shadowing
 _CompoundUnit = CompoundUnit
+
+# --- Registry Initialization ---
+
+# Initialize the global registry instance
+units = UnitRegistry()
+
+
+def _register_core_units():
+    """Helper to populate the registry with built-in units."""
+    # To keep it truly zero-overhead, we define lazy loaders
+    # for SI base units manually as a fallback/core.
+
+    def _make_loader(name: str):
+        def loader():
+            from measurekit.domain.measurement import core_units
+
+            return getattr(core_units, name)
+
+        return loader
+
+    core_names = [
+        "meter",
+        "kilogram",
+        "second",
+        "ampere",
+        "kelvin",
+        "mole",
+        "candela",
+        "newton",
+        "joule",
+        "watt",
+        "pascal",
+        "hertz",
+        "coulomb",
+        "volt",
+        "ohm",
+        "radian",
+        "steradian",
+        "unity",
+    ]
+    for name in core_names:
+        units.register_lazy(name, _make_loader(name))
+
+
+# Register core units immediately (eager but lightweight)
+_register_core_units()
+
+# Discover external units via entry points (lazy loading)
+units.discover_plugins()

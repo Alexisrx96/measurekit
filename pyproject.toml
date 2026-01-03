@@ -164,3 +164,23 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "measurekit.tests.*"
 ignore_errors = true
+
+[project.entry-points."measurekit.units"]
+meter = "measurekit.domain.measurement.core_units:meter"
+kilogram = "measurekit.domain.measurement.core_units:kilogram"
+second = "measurekit.domain.measurement.core_units:second"
+ampere = "measurekit.domain.measurement.core_units:ampere"
+kelvin = "measurekit.domain.measurement.core_units:kelvin"
+mole = "measurekit.domain.measurement.core_units:mole"
+candela = "measurekit.domain.measurement.core_units:candela"
+newton = "measurekit.domain.measurement.core_units:newton"
+joule = "measurekit.domain.measurement.core_units:joule"
+watt = "measurekit.domain.measurement.core_units:watt"
+pascal = "measurekit.domain.measurement.core_units:pascal"
+hertz = "measurekit.domain.measurement.core_units:hertz"
+coulomb = "measurekit.domain.measurement.core_units:coulomb"
+volt = "measurekit.domain.measurement.core_units:volt"
+ohm = "measurekit.domain.measurement.core_units:ohm"
+radian = "measurekit.domain.measurement.core_units:radian"
+steradian = "measurekit.domain.measurement.core_units:steradian"
+unity = "measurekit.domain.measurement.core_units:unity"
