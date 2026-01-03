@@ -14,7 +14,7 @@ from functools import singledispatchmethod
 
 from typing_extensions import Self
 
-from measurekit.application.parsing import to_superscript
+from measurekit.core.formatting import to_superscript
 from measurekit.domain.notation.typing import ExponentsDict
 
 
