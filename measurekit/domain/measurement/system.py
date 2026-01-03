@@ -182,6 +182,19 @@ class UnitSystem(IUnitRepository):
                 self.UNIT_DIMENSIONS[prefixed_symbol] = dimension
                 self.UNIT_REGISTRY[dimension][prefixed_symbol] = prefixed_def
 
+                # Also register the full name (e.g. kilometer) if different
+                if prefixed_name and prefixed_name != prefixed_symbol:
+                    self.UNIT_SYMBOL_REGISTRY[prefixed_name] = prefixed_def
+                    self.UNIT_DIMENSIONS[prefixed_name] = dimension
+                    self.UNIT_REGISTRY[dimension][prefixed_name] = prefixed_def
+
+                    # Also register alias for the compound unit parser
+                    # This ensures 'kilometer' works in parse_unit_string
+                    self.register_alias({prefixed_name: 1}, prefixed_name)
+
+                # Register symbol as alias too
+                self.register_alias({prefixed_symbol: 1}, prefixed_symbol)
+
     def get_unit(self, unit_expression: str) -> CompoundUnit:
         """Retrieves a CompoundUnit from the system based on its notation."""
         if unit_expression in self.UNIT_DIMENSIONS:
