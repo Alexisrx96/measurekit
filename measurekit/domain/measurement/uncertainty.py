@@ -83,10 +83,10 @@ class Uncertainty(Generic[UncType]):
 
         if backend.is_array(std_dev):
             from measurekit.domain.measurement.vectorized_uncertainty import (
-                CovarianceStore,
+                ensure_store,
             )
 
-            store = CovarianceStore()
+            store = ensure_store(backend)
             slc = store.register_independent_array(std_dev)
             return cls(std_dev=std_dev, vector_slice=slc)
 
@@ -109,41 +109,18 @@ class Uncertainty(Generic[UncType]):
 
         # Lazy import because CovarianceStore depends on numpy
         from measurekit.domain.measurement.vectorized_uncertainty import (
-            CovarianceStore,
+            ensure_store,
         )
 
         backend = BackendManager.get_backend(self.std_dev)
-
-        store = CovarianceStore()
-        val = backend.asarray(self.std_dev)
-        slc = store.allocate(1)
-
-        # Flatten and square
-        # Note: CovarianceStore expects numpy-compatible inputs usually (scipy sparse)
-        # But here we are bridging.
-        # If val is scalar (PythonBackend), we might need to handle it.
-        # But ensure_vector_slice suggests we are moving to vector world.
-
-        if hasattr(val, "flatten"):
-            diag_val = val.flatten() ** 2
-        else:
-            diag_val = [val**2]
-
-        offsets = [0]
-        # delegating sparse creation to backend?
-        # currently CovarianceStore handles sparse directly via scipy.
-        # We assume if we are here, we have numpy/scipy available via CovarianceStore import.
-        from scipy import sparse
-
-        store.set_covariance_block(
-            slc, slc, sparse.diags(diagonals=[diag_val], offsets=[0])
-        )
+        store = ensure_store(backend)
+        slc = store.register_independent_array(self.std_dev)
         return slc
 
     def _compute_std_dev(self, lineage: dict[str, UncType]) -> UncType:
         """Computes total std_dev from lineage using sum of squares."""
         if not lineage:
-            return cast(UncType, 0.0)
+            return cast("UncType", 0.0)
 
         # We need a backend. Pick one from the first value.
         values = list(lineage.values())
@@ -152,46 +129,37 @@ class Uncertainty(Generic[UncType]):
         squares = [backend.pow(v, 2) for v in values]
 
         # Sum squares
-        if len(squares) == 1:
-            sum_sq = squares[0]
-        else:
-            sum_sq = squares[0]
-            for s in squares[1:]:
-                sum_sq = backend.add(sum_sq, s)
+        sum_sq = squares[0]
+        for s in squares[1:]:
+            sum_sq = backend.add(sum_sq, s)
 
-        return cast(UncType, backend.sqrt(sum_sq))
+        return cast("UncType", backend.sqrt(sum_sq))
 
     def add(
         self, other: Uncertainty[UncType], scale: float = 1.0
     ) -> Uncertainty[UncType]:
         """Propagates uncertainty for addition/subtraction (correlated)."""
         new_lineage = self.lineage.copy()
-
-        backend = BackendManager.get_backend(self.std_dev)  # Default backend
+        backend = BackendManager.get_backend(self.std_dev)
 
         for uid, coeff in other.lineage.items():
-            # Backend-agnostic multiply
-            # scale is float. coeff is UncType.
-            # Backend should handle (UncType, float)
-            # But we might need to resolve backend for coeff if different?
-            # Assuming consistent backends for interaction for now.
+            # Get backend for the other coefficient
             bk_coeff = BackendManager.get_backend(coeff)
             val = bk_coeff.mul(coeff, scale)
 
             if uid in new_lineage:
-                # Add to existing
                 current = new_lineage[uid]
                 bk_curr = BackendManager.get_backend(current)
                 new_lineage[uid] = bk_curr.add(current, val)
             else:
                 new_lineage[uid] = val
 
-        # Clean up zero terms
-        filtered_lineage = {}
-        for k, v in new_lineage.items():
-            bk = BackendManager.get_backend(v)
-            if bk.any(bk.not_equal(v, 0)):
-                filtered_lineage[k] = v
+        # Clean up zero terms and build filtered lineage
+        filtered_lineage = {
+            k: v
+            for k, v in new_lineage.items()
+            if (bk := BackendManager.get_backend(v)).any(bk.not_equal(v, 0))
+        }
 
         return Uncertainty(
             std_dev=self._compute_std_dev(filtered_lineage),

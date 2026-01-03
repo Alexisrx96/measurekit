@@ -530,10 +530,10 @@ class Quantity(Generic[ValueType, UncType]):
     ) -> Uncertainty:
         """Helper to propagate vectorized uncertainty via CovarianceStore."""
         from measurekit.domain.measurement.vectorized_uncertainty import (
-            CovarianceStore,
+            ensure_store,
         )
 
-        store = CovarianceStore()
+        store = ensure_store(self._backend)
         in_slices = []
         jacobians = []
 
@@ -550,35 +550,16 @@ class Quantity(Generic[ValueType, UncType]):
             ):
                 pass
 
-        # Compute size using backend
-        shape = self._backend.shape(out_magnitude)
-        # simple product of shape dimensions
-        out_size = 1
-        for dim in shape:
-            out_size *= dim
-
+        out_size = self._backend.size(out_magnitude)
         out_slice = store.allocate(out_size)
 
         store.update_from_propagation(out_slice, in_slices, jacobians)
 
         # Compute std_dev from diagonal for the new Uncertainty object
         out_cov = store.get_covariance_block(out_slice, out_slice)
+        diag = self._backend.sparse_diagonal(out_cov)
 
-        # We need sqrt and diagonal.
-        # out_cov is scipy.sparse. We need to interact with it.
-        # Ideally this logic is in backend, but we are in core.
-        # We assume out_cov has .diagonal() method (scipy sparse has it).
-        diag = out_cov.diagonal()
-
-        # Convert diagonal back to array shape
-        # We use backend.asarray check? No, diag is numpy array usually from scipy.
-        # But we must avoid importing numpy.
-        # We can assume backend.reshape works on `diag` if it's compatible.
-        # or we cast to backend array.
-
-        # IMPORTANT: if backend is Torch, we might have issue here if we mix scipy sparse with torch.
-        # For now, we assume NumpyBackend flow.
-
+        shape = self._backend.shape(out_magnitude)
         std_dev_flat = self._backend.sqrt(diag)
         std_dev = self._backend.reshape(std_dev_flat, shape)
 
