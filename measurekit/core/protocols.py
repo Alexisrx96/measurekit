@@ -201,6 +201,43 @@ class BackendOps(Protocol):
         """Returns a diagonal operator (matrix) from the given diagonal values."""
         ...
 
+    def sparse_matrix(
+        self,
+        data: Any,
+        indices: tuple[Any, Any],
+        shape: tuple[int, int],
+    ) -> Any:
+        """Constructs a sparse matrix from COO data."""
+        ...
+
+    def sparse_diags(
+        self,
+        diagonals: Sequence[Any],
+        offsets: Sequence[int],
+        shape: tuple[int, int] | None = None,
+    ) -> Any:
+        """Constructs a sparse matrix from diagonals."""
+        ...
+
+    def sparse_bmat(
+        self,
+        blocks: Sequence[Sequence[Any | None]],
+    ) -> Any:
+        """Constructs a sparse matrix from a block matrix of other matrices."""
+        ...
+
+    def sparse_matmul(self, a: Any, b: Any) -> Any:
+        """Performs matrix multiplication where at least one operand may be sparse."""
+        ...
+
+    def sparse_diagonal(self, a: Any) -> Any:
+        """Returns the diagonal elements of a (potentially sparse) matrix."""
+        ...
+
+    def transpose(self, a: Any) -> Any:
+        """Returns the transpose of an array or matrix."""
+        ...
+
     # Legacy (Keep for backward compatibility during refactor if needed, or remove if unused)
     def eye(self, n: int, format: str = "csr") -> Any:
         """Returns an n x n identity matrix, potentially sparse."""

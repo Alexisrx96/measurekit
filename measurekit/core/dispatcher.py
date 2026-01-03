@@ -271,6 +271,56 @@ class PythonBackend(BackendOps):
             "Sparse matrices not supported in PythonBackend"
         )
 
+    def sparse_matrix(
+        self,
+        data: Any,
+        indices: tuple[Any, Any],
+        shape: tuple[int, int],
+    ) -> Any:
+        """Constructs a sparse matrix from COO data."""
+        raise NotImplementedError(
+            "Sparse matrices not supported in PythonBackend"
+        )
+
+    def sparse_diags(
+        self,
+        diagonals: Sequence[Any],
+        offsets: Sequence[int],
+        shape: tuple[int, int] | None = None,
+    ) -> Any:
+        """Constructs a sparse matrix from diagonals."""
+        raise NotImplementedError(
+            "Sparse matrices not supported in PythonBackend"
+        )
+
+    def sparse_bmat(
+        self,
+        blocks: Sequence[Sequence[Any | None]],
+    ) -> Any:
+        """Constructs a sparse matrix from a block matrix of other matrices."""
+        raise NotImplementedError(
+            "Sparse matrices not supported in PythonBackend"
+        )
+
+    def sparse_matmul(self, a: Any, b: Any) -> Any:
+        """Performs matrix multiplication where at least one operand may be sparse."""
+        return a @ b
+
+    def sparse_diagonal(self, a: Any) -> Any:
+        """Returns the diagonal elements of a (potentially sparse) matrix."""
+        raise NotImplementedError(
+            "Sparse matrices not supported in PythonBackend"
+        )
+
+    def transpose(self, a: Any) -> Any:
+        """Returns the transpose of an array or matrix."""
+        if hasattr(a, "__len__") and all(
+            isinstance(x, (list, tuple)) for x in a
+        ):
+            # 2D list transpose
+            return [list(row) for row in zip(*a)]
+        return a
+
 
 class BackendManager:
     """Manages backend dispatching and lazy loading."""
