@@ -866,9 +866,13 @@ class Quantity(Generic[ValueType, UncType]):
                 )
 
                 if is_self_scalar:
-                    j_self = self._backend.ones((size, 1))
+                    j_self = self._backend.ones(
+                        (size, 1), reference=self.magnitude
+                    )
                 else:
-                    j_self = self._backend.identity_operator(size)
+                    j_self = self._backend.identity_operator(
+                        size, reference=self.magnitude
+                    )
 
                 # Check for broadcasting: if other is scalar-like, broadcast Jacobian
                 is_other_scalar = False
@@ -884,9 +888,19 @@ class Quantity(Generic[ValueType, UncType]):
                         is_other_scalar = True
 
                 if is_other_scalar:
-                    j_other = self._backend.ones((size, 1))
+                    j_other = self._backend.ones(
+                        (size, 1),
+                        reference=other.magnitude
+                        if isinstance(other, Quantity)
+                        else None,
+                    )
                 else:
-                    j_other = self._backend.identity_operator(size)
+                    j_other = self._backend.identity_operator(
+                        size,
+                        reference=other.magnitude
+                        if isinstance(other, Quantity)
+                        else None,
+                    )
 
                 new_unc = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
