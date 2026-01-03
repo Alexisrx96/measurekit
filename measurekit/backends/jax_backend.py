@@ -57,6 +57,10 @@ class JaxBackend(BackendOps):
         except (NameError, AttributeError):
             return False
 
+    def is_tracing(self, obj: Any) -> bool:
+        """Returns True if the object is a JAX Tracer."""
+        return self._is_tracer(obj)
+
     def asarray(self, obj: Any) -> Array:
         """Converts input to a JAX array."""
         return jnp.asarray(obj)

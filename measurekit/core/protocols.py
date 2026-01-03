@@ -25,6 +25,10 @@ class BackendOps(Protocol):
         """Returns True if the object is an array type supported by this backend."""
         ...
 
+    def is_tracing(self, obj: Any) -> bool:
+        """Returns True if the object is being traced by a JIT compiler or vectorizer."""
+        ...
+
     def asarray(self, obj: Any) -> Array:
         """Converts the input to an array type supported by this backend."""
         ...

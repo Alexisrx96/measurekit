@@ -31,10 +31,10 @@ class Uncertainty(Generic[UncType]):
         """Validates the data after initialization."""
         # Use backend to check for negative std_dev
         backend = BackendManager.get_backend(self.std_dev)
-        if self.vector_slice is None:
+
+        # Skip validation if tracing (e.g. JAX JIT/VMAP) as it can't handle concrete checks
+        if self.vector_slice is None and not backend.is_tracing(self.std_dev):
             # Check if any element is negative
-            # backend.less(x, 0) -> boolean array
-            # backend.any(...) -> bool
             is_neg = backend.less(self.std_dev, 0)
             if backend.any(is_neg):
                 raise ValueError("Standard deviation cannot be negative.")

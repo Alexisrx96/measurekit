@@ -27,6 +27,9 @@ class PythonBackend(BackendOps):
     def is_array(self, obj: Any) -> bool:
         return False
 
+    def is_tracing(self, obj: Any) -> bool:
+        return False
+
     def asarray(self, obj: Any) -> Array:
         return obj
 
@@ -332,7 +335,12 @@ class BackendManager:
             or "ndarray" in str(type(data_obj)).lower()
         ):
             return cls._get_or_load_backend("numpy")
-        if module.startswith("jax") or module.startswith("jaxlib"):
+        if (
+            module.startswith("jax")
+            or module.startswith("jaxlib")
+            or "jax"
+            in str(getattr(data_obj.__class__, "__name__", "")).lower()
+        ):
             return cls._get_or_load_backend("jax")
 
         if isinstance(data_obj, (int, float, complex, list, tuple)):

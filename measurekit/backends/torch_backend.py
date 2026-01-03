@@ -35,6 +35,10 @@ class TorchBackend(BackendOps):
         """Checks if the object is a torch Tensor."""
         return isinstance(obj, torch.Tensor)
 
+    def is_tracing(self, obj: Any) -> bool:
+        """Torch backend currently does not support tracing in this context."""
+        return False
+
     def asarray(self, obj: Any) -> Array:
         """Converts input to a torch Tensor."""
         if isinstance(obj, torch.Tensor):

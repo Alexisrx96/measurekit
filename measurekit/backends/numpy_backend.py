@@ -41,6 +41,10 @@ class NumpyBackend(BackendOps):
         """Checks if the object is a NumPy array."""
         return isinstance(obj, np.ndarray)
 
+    def is_tracing(self, obj: Any) -> bool:
+        """NumPy backend does not support tracing."""
+        return False
+
     def asarray(self, obj: Any) -> Array:
         """Converts input to a NumPy array."""
         return np.asarray(obj)
