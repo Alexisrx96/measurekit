@@ -72,3 +72,7 @@ Thumbs.db
 site/
 .agent/
 GEMINI.md
+
+# MeasureKit Generated Types
+measurekit/_generated_types.py
+measurekit/core/registry.pyi
