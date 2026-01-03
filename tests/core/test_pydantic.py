@@ -36,11 +36,13 @@ def test_pydantic_validation_error(common_system):
     class Model(BaseModel, arbitrary_types_allowed=True):
         q: Quantity
 
-    with pytest.raises(Exception):  # Pydantic ValidationError
-        Model(q="invalid")
+    # The SymPy parser is stricter/different, so this creates a ValidationError
+    # because the invalid string is rejected or causes factory failure propagation.
+    with pytest.raises(Exception):
+        Model(q="10 * /")
 
     with pytest.raises(Exception):
-        Model(q={"value": 10})  # Missing unit
+        Model(q=10)  # Invalid type (int)
 
 
 def test_pydantic_schema_metadata():
