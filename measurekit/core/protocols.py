@@ -33,6 +33,10 @@ class BackendOps(Protocol):
         """Moves the object to the specified device (e.g., 'cpu', 'cuda')."""
         ...
 
+    def get_device(self, obj: Any) -> str | None:
+        """Returns the device identifier for the given object."""
+        ...
+
     # Math Operations
     def add(
         self, x: Float[Array, ...], y: Float[Array, ...]
@@ -193,7 +197,7 @@ class BackendOps(Protocol):
         """Broadcasts inputs to a common shape and returns them as flattened 1D arrays."""
         ...
 
-    def identity_operator(self, size: int) -> Any:
+    def identity_operator(self, size: int, reference: Any = None) -> Any:
         """Returns an identity operator (matrix) of the given size."""
         ...
 
@@ -252,6 +256,6 @@ class BackendOps(Protocol):
         """Constructs a sparse matrix from diagonals."""
         ...
 
-    def ones(self, shape: tuple[int, ...]) -> Any:
+    def ones(self, shape: tuple[int, ...], reference: Any = None) -> Any:
         """Returns an array (or matrix) of ones with the given shape."""
         ...

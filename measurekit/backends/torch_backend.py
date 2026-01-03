@@ -47,6 +47,13 @@ class TorchBackend(BackendOps):
             return obj.to(device)
         return obj
 
+    def get_device(self, obj: Any) -> str | None:
+        """Returns the device for a tensor."""
+        if isinstance(obj, torch.Tensor):
+            if hasattr(obj, "device"):
+                return str(obj.device)
+        return "cpu"
+
     def add(
         self, x: Float[Array, ...], y: Float[Array, ...]
     ) -> Float[Array, ...]:
@@ -224,9 +231,12 @@ class TorchBackend(BackendOps):
         """Concatenates tensors."""
         return torch.cat(arrays, dim=axis)
 
-    def eye(self, n: int, format: str = "csr") -> Float[Array, "n n"]:
+    def eye(
+        self, n: int, format: str = "csr", reference: Any = None
+    ) -> Float[Array, "n n"]:
         """Returns an identity matrix."""
-        return torch.eye(n)
+        device = reference.device if hasattr(reference, "device") else None
+        return torch.eye(n, device=device)
 
     def diags(
         self,
@@ -259,11 +269,10 @@ class TorchBackend(BackendOps):
         broadcasted = torch.broadcast_tensors(*tensors)
         return [torch.flatten(b) for b in broadcasted]
 
-    def identity_operator(self, size: int) -> Any:
-        """Returns an identity operator (matrix) of the given size."""
-        return torch.eye(
-            size, device=torch.device("cpu") if torch is None else None
-        )
+    def identity_operator(self, size: int, reference: Any = None) -> Any:
+        # Fixed logic to use reference.device
+        device = getattr(reference, "device", None)
+        return torch.eye(size, device=device)
 
     def diagonal_operator(self, diagonal: Any) -> Any:
         """Returns a diagonal operator (matrix) from the given diagonal values."""
@@ -398,7 +407,3 @@ class TorchBackend(BackendOps):
                 return a.transpose(0, 1)
             return a.t() if a.ndim == 2 else a.transpose(-1, -2)
         return a
-
-    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
-        """Returns a tensor of ones."""
-        return torch.ones(shape)

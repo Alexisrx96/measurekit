@@ -49,6 +49,10 @@ class NumpyBackend(BackendOps):
         """No-op for NumPy backend."""
         return obj
 
+    def get_device(self, obj: Any) -> str | None:
+        """Returns 'cpu' for NumPy backend."""
+        return "cpu"
+
     def add(
         self, x: Float[Array, ...], y: Float[Array, ...]
     ) -> Float[Array, ...]:
@@ -199,15 +203,16 @@ class NumpyBackend(BackendOps):
         """Concatenates arrays."""
         return np.concatenate(arrays, axis=axis)
 
-    def eye(self, N: int, format: str = "csr") -> Any:
+    def eye(self, n: int, format: str = "csr", reference: Any = None) -> Any:
         """Returns an identity matrix."""
-        return sparse.eye(N, format=format)
+        return sparse.eye(n, format=format)
 
     def diags(
         self,
         diagonals: Sequence[Any],
         offsets: Sequence[int],
         format: str = "csr",
+        reference: Any = None,
     ) -> Any:
         """Constructs a diagonal matrix."""
         return sparse.diags(
@@ -225,7 +230,7 @@ class NumpyBackend(BackendOps):
         # Flatten each
         return [b.ravel() for b in broadcasted]
 
-    def identity_operator(self, size: int) -> Any:
+    def identity_operator(self, size: int, reference: Any = None) -> Any:
         """Returns an identity operator (matrix) of the given size."""
         return sparse.eye(size, format="csr")
 
@@ -275,6 +280,8 @@ class NumpyBackend(BackendOps):
             return a.transpose()
         return np.transpose(a)
 
-    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
+    def ones(
+        self, shape: tuple[int, ...], reference: Any = None
+    ) -> Float[Array, ...]:
         """Returns an array of ones."""
         return np.ones(shape)

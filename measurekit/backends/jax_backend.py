@@ -73,6 +73,15 @@ class JaxBackend(BackendOps):
                 log.debug(f"Failed to move JAX array to device {device}: {e}")
         return obj
 
+    def get_device(self, obj: Any) -> str | None:
+        """Returns the device identifier for a JAX array."""
+        if self.is_array(obj) and not self._is_tracer(obj):
+            try:
+                return str(obj.device())
+            except (AttributeError, RuntimeError):
+                pass
+        return "cpu"
+
     def add(
         self, x: Float[Array, ...], y: Float[Array, ...]
     ) -> Float[Array, ...]:
@@ -270,6 +279,14 @@ class JaxBackend(BackendOps):
         """Returns a diagonal operator (matrix) from the given diagonal values."""
         return jnp.diag(diagonal)
 
+    def _has_sparse(self) -> bool:
+        try:
+            from jax.experimental import sparse
+
+            return hasattr(sparse, "BCOO")
+        except ImportError:
+            return False
+
     def sparse_matrix(
         self,
         data: Any,
@@ -280,13 +297,12 @@ class JaxBackend(BackendOps):
 
         Using JAX BCOO if available, otherwise falling back to dense.
         """
-        try:
+        if self._has_sparse():
             from jax.experimental import sparse
 
             return sparse.BCOO((data, jnp.stack(indices, axis=1)), shape=shape)
-        except (ImportError, AttributeError):
-            res = jnp.zeros(shape)
-            return res.at[indices].set(data)
+        res = jnp.zeros(shape)
+        return res.at[indices].set(data)
 
     def sparse_diags(
         self,
@@ -304,6 +320,23 @@ class JaxBackend(BackendOps):
             n = len(diagonals[0]) + max(0, -min_offset) + max(0, max_offset)
             shape = (n, n)
 
+        if self._has_sparse():
+            from jax.experimental import sparse
+
+            all_data = []
+            all_indices = []
+            for diag, offset in zip(diagonals, offsets, strict=False):
+                d = jnp.asarray(diag)
+                n_elements = d.shape[0]
+                row = jnp.arange(n_elements) + max(0, -offset)
+                col = jnp.arange(n_elements) + max(0, offset)
+                all_data.append(d)
+                all_indices.append(jnp.stack([row, col], axis=1))
+
+            data = jnp.concatenate(all_data)
+            indices = jnp.concatenate(all_indices)
+            return sparse.BCOO((data, indices), shape=shape)
+
         res = jnp.zeros(shape)
         for diag, offset in zip(diagonals, offsets, strict=False):
             res = res + jnp.diag(diag, k=offset)
@@ -314,20 +347,78 @@ class JaxBackend(BackendOps):
         blocks: Sequence[Sequence[Any | None]],
     ) -> Any:
         """Constructs a sparse matrix from a block matrix of other matrices."""
-        # Convert None to zero matrices
+        if self._has_sparse():
+            from jax.experimental import sparse
+
+            all_data = []
+            all_indices = []
+            row_offsets = [0]
+            col_offsets = [0]
+
+            # Calculate offsets
+            for row in blocks:
+                h = 0
+                for b in row:
+                    if b is not None:
+                        h = b.shape[0]
+                        break
+                row_offsets.append(row_offsets[-1] + h)
+
+            for j in range(len(blocks[0])):
+                w = 0
+                for row in blocks:
+                    if row[j] is not None:
+                        w = row[j].shape[1]
+                        break
+                col_offsets.append(col_offsets[-1] + w)
+
+            final_shape = (row_offsets[-1], col_offsets[-1])
+
+            for i, row in enumerate(blocks):
+                for j, b in enumerate(row):
+                    if b is not None:
+                        # Extract COO data from b
+                        if isinstance(b, sparse.BCOO):
+                            all_data.append(b.data)
+                            indices = b.indices
+                            offset = jnp.array(
+                                [row_offsets[i], col_offsets[j]]
+                            )
+                            all_indices.append(indices + offset)
+                        else:
+                            # Dense block
+                            v_b = jnp.asarray(b)
+                            mask = v_b != 0
+                            indices = jnp.argwhere(mask)
+                            all_data.append(v_b[mask])
+                            offset = jnp.array(
+                                [row_offsets[i], col_offsets[j]]
+                            )
+                            all_indices.append(indices + offset)
+
+            if not all_data:
+                return sparse.BCOO(
+                    (jnp.zeros(0), jnp.zeros((0, 2), dtype=int)),
+                    shape=final_shape,
+                )
+
+            return sparse.BCOO(
+                (jnp.concatenate(all_data), jnp.concatenate(all_indices)),
+                shape=final_shape,
+            )
+
+        # Convert None to zero matrices for dense fallback
         processed_blocks = []
         for i, row in enumerate(blocks):
             processed_row = []
             for j, b in enumerate(row):
                 if b is None:
                     # Determine shape of the zero block
-                    # Height from some block in the same row
                     height = 0
                     for other_b in row:
                         if other_b is not None:
                             height = other_b.shape[0]
                             break
-                    # Width from some block in the same column
                     width = 0
                     for other_row in blocks:
                         if other_row[j] is not None:
