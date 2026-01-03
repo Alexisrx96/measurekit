@@ -34,6 +34,11 @@ from measurekit.domain.measurement.units import (
     get_default_system,
 )
 
+try:
+    from measurekit._generated_types import UnitName
+except ImportError:
+    UnitName = str
+
 if TYPE_CHECKING:
     from measurekit.domain.measurement.system import UnitSystem
 
@@ -420,7 +425,7 @@ class Quantity(Generic[ValueType, UncType]):
         return self.uncertainty_obj.std_dev
 
     def to(
-        self, target_unit: CompoundUnit | str
+        self, target_unit: CompoundUnit | UnitName
     ) -> Quantity[ValueType, UncType]:
         """Converts the quantity to a different unit or moves to a device."""
         if isinstance(target_unit, str):
