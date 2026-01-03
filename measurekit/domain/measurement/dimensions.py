@@ -14,10 +14,7 @@ from typing import ClassVar, Final, cast
 
 from typing_extensions import Self
 
-from measurekit.application.parsing import (
-    parse_unit_string,
-    to_superscript,
-)
+from measurekit.core.formatting import to_superscript
 from measurekit.domain.exceptions import DimensionError
 from measurekit.domain.notation.base_entity import BaseExponentEntity
 from measurekit.domain.notation.protocols import ExponentEntityProtocol
@@ -102,7 +99,7 @@ class Dimension(BaseExponentEntity):
             vector = cls._normalize_exponents(exponents)
 
         if vector in cls._cache:
-            return cast(Self, cls._cache[vector])
+            return cast("Self", cls._cache[vector])
 
         # Initialize instance without calling BaseExponentEntity.__new__
         # to avoid its default dictionary-based logic.
@@ -121,8 +118,8 @@ class Dimension(BaseExponentEntity):
         # set the 'exponents' field from BaseExponentEntity
         object.__setattr__(instance, "exponents", display_exp_dict)
 
-        cls._cache[vector] = cast(Dimension, instance)
-        return cast(Self, instance)
+        cls._cache[vector] = cast("Dimension", instance)
+        return cast("Self", instance)
 
     @classmethod
     def _calculate_representation(
@@ -290,4 +287,6 @@ class Dimension(BaseExponentEntity):
 
 def get_dimension(unit_expression: str) -> Dimension:
     """Returns a Dimension object parsed from a unit expression string."""
-    return cast(Dimension, parse_unit_string(unit_expression, Dimension))
+    from measurekit.application.parsing import parse_unit_string
+
+    return cast("Dimension", parse_unit_string(unit_expression, Dimension))
