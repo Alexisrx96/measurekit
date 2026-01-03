@@ -270,6 +270,88 @@ class JaxBackend(BackendOps):
         """Returns a diagonal operator (matrix) from the given diagonal values."""
         return jnp.diag(diagonal)
 
+    def sparse_matrix(
+        self,
+        data: Any,
+        indices: tuple[Any, Any],
+        shape: tuple[int, int],
+    ) -> Any:
+        """Constructs a sparse matrix from COO data.
+
+        Using JAX BCOO if available, otherwise falling back to dense.
+        """
+        try:
+            from jax.experimental import sparse
+
+            return sparse.BCOO((data, jnp.stack(indices, axis=1)), shape=shape)
+        except (ImportError, AttributeError):
+            res = jnp.zeros(shape)
+            return res.at[indices].set(data)
+
+    def sparse_diags(
+        self,
+        diagonals: Sequence[Any],
+        offsets: Sequence[int],
+        shape: tuple[int, int] | None = None,
+    ) -> Any:
+        """Constructs a sparse matrix from diagonals."""
+        if not diagonals:
+            return jnp.zeros((0, 0))
+
+        if shape is None:
+            max_offset = max(offsets)
+            min_offset = min(offsets)
+            n = len(diagonals[0]) + max(0, -min_offset) + max(0, max_offset)
+            shape = (n, n)
+
+        res = jnp.zeros(shape)
+        for diag, offset in zip(diagonals, offsets, strict=False):
+            res = res + jnp.diag(diag, k=offset)
+        return res
+
+    def sparse_bmat(
+        self,
+        blocks: Sequence[Sequence[Any | None]],
+    ) -> Any:
+        """Constructs a sparse matrix from a block matrix of other matrices."""
+        # Convert None to zero matrices
+        processed_blocks = []
+        for i, row in enumerate(blocks):
+            processed_row = []
+            for j, b in enumerate(row):
+                if b is None:
+                    # Determine shape of the zero block
+                    # Height from some block in the same row
+                    height = 0
+                    for other_b in row:
+                        if other_b is not None:
+                            height = other_b.shape[0]
+                            break
+                    # Width from some block in the same column
+                    width = 0
+                    for other_row in blocks:
+                        if other_row[j] is not None:
+                            width = other_row[j].shape[1]
+                            break
+                    processed_row.append(jnp.zeros((height, width)))
+                else:
+                    processed_row.append(b)
+            processed_blocks.append(processed_row)
+
+        return jnp.block(processed_blocks)
+
+    def sparse_matmul(self, a: Any, b: Any) -> Any:
+        """Performs matrix multiplication where at least one operand may be sparse."""
+        return jnp.matmul(a, b)
+
+    def sparse_diagonal(self, a: Any) -> Any:
+        """Returns the diagonal elements of a (potentially sparse) matrix."""
+        return jnp.diagonal(a)
+
+    def transpose(self, a: Any) -> Any:
+        """Returns the transpose of an array or matrix."""
+        return jnp.transpose(a)
+
 
 _jax_registered = False
 

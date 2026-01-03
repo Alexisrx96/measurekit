@@ -224,9 +224,9 @@ class TorchBackend(BackendOps):
         """Concatenates tensors."""
         return torch.cat(arrays, dim=axis)
 
-    def eye(self, N: int, format: str = "csr") -> Float[Array, "N N"]:
+    def eye(self, n: int, format: str = "csr") -> Float[Array, "n n"]:
         """Returns an identity matrix."""
-        return torch.eye(N)
+        return torch.eye(n)
 
     def diags(
         self,
@@ -261,8 +261,144 @@ class TorchBackend(BackendOps):
 
     def identity_operator(self, size: int) -> Any:
         """Returns an identity operator (matrix) of the given size."""
-        return torch.eye(size)
+        return torch.eye(
+            size, device=torch.device("cpu") if torch is None else None
+        )
 
     def diagonal_operator(self, diagonal: Any) -> Any:
         """Returns a diagonal operator (matrix) from the given diagonal values."""
-        return torch.diag(diagonal)
+        return torch.diag(self.asarray(diagonal))
+
+    def sparse_matrix(
+        self,
+        data: Any,
+        indices: tuple[Any, Any],
+        shape: tuple[int, int],
+    ) -> Any:
+        """Constructs a sparse matrix from COO data."""
+        i = torch.stack([self.asarray(indices[0]), self.asarray(indices[1])])
+        v = self.asarray(data)
+        return torch.sparse_coo_tensor(i, v, shape).coalesce()
+
+    def sparse_diags(
+        self,
+        diagonals: Sequence[Any],
+        offsets: Sequence[int],
+        shape: tuple[int, int] | None = None,
+    ) -> Any:
+        """Constructs a sparse matrix from diagonals."""
+        if shape is None:
+            # Estimate shape based on first diagonal and offset
+            n = len(diagonals[0]) + abs(offsets[0])
+            shape = (n, n)
+
+        # Simplified implementation: construct dense then convert to sparse
+        # For performance with many diagonals, a COO implementation is better
+        res = torch.zeros(shape, device=self.asarray(diagonals[0]).device)
+        for d, o in zip(diagonals, offsets, strict=False):
+            diag_len = len(d)
+            if o >= 0:
+                indices = torch.arange(diag_len)
+                res[indices, indices + o] = self.asarray(d)
+            else:
+                indices = torch.arange(diag_len)
+                res[indices - o, indices] = self.asarray(d)
+        return res.to_sparse()
+
+    def sparse_bmat(
+        self,
+        blocks: Sequence[Sequence[Any | None]],
+    ) -> Any:
+        """Constructs a sparse matrix from a block matrix of other matrices."""
+        # PyTorch doesn't have a direct bmat for sparse tensors.
+        # We manually accumulate COO indices and values.
+        all_indices = []
+        all_values = []
+
+        row_offsets = [0]
+        col_offsets = [0]
+
+        # Calculate offsets
+        for row in blocks:
+            # Find first non-None block in row to get its height
+            height = 0
+            for b in row:
+                if b is not None:
+                    height = b.shape[0]
+                    break
+            row_offsets.append(row_offsets[-1] + height)
+
+        for j in range(len(blocks[0])):
+            width = 0
+            for i in range(len(blocks)):
+                if blocks[i][j] is not None:
+                    width = blocks[i][j].shape[1]
+                    break
+            col_offsets.append(col_offsets[-1] + width)
+
+        for i, row in enumerate(blocks):
+            for j, block in enumerate(row):
+                if block is None:
+                    continue
+
+                # Ensure block is coalesced if it's sparse
+                if block.is_sparse:
+                    block = block.coalesce()
+                    indices = block.indices().clone()
+                    values = block.values()
+                else:
+                    # Convert dense to sparse for consistent processing
+                    sp_block = block.to_sparse().coalesce()
+                    indices = sp_block.indices().clone()
+                    values = sp_block.values()
+
+                # Offset indices
+                indices[0] += row_offsets[i]
+                indices[1] += col_offsets[j]
+
+                all_indices.append(indices)
+                all_values.append(values)
+
+        final_indices = torch.cat(all_indices, dim=1)
+        final_values = torch.cat(all_values, dim=0)
+        final_shape = (row_offsets[-1], col_offsets[-1])
+
+        return torch.sparse_coo_tensor(
+            final_indices, final_values, final_shape
+        ).coalesce()
+
+    def sparse_matmul(self, a: Any, b: Any) -> Any:
+        """Performs matrix multiplication where at least one operand may be sparse."""
+        return torch.matmul(a, b)
+
+    def sparse_diagonal(self, a: Any) -> Any:
+        """Returns the diagonal elements of a (potentially sparse) matrix."""
+        if a.is_sparse:
+            # For sparse_coo, there is no direct diagonal() method in older torch
+            # We can use a trick: matmul with a vector of ones? No.
+            # Best: coalesce and filter indices where i == j.
+            a = a.coalesce()
+            indices = a.indices()
+            values = a.values()
+            mask = indices[0] == indices[1]
+
+            diag_indices = indices[0][mask]
+            diag_values = values[mask]
+
+            # Reconstruct full diagonal tensor
+            res = torch.zeros(min(a.shape), device=a.device, dtype=a.dtype)
+            res[diag_indices] = diag_values
+            return res
+        return torch.diagonal(a)
+
+    def transpose(self, a: Any) -> Any:
+        """Returns the transpose of an array or matrix."""
+        if isinstance(a, torch.Tensor):
+            if a.is_sparse:
+                return a.transpose(0, 1)
+            return a.t() if a.ndim == 2 else a.transpose(-1, -2)
+        return a
+
+    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
+        """Returns a tensor of ones."""
+        return torch.ones(shape)

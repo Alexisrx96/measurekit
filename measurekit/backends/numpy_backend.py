@@ -233,6 +233,48 @@ class NumpyBackend(BackendOps):
         """Returns a diagonal operator (matrix) from the given diagonal values."""
         return sparse.diags([diagonal], [0], format="csr")
 
+    def sparse_matrix(
+        self,
+        data: Any,
+        indices: tuple[Any, Any],
+        shape: tuple[int, int],
+    ) -> Any:
+        """Constructs a sparse matrix from COO data."""
+        return sparse.coo_matrix((data, indices), shape=shape).tocsr()
+
+    def sparse_diags(
+        self,
+        diagonals: Sequence[Any],
+        offsets: Sequence[int],
+        shape: tuple[int, int] | None = None,
+    ) -> Any:
+        """Constructs a sparse matrix from diagonals."""
+        return sparse.diags(diagonals, offsets, shape=shape, format="csr")
+
+    def sparse_bmat(
+        self,
+        blocks: Sequence[Sequence[Any | None]],
+    ) -> Any:
+        """Constructs a sparse matrix from a block matrix of other matrices."""
+        return sparse.bmat(blocks, format="csr")
+
+    def sparse_matmul(self, a: Any, b: Any) -> Any:
+        """Performs matrix multiplication where at least one operand may be sparse."""
+        return a @ b
+
+    def sparse_diagonal(self, a: Any) -> Any:
+        """Returns the diagonal elements of a (potentially sparse) matrix."""
+        if hasattr(a, "diagonal"):
+            return a.diagonal()
+        return np.diagonal(a)
+
+    def transpose(self, a: Any) -> Any:
+        """Returns the transpose of an array or matrix."""
+        if hasattr(a, "transpose"):
+            # Scipy sparse and numpy arrays support this
+            return a.transpose()
+        return np.transpose(a)
+
     def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
         """Returns an array of ones."""
         return np.ones(shape)
