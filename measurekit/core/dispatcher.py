@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import importlib
 import math
-from typing import TYPE_CHECKING, Any
+import os
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from measurekit.core.protocols import BackendOps, Boolean, Numeric
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 try:
-    from jaxtyping import Array, Bool, Float
-except (ImportError, ModuleNotFoundError):
+    from jaxtyping import Array, Bool, Float, typecheck
+except ImportError:
     # Fallback if jaxtyping or its dependencies (jax) are missing
     from typing import Any
 
@@ -17,31 +20,52 @@ except (ImportError, ModuleNotFoundError):
     Bool = Any
     Float = Any
 
+    def typecheck(func):
+        """No-op decorator if jaxtyping is unavailable."""
+        return func
 
-from measurekit.core.protocols import BackendOps
+
+try:
+    from beartype import beartype
+except ImportError:
+    beartype = typecheck  # Fallback to typecheck or identity
+
+
+def enforce_tensor_contract(func):
+    """Decorator to enforce jaxtyping contracts at runtime."""
+    if os.environ.get("MEASUREKIT_DEBUG") == "1":
+        return beartype(func)
+    return func
 
 
 class PythonBackend(BackendOps):
     """Fallback backend for native Python types using the math module."""
 
+    SPARSE_NOT_SUPPORTED = "Sparse matrices not supported in PythonBackend"
+
     def is_array(self, obj: Any) -> bool:
+        """Checks if the object is an array."""
         return False
 
     def is_tracing(self, obj: Any) -> bool:
+        """Checks if the object is being traced (always False here)."""
         return False
 
     def asarray(self, obj: Any) -> Array:
+        """Converts to a form suitable for this backend (identity)."""
         return obj
 
     def to_device(self, obj: Any, device: str) -> Array:
+        """Moves the object to the specified device (identity)."""
         return obj
 
     def get_device(self, obj: Any) -> str | None:
+        """Returns the device of the object (always 'cpu')."""
         return "cpu"
 
-    def add(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def add(self, x: Numeric, y: Numeric) -> Numeric:
+        """Adds two values (or lists element-wise)."""
         if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
             return [a + b for a, b in zip(x, y, strict=False)]
         if isinstance(x, (list, tuple)):
@@ -50,9 +74,9 @@ class PythonBackend(BackendOps):
             return [x + b for b in y]
         return x + y
 
-    def sub(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sub(self, x: Numeric, y: Numeric) -> Numeric:
+        """Subtracts two values (or lists element-wise)."""
         if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
             return [a - b for a, b in zip(x, y, strict=False)]
         if isinstance(x, (list, tuple)):
@@ -61,9 +85,9 @@ class PythonBackend(BackendOps):
             return [x - b for b in y]
         return x - y
 
-    def mul(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def mul(self, x: Numeric, y: Numeric) -> Numeric:
+        """Multiplies two values (or lists element-wise)."""
         if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
             return [a * b for a, b in zip(x, y, strict=False)]
         if isinstance(x, (list, tuple)):
@@ -72,9 +96,9 @@ class PythonBackend(BackendOps):
             return [x * b for b in y]
         return x * y
 
-    def truediv(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def truediv(self, x: Numeric, y: Numeric) -> Numeric:
+        """Divides two values (or lists element-wise)."""
         if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
             return [a / b for a, b in zip(x, y, strict=False)]
         if isinstance(x, (list, tuple)):
@@ -83,9 +107,9 @@ class PythonBackend(BackendOps):
             return [x / b for b in y]
         return x / y
 
-    def pow(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def pow(self, x: Numeric, y: Numeric) -> Numeric:
+        """Raises x to the power of y (or lists element-wise)."""
         if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
             return [a**b for a, b in zip(x, y, strict=False)]
         if isinstance(x, (list, tuple)):
@@ -94,39 +118,51 @@ class PythonBackend(BackendOps):
             return [x**b for b in y]
         return x**y
 
-    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sqrt(self, x: Numeric) -> Numeric:
+        """Returns the square root of x."""
         if isinstance(x, (list, tuple)):
             return [math.sqrt(val) for val in x]
         return math.sqrt(x)
 
-    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def exp(self, x: Numeric) -> Numeric:
+        """Returns the exponential of x."""
         if isinstance(x, (list, tuple)):
             return [math.exp(val) for val in x]
         return math.exp(x)
 
-    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def log(self, x: Numeric) -> Numeric:
+        """Returns the natural logarithm of x."""
         if isinstance(x, (list, tuple)):
             return [math.log(val) for val in x]
         return math.log(x)
 
-    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sin(self, x: Numeric) -> Numeric:
+        """Returns the sine of x."""
         if isinstance(x, (list, tuple)):
             return [math.sin(val) for val in x]
         return math.sin(x)
 
-    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def cos(self, x: Numeric) -> Numeric:
+        """Returns the cosine of x."""
         if isinstance(x, (list, tuple)):
             return [math.cos(val) for val in x]
         return math.cos(x)
 
-    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def tan(self, x: Numeric) -> Numeric:
+        """Returns the tangent of x."""
         if isinstance(x, (list, tuple)):
             return [math.tan(val) for val in x]
         return math.tan(x)
 
-    def dot(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def dot(self, x: Numeric, y: Numeric) -> Numeric:
+        """Computes the dot product of two values."""
         if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
             # Assuming dot product for 1D lists
             if len(x) != len(y):
@@ -134,86 +170,105 @@ class PythonBackend(BackendOps):
             return sum(a * b for a, b in zip(x, y, strict=False))
         return x * y
 
-    def cross(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def cross(self, x: Numeric, y: Numeric) -> Numeric:
+        """Computes the cross product of two values (not supported)."""
         raise NotImplementedError("Cross product not supported for scalars")
 
-    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def abs(self, x: Numeric) -> Numeric:
+        """Returns the absolute value of x."""
         if isinstance(x, (list, tuple)):
             return [abs(val) for val in x]
         return abs(x)
 
-    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sign(self, x: Numeric) -> Numeric:
+        """Returns the sign of x (-1, 0, or 1)."""
         if isinstance(x, (list, tuple)):
             return [math.copysign(1, val) for val in x]
         return math.copysign(1, x)
 
+    @enforce_tensor_contract
     def sum(
-        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
-    ) -> Float[Array, ...]:
+        self, obj: Numeric, axis: int | Sequence[int] | None = None
+    ) -> Numeric:
+        """Computes the sum of elements."""
         if isinstance(obj, (list, tuple)):
             return sum(obj)
         return obj
 
+    @enforce_tensor_contract
     def mean(
-        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
-    ) -> Float[Array, ...]:
+        self, obj: Numeric, axis: int | Sequence[int] | None = None
+    ) -> Numeric:
+        """Computes the arithmetic mean."""
         if isinstance(obj, (list, tuple)):
             return sum(obj) / len(obj)
         return obj
 
-    def any(self, obj: Bool[Array, ...]) -> bool:
+    @enforce_tensor_contract
+    def any(self, obj: Boolean) -> bool:
+        """Returns True if any element is True."""
         if isinstance(obj, (list, tuple)):
             return any(obj)
         return bool(obj)
 
-    def all(self, obj: Bool[Array, ...]) -> bool:
+    @enforce_tensor_contract
+    def all(self, obj: Boolean) -> bool:
+        """Returns True if all elements are True."""
         if isinstance(obj, (list, tuple)):
             return all(obj)
         return bool(obj)
 
+    @enforce_tensor_contract
     def allclose(
-        self, a: Any, b: Any, rtol: float = 1e-5, atol: float = 1e-8
+        self, a: Numeric, b: Numeric, rtol: float = 1e-5, atol: float = 1e-8
     ) -> bool:
-        return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
+        """Returns True if arrays are equal within a tolerance."""
+        try:
+            return math.isclose(a, b, rel_tol=rtol, abs_tol=atol)
+        except TypeError:
+            return a == b
 
-    def equal(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def equal(self, x: Numeric, y: Numeric) -> Boolean:
+        """Returns True if x equals y."""
         return x == y
 
-    def not_equal(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def not_equal(self, x: Numeric, y: Numeric) -> Boolean:
+        """Returns True if x does not equal y."""
         return x != y
 
-    def less(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def less(self, x: Numeric, y: Numeric) -> Boolean:
+        """Returns True if x is less than y."""
         return x < y
 
-    def less_equal(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def less_equal(self, x: Numeric, y: Numeric) -> Boolean:
+        """Returns True if x is less than or equal to y."""
         return x <= y
 
-    def greater(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def greater(self, x: Numeric, y: Numeric) -> Boolean:
+        """Returns True if x is greater than y."""
         return x > y
 
-    def greater_equal(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def greater_equal(self, x: Numeric, y: Numeric) -> Boolean:
+        """Returns True if x is greater than or equal to y."""
         return x >= y
 
     def shape(self, obj: Any) -> tuple[int, ...]:
+        """Returns the shape of the object."""
         if hasattr(obj, "__len__"):
             return (len(obj),)
         return ()
 
     def reshape(self, obj: Any, shape: tuple[int, ...]) -> Any:
+        """Reshapes the object to the specified shape."""
         if shape == () or shape == (1,):
             if isinstance(obj, (list, tuple)):
                 if len(obj) == 1:
@@ -222,33 +277,35 @@ class PythonBackend(BackendOps):
                     return 0.0
             return obj
 
-        # Flatten logic for (N,) or (-1,)
         if len(shape) == 1:
-            total = shape[0]
-            if isinstance(obj, (list, tuple)):
-                # If nested, flatten
-                if len(obj) > 0 and isinstance(obj[0], (list, tuple)):
-                    flat = [item for sublist in obj for item in sublist]
-                else:
-                    flat = list(obj)
-
-                if total == -1 or len(flat) == total:
-                    return flat
-
-            # Scalar to vector
-            if (total == 1 or total == -1) and not isinstance(
-                obj, (list, tuple)
-            ):
-                return [obj]
+            return self._reshape_1d(obj, shape[0])
 
         if shape == (1, 1) and not isinstance(obj, (list, tuple)):
             return [[obj]]
 
         raise NotImplementedError(
-            f"Reshape {shape} not fully supported in PythonBackend for obj {obj}"
+            f"Reshape {shape} not fully supported in PythonBackend."
         )
 
+    def _reshape_1d(self, obj: Any, total: int) -> Any:
+        """Helper for 1D reshaping/flattening."""
+        if isinstance(obj, (list, tuple)):
+            # If nested, flatten
+            if len(obj) > 0 and isinstance(obj[0], (list, tuple)):
+                flat = [item for sublist in obj for item in sublist]
+            else:
+                flat = list(obj)
+
+            if total == -1 or len(flat) == total:
+                return flat
+
+        # Scalar to vector
+        if (total == 1 or total == -1) and not isinstance(obj, (list, tuple)):
+            return [obj]
+        return obj
+
     def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Any:
+        """Concatenates arrays along the specified axis."""
         result = []
         for arr in arrays:
             if isinstance(arr, list):
@@ -264,7 +321,7 @@ class PythonBackend(BackendOps):
         return 1
 
     def broadcast_and_flatten(self, inputs: Sequence[Any]) -> Sequence[Any]:
-        """Broadcasts inputs to a common shape and returns them as flattened 1D lists."""
+        """Broadcasts inputs to a common shape and flattens them."""
         # Basic scalar/list broadcasting simulation
         max_len = 0
         for x in inputs:
@@ -287,6 +344,7 @@ class PythonBackend(BackendOps):
         return results
 
     def identity_operator(self, size: int, reference: Any = None) -> Any:
+        """Returns an identity matrix of the specified size."""
         # Python backend doesn't have devices/sparse operators really,
         # but we return an identity-like structure
         return [
@@ -294,10 +352,8 @@ class PythonBackend(BackendOps):
         ]
 
     def diagonal_operator(self, diagonal: Any) -> Any:
-        """Returns a diagonal operator (matrix) from the given diagonal values."""
-        raise NotImplementedError(
-            "Sparse matrices not supported in PythonBackend"
-        )
+        """Returns a diagonal operator from the given values."""
+        raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
 
     def sparse_matrix(
         self,
@@ -306,9 +362,7 @@ class PythonBackend(BackendOps):
         shape: tuple[int, int],
     ) -> Any:
         """Constructs a sparse matrix from COO data."""
-        raise NotImplementedError(
-            "Sparse matrices not supported in PythonBackend"
-        )
+        raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
 
     def sparse_diags(
         self,
@@ -317,30 +371,25 @@ class PythonBackend(BackendOps):
         shape: tuple[int, int] | None = None,
     ) -> Any:
         """Constructs a sparse matrix from diagonals."""
-        raise NotImplementedError(
-            "Sparse matrices not supported in PythonBackend"
-        )
+        raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
 
     def sparse_bmat(
         self,
         blocks: Sequence[Sequence[Any | None]],
     ) -> Any:
         """Constructs a sparse matrix from a block matrix of other matrices."""
-        raise NotImplementedError(
-            "Sparse matrices not supported in PythonBackend"
-        )
+        raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
 
     def sparse_matmul(self, a: Any, b: Any) -> Any:
-        """Performs matrix multiplication where at least one operand may be sparse."""
+        """Matrix multiplication where at least one operand is sparse."""
         return a @ b
 
     def sparse_diagonal(self, a: Any) -> Any:
         """Returns the diagonal elements of a (potentially sparse) matrix."""
-        raise NotImplementedError(
-            "Sparse matrices not supported in PythonBackend"
-        )
+        raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
 
     def eye(self, n: int, format: str = "csr", reference: Any = None) -> Any:
+        """Returns a sparse identity matrix (not supported)."""
         return self.identity_operator(n)
 
     def diags(
@@ -349,9 +398,12 @@ class PythonBackend(BackendOps):
         offsets: Sequence[int],
         format: str = "csr",
     ) -> Any:
+        """Constructs a sparse matrix from diagonals (not supported)."""
+        # Unused arguments: offsets, format
         return self.diagonal_operator(diagonals[0])
 
     def ones(self, shape: tuple[int, ...], reference: Any = None) -> Any:
+        """Returns an array of ones with the specified shape."""
         if len(shape) == 0:
             return 1.0
         # ... simplified recursive or fixed ones
@@ -361,8 +413,8 @@ class PythonBackend(BackendOps):
 class BackendManager:
     """Manages backend dispatching and lazy loading."""
 
-    _backends: dict[str, BackendOps] = {}
-    _python_backend: BackendOps | None = None
+    _backends: ClassVar[dict[str, BackendOps]] = {}
+    _python_backend: ClassVar[BackendOps | None] = None
 
     @classmethod
     def get_backend(cls, data_obj: Any) -> BackendOps:
@@ -375,14 +427,29 @@ class BackendManager:
 
         cls_name = getattr(data_obj.__class__, "__name__", "").lower()
 
-        # JAX Detection (Prioritize to catch Tracers which might mimic other things)
+        # SciPy Detection (for sparse matrices)
+        if (
+            module.startswith("scipy")
+            or cls_name == "csr_matrix"
+            or cls_name == "csc_matrix"
+            or cls_name == "coo_matrix"
+        ):
+            try:
+                import scipy.sparse  # noqa: F401
+
+                return cls._get_or_load_backend("scipy")
+            except ImportError:
+                # If scipy is not installed, fall through to other backends or python
+                pass
+
+        # JAX Detection (Prioritize to catch complex Tracers)
         if (
             module.startswith("jax")
             or module.startswith("jaxlib")
             or "jax" in module
             or "jax" in cls_name
             or "tracer" in cls_name
-            or hasattr(data_obj, "aval")  # JAX Tracers often have 'aval'
+            or hasattr(data_obj, "aval")  # JAX 'aval'
         ):
             return cls._get_or_load_backend("jax")
 
@@ -433,6 +500,7 @@ class BackendManager:
         return cls._python_backend
 
 
+@enforce_tensor_contract
 def get_backend(data_obj: Any) -> BackendOps:
     """Convenience function to get backend for an object."""
     return BackendManager.get_backend(data_obj)
