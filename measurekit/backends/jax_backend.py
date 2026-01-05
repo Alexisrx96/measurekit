@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 try:
     import jax
@@ -17,7 +19,7 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     from jaxtyping import Array, Bool, Float
-except (ImportError, ModuleNotFoundError):
+except ImportError:
     from typing import Any
 
     Array = Any
@@ -25,7 +27,8 @@ except (ImportError, ModuleNotFoundError):
     Float = Any
 
 
-from measurekit.core.protocols import BackendOps
+from measurekit.core.dispatcher import enforce_tensor_contract
+from measurekit.core.protocols import BackendOps, Boolean, Numeric
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ class JaxBackend(BackendOps):
     """JAX-based implementation of BackendOps."""
 
     def __init__(self):
+        """Initializes the JAX backend."""
         if jax is None:
             raise ImportError("JAX is not available.")
 
@@ -58,7 +62,8 @@ class JaxBackend(BackendOps):
 
     def is_array(self, obj: Any) -> bool:
         """Checks if the object is a concrete JAX array.
-        Note: We return False for Tracers to bypass legacy vectorized uncertainty
+
+        Note: We return False for Tracers to bypass legacy paths that rely on
         propagation paths that rely on Scipy/NumPy, as JAX handles its own
         vectorization and differentiation.
         """
@@ -93,12 +98,8 @@ class JaxBackend(BackendOps):
         """Returns the device identifier for a JAX array."""
         if self.is_array(obj) and not self._is_tracer(obj):
             try:
-                # Newer JAX versions use .device (property) or .devices() (set)
-                # But jax.Array typically has .device() method in older versions or .device property in newer?
-                # Actually, in JAX 0.4.x+, .device is often a property on sharded arrays but .devices() returns a set.
-                # However, individual committed arrays (from device_put) have .device() method usually.
-                # Wait, the error is 'Device object is not callable'. This means obj.device IS the object, not a method.
-                # So we should treat it as a property if it's not callable.
+                # JAX array device access varies by version.
+                # We check for .device attribute or method.
                 d = getattr(obj, "device", None)
                 if callable(d):
                     return str(d())
@@ -107,108 +108,114 @@ class JaxBackend(BackendOps):
                 pass
         return "cpu"
 
-    def add(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise addition."""
         return jnp.add(x, y)
 
-    def sub(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sub(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise subtraction."""
         return jnp.subtract(x, y)
 
-    def mul(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def mul(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise multiplication."""
         return jnp.multiply(x, y)
 
-    def truediv(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def truediv(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise true division."""
         return jnp.true_divide(x, y)
 
-    def pow(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def pow(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise power."""
         return jnp.power(x, y)
 
-    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sqrt(self, x: Numeric) -> Numeric:
         """Element-wise square root."""
         return jnp.sqrt(x)
 
-    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def exp(self, x: Numeric) -> Numeric:
         """Element-wise exponential."""
         return jnp.exp(x)
 
-    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def log(self, x: Numeric) -> Numeric:
         """Element-wise natural logarithm."""
         return jnp.log(x)
 
-    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sin(self, x: Numeric) -> Numeric:
         """Element-wise sine."""
         return jnp.sin(x)
 
-    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def cos(self, x: Numeric) -> Numeric:
         """Element-wise cosine."""
         return jnp.cos(x)
 
-    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def tan(self, x: Numeric) -> Numeric:
         """Element-wise tangent."""
         return jnp.tan(x)
 
-    def dot(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def dot(self, x: Numeric, y: Numeric) -> Numeric:
         """Dot product or matrix multiplication."""
-        return jnp.dot(x, y)
+        return jnp.matmul(x, y)
 
-    def cross(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def cross(self, x: Numeric, y: Numeric) -> Numeric:
         """Cross product."""
         return jnp.cross(x, y)
 
-    def abs(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def abs(self, x: Numeric) -> Numeric:
         """Element-wise absolute value."""
         return jnp.abs(x)
 
-    def sign(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sign(self, x: Numeric) -> Numeric:
         """Element-wise sign."""
         return jnp.sign(x)
 
+    @enforce_tensor_contract
     def sum(
-        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
-    ) -> Float[Array, ...]:
+        self, obj: Numeric, axis: int | Sequence[int] | None = None
+    ) -> Numeric:
         """Sum of elements."""
         return jnp.sum(obj, axis=axis)
 
+    @enforce_tensor_contract
     def mean(
-        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
-    ) -> Float[Array, ...]:
+        self, obj: Numeric, axis: int | Sequence[int] | None = None
+    ) -> Numeric:
         """Mean of elements."""
         return jnp.mean(obj, axis=axis)
 
-    def any(self, obj: Bool[Array, ...]) -> bool:
+    @enforce_tensor_contract
+    def any(self, obj: Boolean) -> bool:
         """Returns True if any element is True. Returns False for Tracers."""
         if self._is_tracer(obj):
             return False
         return bool(jnp.any(obj))
 
-    def all(self, obj: Bool[Array, ...]) -> bool:
+    @enforce_tensor_contract
+    def all(self, obj: Boolean) -> bool:
         """Returns True if all elements are True. Returns False for Tracers."""
         if self._is_tracer(obj):
             return False
         return bool(jnp.all(obj))
 
+    @enforce_tensor_contract
     def allclose(
         self,
-        a: Float[Array, ...],
-        b: Float[Array, ...],
+        a: Numeric,
+        b: Numeric,
         rtol: float = 1e-5,
         atol: float = 1e-8,
     ) -> bool:
@@ -217,53 +224,56 @@ class JaxBackend(BackendOps):
             return False
         return bool(jnp.allclose(a, b, rtol=rtol, atol=atol))
 
-    def equal(self, x: Any, y: Any) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def equal(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise equality."""
         return jnp.equal(x, y)
 
-    def not_equal(self, x: Any, y: Any) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def not_equal(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise inequality."""
         return jnp.not_equal(x, y)
 
-    def less(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def less(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise less than."""
         return jnp.less(x, y)
 
-    def less_equal(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def less_equal(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise less than or equal."""
         return jnp.less_equal(x, y)
 
-    def greater(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def greater(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise greater than."""
         return jnp.greater(x, y)
 
-    def greater_equal(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Bool[Array, ...]:
+    @enforce_tensor_contract
+    def greater_equal(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise greater than or equal."""
         return jnp.greater_equal(x, y)
 
-    def shape(self, obj: Array) -> tuple[int, ...]:
-        """Returns the shape of the array."""
+    @enforce_tensor_contract
+    def shape(self, obj: Any) -> tuple[int, ...]:
+        """Returns the shape of the array or tracer."""
+        if hasattr(obj, "shape"):
+            return obj.shape
         return jnp.shape(obj)
 
+    @enforce_tensor_contract
     def reshape(self, obj: Any, shape: tuple[int, ...]) -> Any:
         """Reshapes the array."""
         if hasattr(obj, "reshape"):
             return obj.reshape(shape)
         return jnp.reshape(obj, shape)
 
-    def concatenate(self, arrays: Sequence[Array], axis: int = 0) -> Array:
+    @enforce_tensor_contract
+    def concatenate(self, arrays: Sequence[Any], axis: int = 0) -> Any:
         """Concatenates arrays."""
         return jnp.concatenate(arrays, axis=axis)
 
-    def eye(self, n: int, format: str = "csr") -> Float[Array, "n n"]:
+    def eye(self, n: int, format: str = "csr") -> Any:
         """Returns an identity matrix."""
         return jnp.eye(n)
 
@@ -284,7 +294,8 @@ class JaxBackend(BackendOps):
             res = res + jnp.diag(diag, k=offset)
         return res
 
-    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def ones(self, shape: tuple[int, ...], reference: Any = None) -> Numeric:
         """Returns an array of ones."""
         return jnp.ones(shape)
 
@@ -293,17 +304,17 @@ class JaxBackend(BackendOps):
         return jnp.size(obj)
 
     def broadcast_and_flatten(self, inputs: Sequence[Any]) -> Sequence[Any]:
-        """Broadcasts inputs to a common shape and returns them as flattened 1D arrays."""
+        """Broadcasts inputs to a common shape; returns 1D arrays."""
         broadcasted = jnp.broadcast_arrays(*inputs)
         return [jnp.ravel(b) for b in broadcasted]
 
     def identity_operator(self, size: int, reference: Any = None) -> Any:
         """Returns an identity operator (matrix) of the given size."""
-        # JAX sparse support is experimental/limited, using dense for now as previous implementation did
+        # JAX sparse support is experimental; using dense fallback.
         return jnp.eye(size)
 
     def diagonal_operator(self, diagonal: Any) -> Any:
-        """Returns a diagonal operator (matrix) from the given diagonal values."""
+        """Returns a diagonal operator from the given values."""
         return jnp.diag(diagonal)
 
     def _has_sparse(self) -> bool:
@@ -373,7 +384,7 @@ class JaxBackend(BackendOps):
         self,
         blocks: Sequence[Sequence[Any | None]],
     ) -> Any:
-        """Constructs a sparse matrix from a block matrix of other matrices."""
+        """Constructs a sparse matrix from a block matrix."""
         if self._has_sparse():
             from jax.experimental import sparse
 
@@ -436,7 +447,7 @@ class JaxBackend(BackendOps):
 
         # Convert None to zero matrices for dense fallback
         processed_blocks = []
-        for i, row in enumerate(blocks):
+        for _, row in enumerate(blocks):
             processed_row = []
             for j, b in enumerate(row):
                 if b is None:
@@ -459,7 +470,7 @@ class JaxBackend(BackendOps):
         return jnp.block(processed_blocks)
 
     def sparse_matmul(self, a: Any, b: Any) -> Any:
-        """Performs matrix multiplication where at least one operand may be sparse."""
+        """Matrix multiplication where at least one operand is sparse."""
         return a @ b
 
     def sparse_diagonal(self, a: Any) -> Any:
@@ -520,7 +531,6 @@ def register_jax_behavior():
 
         from measurekit.domain.measurement.uncertainty import (
             CovarianceModel,
-            Uncertainty,
             VarianceModel,
         )
 
@@ -532,7 +542,7 @@ def register_jax_behavior():
         def cov_unflatten(aux, children):
             vector_slice, keys = aux
             std_dev, values = children
-            lineage = dict(zip(keys, values))
+            lineage = dict(zip(keys, values, strict=False))
             return CovarianceModel(
                 std_dev_internal=std_dev,
                 lineage=lineage,

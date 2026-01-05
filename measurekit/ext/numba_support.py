@@ -1,4 +1,5 @@
 """Numba extension for MeasureKit.
+
 Allows Quantity objects to be passed into @njit decorated functions.
 """
 
@@ -18,7 +19,7 @@ try:
     )
 
     HAS_NUMBA = True
-except (ImportError, ModuleNotFoundError, AttributeError):
+except (ImportError, AttributeError):
     HAS_NUMBA = False
 
 
@@ -26,25 +27,27 @@ if HAS_NUMBA:
     # --- 1. Definir el Tipo en Numba ---
     class QuantityType(types.Type):
         """Representa una Quantity en el sistema de tipos de Numba.
-        Guardamos la 'unit' como parte del tipo (constante en tiempo de compilación)
+
+        Guardamos la 'unit' como parte del tipo (constante en compilación)
         para poder reconstruir el objeto al salir.
         """
 
         def __init__(self, dtype, unit):
-            self.dtype = dtype  # El tipo de la magnitud (ej. float64, array(float64, 1d, C))
+            """Initializes the QuantityType."""
+            self.dtype = dtype  # El tipo de la magnitud (ej. float64)
             self.unit = unit  # La unidad (CompoundUnit)
             # El nombre debe ser único para cada combinación de tipo/unidad
             super().__init__(name=f"Quantity({dtype}, unit={unit!r})")
 
         @property
         def key(self):
-            # Numba usa esto para diferenciar tipos
+            """Numba usa esto para diferenciar tipos."""
             return (self.dtype, self.unit)
 
     # --- 2. Inferencia de Tipos (Python -> Numba) ---
     @typeof_impl.register(Quantity)
     def typeof_quantity(val, c):
-        """Le dice a Numba: "Cuando veas este objeto Python, crea este Tipo Numba"."""
+        """Le dice a Numba: 'Cuando veas est objeto, crea este Tipo'."""
         # Inferimos el tipo de la magnitud (float, array, etc.)
         mag_type = typeof_impl(val.magnitude, c)
         # Creamos nuestro tipo personalizado llevando la unidad
@@ -54,11 +57,13 @@ if HAS_NUMBA:
     @register_model(QuantityType)
     class QuantityModel(models.StructModel):
         """Define cómo se ve la Quantity en memoria (bajo nivel).
+
         Para eficiencia máxima, SOLO guardamos la magnitud en el struct.
         La unidad es manejada estáticamente por el sistema de tipos.
         """
 
         def __init__(self, dmm, fe_type):
+            """Initializes the QuantityModel."""
             members = [
                 ("magnitude", fe_type.dtype),
             ]
@@ -97,7 +102,8 @@ if HAS_NUMBA:
     # --- 6. Boxing (Native -> Python) ---
     @box(QuantityType)
     def box_quantity(typ, val, c):
-        """Convierte nuestro struct nativo de vuelta a un objeto Python Quantity.
+        """Convierte struct nativo de vuelta a un objeto Python.
+
         Aquí es donde recuperamos la unidad que guardamos en QuantityType.
         """
         # 1. Leer el struct
@@ -109,8 +115,8 @@ if HAS_NUMBA:
         mag_obj = c.box(typ.dtype, quantity_struct.magnitude)
 
         # 3. Obtener la clase Quantity y la Unidad desde el entorno Python
-        # Serializamos la unidad via pickle o la pasamos como objeto si es posible.
-        # Truco: Usamos c.pyapi.unserialize para inyectar el objeto `unit` complejo.
+        # Serializamos la unidad via pickle o la pasamos como objeto.
+        # Truco: Usamos unpickle para inyectar el objeto `unit`.
         unit_obj = c.pyapi.unserialize(c.pyapi.serialize_object(typ.unit))
 
         # 4. Llamar a Quantity(magnitude, unit)

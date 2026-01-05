@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 try:
     import torch
@@ -19,7 +21,8 @@ except (ImportError, ModuleNotFoundError):
     Float = Any
 
 
-from measurekit.core.protocols import BackendOps
+from measurekit.core.dispatcher import enforce_tensor_contract
+from measurekit.core.protocols import BackendOps, Boolean, Numeric
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ class TorchBackend(BackendOps):
     """PyTorch-based implementation of BackendOps."""
 
     def __init__(self):
+        """Initializes the TorchBackend."""
         if torch is None:
             raise ImportError("PyTorch is not available.")
 
@@ -53,20 +57,17 @@ class TorchBackend(BackendOps):
 
     def get_device(self, obj: Any) -> str | None:
         """Returns the device for a tensor."""
-        if isinstance(obj, torch.Tensor):
-            if hasattr(obj, "device"):
-                return str(obj.device)
+        if isinstance(obj, torch.Tensor) and hasattr(obj, "device"):
+            return str(obj.device)
         return "cpu"
 
-    def add(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise addition."""
         return torch.add(self.asarray(x), self.asarray(y))
 
-    def sub(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sub(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise subtraction."""
         x_t = self.asarray(x)
         y_t = self.asarray(y)
@@ -76,9 +77,8 @@ class TorchBackend(BackendOps):
             else torch.sub(x_t, y_t)
         )
 
-    def mul(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def mul(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise multiplication."""
         x_t = self.asarray(x)
         y_t = self.asarray(y)
@@ -88,9 +88,8 @@ class TorchBackend(BackendOps):
             else torch.mul(x_t, y_t)
         )
 
-    def truediv(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def truediv(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise true division."""
         x_t = self.asarray(x)
         y_t = self.asarray(y)
@@ -100,35 +99,40 @@ class TorchBackend(BackendOps):
             else torch.div(x_t, y_t)
         )
 
-    def pow(
-        self, x: Float[Array, ...], y: Float[Array, ...]
-    ) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def pow(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise power."""
         return torch.pow(self.asarray(x), self.asarray(y))
 
-    def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sqrt(self, x: Numeric) -> Numeric:
         """Element-wise square root."""
         return torch.sqrt(self.asarray(x))
 
-    def exp(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def exp(self, x: Numeric) -> Numeric:
         """Element-wise exponential."""
-        return torch.exp(x)
+        return torch.exp(self.asarray(x))
 
-    def log(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def log(self, x: Numeric) -> Numeric:
         """Element-wise natural logarithm."""
-        return torch.log(x)
+        return torch.log(self.asarray(x))
 
-    def sin(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def sin(self, x: Numeric) -> Numeric:
         """Element-wise sine."""
-        return torch.sin(x)
+        return torch.sin(self.asarray(x))
 
-    def cos(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def cos(self, x: Numeric) -> Numeric:
         """Element-wise cosine."""
-        return torch.cos(x)
+        return torch.cos(self.asarray(x))
 
-    def tan(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @enforce_tensor_contract
+    def tan(self, x: Numeric) -> Numeric:
         """Element-wise tangent."""
-        return torch.tan(x)
+        return torch.tan(self.asarray(x))
 
     def dot(
         self, x: Float[Array, ...], y: Float[Array, ...]
@@ -157,29 +161,33 @@ class TorchBackend(BackendOps):
         """Element-wise sign."""
         return torch.sign(x)
 
+    @enforce_tensor_contract
     def sum(
-        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
-    ) -> Float[Array, ...]:
+        self, obj: Numeric, axis: int | Sequence[int] | None = None
+    ) -> Numeric:
         """Sum of elements."""
         if axis is None:
-            return torch.sum(obj)
-        return torch.sum(obj, dim=axis)
+            return torch.sum(self.asarray(obj))
+        return torch.sum(self.asarray(obj), dim=axis)
 
+    @enforce_tensor_contract
     def mean(
-        self, obj: Float[Array, ...], axis: int | Sequence[int] | None = None
-    ) -> Float[Array, ...]:
+        self, obj: Numeric, axis: int | Sequence[int] | None = None
+    ) -> Numeric:
         """Mean of elements."""
         if axis is None:
-            return torch.mean(obj)
-        return torch.mean(obj, dim=axis)
+            return torch.mean(self.asarray(obj))
+        return torch.mean(self.asarray(obj), dim=axis)
 
-    def any(self, obj: Bool[Array, ...]) -> bool:
+    @enforce_tensor_contract
+    def any(self, obj: Boolean) -> bool:
         """Returns True if any element is True."""
-        return bool(torch.any(obj))
+        return bool(torch.any(self.asarray(obj)))
 
-    def all(self, obj: Bool[Array, ...]) -> bool:
+    @enforce_tensor_contract
+    def all(self, obj: Boolean) -> bool:
         """Returns True if all elements are True."""
-        return bool(torch.all(obj))
+        return bool(torch.all(self.asarray(obj)))
 
     def allclose(
         self,
@@ -237,9 +245,7 @@ class TorchBackend(BackendOps):
         """Concatenates tensors."""
         return torch.cat(arrays, dim=axis)
 
-    def eye(
-        self, n: int, format: str = "csr", reference: Any = None
-    ) -> Float[Array, "n n"]:
+    def eye(self, n: int, format: str = "csr", reference: Any = None) -> Any:
         """Returns an identity matrix."""
         device = reference.device if hasattr(reference, "device") else None
         return torch.eye(n, device=device)
@@ -270,18 +276,19 @@ class TorchBackend(BackendOps):
         return 1
 
     def broadcast_and_flatten(self, inputs: Sequence[Any]) -> Sequence[Any]:
-        """Broadcasts inputs to a common shape and returns them as flattened 1D arrays."""
+        """Broadcasts, flattens inputs to common shape 1D arrays."""
         tensors = [self.asarray(x) for x in inputs]
         broadcasted = torch.broadcast_tensors(*tensors)
         return [torch.flatten(b) for b in broadcasted]
 
     def identity_operator(self, size: int, reference: Any = None) -> Any:
+        """Returns an identity operator."""
         # Fixed logic to use reference.device
         device = getattr(reference, "device", None)
         return torch.eye(size, device=device)
 
     def diagonal_operator(self, diagonal: Any) -> Any:
-        """Returns a diagonal operator (matrix) from the given diagonal values."""
+        """Returns a diagonal operator from the given diagonal values."""
         return torch.diag(self.asarray(diagonal))
 
     def sparse_matrix(
@@ -383,14 +390,14 @@ class TorchBackend(BackendOps):
         ).coalesce()
 
     def sparse_matmul(self, a: Any, b: Any) -> Any:
-        """Performs matrix multiplication where at least one operand may be sparse."""
+        """Matmul where at least one operand may be sparse."""
         # Torch matmul does not support sparse @ sparse
         a_sparse = getattr(a, "is_sparse", False)
         b_sparse = getattr(b, "is_sparse", False)
 
         if a_sparse and b_sparse:
             # Fallback to dense math (warning: memory intensive)
-            # Ideally we would only densify the smaller one or use a third-party kernel
+            # Ideally densify smaller one or use third-party kernel
             return torch.matmul(a.to_dense(), b.to_dense())
 
         # Sparse @ Dense -> Dense (supported)
@@ -407,7 +414,7 @@ class TorchBackend(BackendOps):
     def sparse_diagonal(self, a: Any) -> Any:
         """Returns the diagonal elements of a (potentially sparse) matrix."""
         if a.is_sparse:
-            # For sparse_coo, there is no direct diagonal() method in older torch
+            # sparse_coo has no direct diagonal() in older torch
             # We can use a trick: matmul with a vector of ones? No.
             # Best: coalesce and filter indices where i == j.
             a = a.coalesce()
@@ -443,7 +450,7 @@ class TorchBackend(BackendOps):
             return matrix[row_slice, col_slice]
 
         # Convert slices to indices
-        # CAUTION: This requires realizing the indices, which might be large if slice is huge.
+        # CAUTION: Realizes indices, large if slice is huge.
         # But typically we slice to get relatively small blocks.
 
         # Optimize for full slice
