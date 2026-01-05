@@ -23,6 +23,11 @@ _current_unit_system: ContextVar[UnitSystem | None] = ContextVar(
     "current_unit_system", default=None
 )
 
+# Stores the active error propagation mode (e.g. "correlated", "uncorrelated").
+_propagation_mode: ContextVar[str] = ContextVar(
+    "propagation_mode", default="correlated"
+)
+
 # 2. Global fallback for the default system (SI)
 # Loaded lazily to avoid circular imports and startup costs.
 _global_default_system: UnitSystem | None = None
@@ -87,6 +92,31 @@ def use_system(system_name_or_obj: str | UnitSystem) -> Iterator[None]:
         yield
     finally:
         _current_unit_system.reset(token)
+
+
+@contextmanager
+def propagation_mode(mode: str) -> Iterator[None]:
+    """Context manager to temporarily switch the active propagation mode.
+
+    Args:
+        mode: The propagation strategy to use ("correlated" or "uncorrelated").
+    """
+    token = _propagation_mode.set(mode)
+    try:
+        yield
+    finally:
+        _propagation_mode.reset(token)
+
+
+def get_propagation_mode() -> str:
+    """Returns the currently active propagation mode."""
+    mode = _propagation_mode.get()
+
+    # Fallback to system settings if not explicitly set in context
+    # Usually the default "correlated" is set, but we might want to check
+    # the active system's settings if we want it to be configurable per system.
+    # For now, we follow the spec which suggests a global/context mechanism.
+    return mode
 
 
 # For backward compatibility if needed, though get_current_system is preferred.

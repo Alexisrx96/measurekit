@@ -82,7 +82,9 @@ class Quantity(Generic[ValueType, UncType]):
     magnitude: ValueType
     unit: CompoundUnit
     uncertainty_obj: Uncertainty[UncType] = field(
-        default_factory=lambda: cast("Uncertainty[UncType]", Uncertainty(0.0))
+        default_factory=lambda: cast(
+            "Uncertainty[UncType]", Uncertainty.from_standard(0.0)
+        )
     )
     fraction: Fraction | None = None
     system: UnitSystem = field(default_factory=get_default_system)
@@ -529,112 +531,27 @@ class Quantity(Generic[ValueType, UncType]):
         jac_self: Any,
         jac_other: Any = None,
     ) -> Uncertainty:
-        """Helper to propagate vectorized uncertainty via CovarianceStore."""
-        from measurekit.domain.measurement.vectorized_uncertainty import (
-            ensure_store,
+        """Helper to propagate vectorized uncertainty via the active Strategy."""
+        other_unc = (
+            other.uncertainty_obj
+            if isinstance(other, Quantity)
+            else Uncertainty.from_standard(0.0)
         )
+        # Default Jacobians if they are None (often for scalar/constant operands)
+        js = 1.0 if jac_self is None else jac_self
+        jo = (
+            0.0
+            if jac_other is None and not isinstance(other, Quantity)
+            else jac_other
+        )
+        if jo is None:
+            jo = 1.0
 
-        store = ensure_store(self._backend)
-        in_slices = []
-        jacobians = []
-
-        if jac_self is not None:
-            # Similar broadcasting check for self as we added for other
-            uc_self = self.uncertainty_obj
-            val_std_self = self._backend.asarray(uc_self.std_dev)
-
-            # Check for scalar-to-vector broadcast need
-            out_size = self._backend.size(out_magnitude)
-            if out_size > 1 and self._backend.size(val_std_self) == 1:
-                try:
-                    ones = self._backend.ones((out_size,))
-                    val_std_self = self._backend.mul(ones, val_std_self)
-                    # Create temp uncertainty (treat as i.i.d broadcast)
-                    temp_uc_self = Uncertainty.from_standard(val_std_self)
-                    in_slices.append(temp_uc_self.ensure_vector_slice())
-                except Exception:
-                    # Fallback to existing (might crash if mismatch)
-                    in_slices.append(
-                        self.uncertainty_obj.ensure_vector_slice()
-                    )
-            else:
-                in_slices.append(self.uncertainty_obj.ensure_vector_slice())
-
-            jacobians.append(jac_self)
-
-        if jac_other is not None:
-            if isinstance(other, Quantity):
-                # Ensure other's uncertainty is compatible with current backend/store
-                # If backends differ, we treat other as a new independent source in this backend
-                # to avoid Store mismatch errors.
-                # Simple check: compare backend types or try/except?
-                # We'll just force migration of std_dev to self._backend.
-
-                # Check if we need to migrate (optimization: mostly needed if stores differ)
-                # But to be safe and fix the 'axis index' error:
-                uc = other.uncertainty_obj
-
-                # We create a temporary uncertainty compatible with the current backend
-                # capturing the current std_dev values.
-                # Note: This breaks correlation tracking across the backend boundary!
-                # But cross-backend ops are rare/special boundaries.
-                val_std = self._backend.asarray(uc.std_dev)
-
-                # If uc was scalar but we are now vector (e.g. adding scalar python quantity to numpy vector)
-                # we might need broadcast?
-                # Quantity.__add__ broadcasting logic handled 'size'.
-                # But std_dev might still be scalar.
-                # backend.asarray(0.0) -> scalar array.
-
-                # If we are in NumpyBackend (vectorized), we expect std_dev to be array if size > 1.
-                # If val_std is scalar, and operation is sized, we must broadcast.
-                # However, jac_other handles mapping.
-                # If jac_other is 3x1 (broadcasting), then scalar input is fine.
-                # If jac_other is 3x3 (elementwise), then scalar input is wrong dimension for covariance block.
-
-                # If jac_other is "identity-like" (square), then input must be vector.
-                # We can check jac_other shape? No, abstract operator.
-
-                # We trust ensure_vector_slice logic via from_standard/register.
-                # If val_std is scalar, register_independent_array(scalar) -> slice(1).
-                # If jac_other is 3x3. Mismatch.
-
-                # Heuristic: If backend is array-capable and 'size' > 1, broadcast scalar std_dev.
-                out_size = self._backend.size(out_magnitude)
-                if out_size > 1 and self._backend.size(val_std) == 1:
-                    # Check if broadcasting is implied.
-                    # If we can broadcast, do it.
-                    # Create ones.
-                    try:
-                        ones = self._backend.ones((out_size,))
-                        val_std = self._backend.mul(ones, val_std)
-                    except Exception:
-                        pass
-
-                # Create temp uncertainty in current backend context
-                temp_uc = Uncertainty.from_standard(val_std)
-                in_slices.append(temp_uc.ensure_vector_slice())
-                jacobians.append(jac_other)
-            elif self._backend.is_array(other) or isinstance(
-                other, (int, float)
-            ):
-                pass
-
-        out_size = self._backend.size(out_magnitude)
-        out_slice = store.allocate(out_size)
-
-        store.update_from_propagation(out_slice, in_slices, jacobians)
-
-        # Compute std_dev from diagonal for the new Uncertainty object
-        out_cov = store.get_covariance_block(out_slice, out_slice)
-        diag = self._backend.sparse_diagonal(out_cov)
-
-        shape = self._backend.shape(out_magnitude)
-        std_dev_flat = self._backend.sqrt(diag)
-        std_dev = self._backend.reshape(std_dev_flat, shape)
-
-        return Uncertainty(
-            std_dev=cast("UncType", std_dev), vector_slice=out_slice
+        return self.uncertainty_obj.add(
+            other_unc,
+            jac_self=js,
+            jac_other=jo,
+            out_magnitude=out_magnitude,
         )
 
     def diff(self, variable: Quantity | str, order: int = 1) -> Quantity:
@@ -1207,6 +1124,8 @@ class Quantity(Generic[ValueType, UncType]):
                     self.magnitude,
                     other.magnitude,
                     new_magnitude,
+                    jac_self=other.magnitude,
+                    jac_other=self.magnitude,
                 )
             return self._fast_new(
                 new_magnitude,
@@ -1329,8 +1248,12 @@ class Quantity(Generic[ValueType, UncType]):
                     self.magnitude,
                     other.magnitude,
                     new_magnitude,
+                    jac_self=self._backend.truediv(1.0, other.magnitude),
+                    jac_other=self._backend.truediv(
+                        self._backend.mul(new_magnitude, -1.0),
+                        other.magnitude,
+                    ),
                 )
-
             return self._fast_new(
                 new_magnitude,
                 new_unit,
@@ -1369,7 +1292,7 @@ class Quantity(Generic[ValueType, UncType]):
 
         new_magnitude = self._backend.truediv(other, self.magnitude)
         new_unit = 1 / self.unit
-        other_uncertainty = Uncertainty(0.0)
+        other_uncertainty = Uncertainty.from_standard(0.0)
         new_uncertainty_obj = other_uncertainty.propagate_mul_div(
             self.uncertainty_obj, other, self.magnitude, new_magnitude
         )
@@ -1625,7 +1548,7 @@ class Quantity(Generic[ValueType, UncType]):
         """Moves the quantity and its uncertainty to the specified device."""
         new_mag = self._backend.to_device(self.magnitude, device)
         new_unc_val = self._backend.to_device(self.uncertainty, device)
-        new_unc = Uncertainty(new_unc_val)
+        new_unc = Uncertainty.from_standard(new_unc_val)
 
         return self._fast_new(
             new_mag,
@@ -1764,7 +1687,7 @@ class Quantity(Generic[ValueType, UncType]):
         # For now, we create a new trivial Uncertainty object for the slice
         # Losing correlation tracking for the slice is acceptable for this refactor stage
         # unless vector_slice logic is enhanced.
-        new_unc_obj = Uncertainty(new_unc_val)
+        new_unc_obj = Uncertainty.from_standard(new_unc_val)
 
         # If slicing a single element, we might get a scalar magnitude.
         # backend might need update if it was caching type info?

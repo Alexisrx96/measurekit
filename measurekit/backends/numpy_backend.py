@@ -38,8 +38,12 @@ class NumpyBackend(BackendOps):
             raise ImportError("NumPy is not available.")
 
     def is_array(self, obj: Any) -> bool:
-        """Checks if the object is a NumPy array."""
-        return isinstance(obj, np.ndarray)
+        """Checks if the object is a NumPy array or sparse matrix."""
+        if isinstance(obj, np.ndarray):
+            return True
+        if sparse is not None and sparse.issparse(obj):
+            return True
+        return False
 
     def is_tracing(self, obj: Any) -> bool:
         """NumPy backend does not support tracing."""
@@ -85,6 +89,8 @@ class NumpyBackend(BackendOps):
         self, x: Float[Array, ...], y: Float[Array, ...]
     ) -> Float[Array, ...]:
         """Element-wise power."""
+        if hasattr(x, "power"):
+            return x.power(y)
         return np.power(x, y)
 
     def sqrt(self, x: Float[Array, ...]) -> Float[Array, ...]:

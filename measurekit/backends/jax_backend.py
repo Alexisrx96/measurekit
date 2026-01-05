@@ -518,25 +518,43 @@ def register_jax_behavior():
             Quantity.tree_unflatten,
         )
 
-        from measurekit.domain.measurement.uncertainty import Uncertainty
+        from measurekit.domain.measurement.uncertainty import (
+            CovarianceModel,
+            Uncertainty,
+            VarianceModel,
+        )
 
-        def unc_flatten(unc):
-            keys = tuple(sorted(unc.lineage.keys()))
-            values = tuple(unc.lineage[k] for k in keys)
-            return (unc.std_dev, values), (unc.vector_slice, keys)
+        def cov_flatten(m):
+            keys = tuple(sorted(m.lineage.keys()))
+            values = tuple(m.lineage[k] for k in keys)
+            return (m.std_dev_internal, values), (m.vector_slice, keys)
 
-        def unc_unflatten(aux, children):
+        def cov_unflatten(aux, children):
             vector_slice, keys = aux
             std_dev, values = children
             lineage = dict(zip(keys, values))
-            return Uncertainty(
-                std_dev=std_dev, lineage=lineage, vector_slice=vector_slice
+            return CovarianceModel(
+                std_dev_internal=std_dev,
+                lineage=lineage,
+                vector_slice=vector_slice,
             )
 
         jax.tree_util.register_pytree_node(
-            Uncertainty,
-            unc_flatten,
-            unc_unflatten,
+            CovarianceModel,
+            cov_flatten,
+            cov_unflatten,
+        )
+
+        def var_flatten(m):
+            return (m.variance,), ()
+
+        def var_unflatten(aux, children):
+            return VarianceModel(variance=children[0])
+
+        jax.tree_util.register_pytree_node(
+            VarianceModel,
+            var_flatten,
+            var_unflatten,
         )
 
     except (ImportError, NameError):

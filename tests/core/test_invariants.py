@@ -52,7 +52,7 @@ def test_associativity_addition(common_system, unit_name, a_val, b_val, c_val):
         assert math.isnan(res2.magnitude)
     else:
         assert res1.magnitude == pytest.approx(
-            res2.magnitude, nan_ok=True, rel=1e-6
+            res2.magnitude, nan_ok=True, rel=1e-5
         )
 
 

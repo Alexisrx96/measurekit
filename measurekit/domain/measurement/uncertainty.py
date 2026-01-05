@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -8,81 +10,263 @@ from measurekit.core.dispatcher import BackendManager
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-UncType = TypeVar(
-    "UncType"
-)  # Removed constraints to avoid numpy dependency in definition
+    from measurekit.core.protocols import BackendOps
 
-Numeric = Any  # Simplified
+UncType = TypeVar("UncType")
 
 
-@dataclass(frozen=True, slots=True)
-class Uncertainty(Generic[UncType]):
-    """Represents the uncertainty of a quantity with lineage tracking.
+class Uncertainty(ABC, Generic[UncType]):
+    """Abstract base class for uncertainty models.
 
-    Supports correlated error propagation by tracking the linear coefficients
-    of independent error sources (lineage).
+    Defines the interface for error propagation strategies.
+    Implementations include Correlated (Covariance) and Uncorrelated (Variance).
     """
 
-    std_dev: UncType
-    lineage: dict[str, UncType] = field(default_factory=dict)
-    vector_slice: slice | None = None
+    @property
+    @abstractmethod
+    def std_dev(self) -> UncType:
+        """Returns the standard deviation."""
+        ...
 
-    def __post_init__(self):
-        """Validates the data after initialization."""
-        # Use backend to check for negative std_dev
-        backend = BackendManager.get_backend(self.std_dev)
+    @abstractmethod
+    def add(
+        self,
+        other: Uncertainty[UncType],
+        jac_self: Any = 1.0,
+        jac_other: Any = 1.0,
+        out_magnitude: Any = None,
+    ) -> Uncertainty[UncType]:
+        """Propagates uncertainty for addition/subtraction."""
+        ...
 
-        # Skip validation if tracing (e.g. JAX JIT/VMAP) as it can't handle concrete checks
-        if self.vector_slice is None and not backend.is_tracing(self.std_dev):
-            # Check if any element is negative
-            try:
-                is_neg = backend.less(self.std_dev, 0)
-                if backend.any(is_neg):
-                    raise ValueError("Standard deviation cannot be negative.")
-            except (TypeError, ValueError):
-                # If comparison fails (e.g. undetected JAX Tracer), we skip validation
-                pass
+    def __add__(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
+        return self.add(other)
 
-        # Writeability check is specific to numpy arrays
-        # We can try/except or check is_array
-        if backend.is_array(self.std_dev):
-            # If backend is numpy, it might have flags
-            if hasattr(self.std_dev, "flags") and self.std_dev.flags.writeable:
-                self.std_dev.flags.writeable = False
+    def __sub__(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
+        return self.add(other, jac_other=-1.0)
 
-    def __repr__(self) -> str:
-        """Readable representation of the uncertainty."""
-        if self.vector_slice:
-            return f"Uncertainty(vector_slice={self.vector_slice})"
-        return f"Uncertainty(std_dev={self.std_dev})"
+    @abstractmethod
+    def propagate_mul_div(
+        self,
+        other: Uncertainty[Any],
+        val1: Any,
+        val2: Any,
+        result_value: Any,
+        jac_self: Any = None,
+        jac_other: Any = None,
+    ) -> Uncertainty[Any]:
+        """Propagates uncertainty for multiplication or division."""
+        ...
 
-    def __hash__(self) -> int:
-        """Returns a hash for the uncertainty object."""
-        if self.vector_slice:
-            return hash(self.vector_slice)
+    @abstractmethod
+    def power(
+        self, exponent: float, value: Any, jac: Any = None
+    ) -> Uncertainty[Any]:
+        """Propagates uncertainty for power."""
+        ...
 
-        backend = BackendManager.get_backend(self.std_dev)
-        if backend.is_array(self.std_dev):
-            # Try to convert to list if possible (e.g. numpy)
-            try:
-                std_dev_hashable = tuple(self.std_dev.tolist())
-            except AttributeError:
-                # Fallback
-                std_dev_hashable = str(self.std_dev)
-        else:
-            std_dev_hashable = self.std_dev
-
-        lineage_hashable = frozenset(self.lineage.items())
-        return hash((std_dev_hashable, lineage_hashable))
+    @abstractmethod
+    def scale(self, factor: float | NDArray[Any]) -> Uncertainty[UncType]:
+        """Scales the uncertainty by a factor."""
+        ...
 
     @classmethod
     def from_standard(
         cls, std_dev: UncType, measurement_id: str | None = None
     ) -> Uncertainty[UncType]:
-        """Creates an uncertainty from a standard deviation.
+        """Factory method to create the appropriate uncertainty model.
 
-        If std_dev is an array, it registers it with CovarianceStore.
+        Checks the global/context propagation mode to decide whether to
+        instantiate a CovarianceModel (correlated) or a VarianceModel (uncorrelated).
         """
+        from measurekit.application.context import get_propagation_mode
+
+        mode = get_propagation_mode()
+        if mode == "uncorrelated":
+            return VarianceModel.from_standard(std_dev)
+        return CovarianceModel.from_standard(std_dev, measurement_id)
+
+
+@dataclass(frozen=True, slots=True)
+class VarianceModel(Uncertainty[UncType]):
+    """Uncorrelated uncertainty model (Variance only).
+
+    Stores the variance (std_dev^2) and performs element-wise operations.
+    Space complexity: O(N).
+    """
+
+    variance: UncType
+
+    @property
+    def std_dev(self) -> UncType:
+        backend = BackendManager.get_backend(self.variance)
+        return cast("UncType", backend.sqrt(self.variance))
+
+    @classmethod
+    def from_standard(cls, std_dev: UncType) -> VarianceModel[UncType]:
+        backend = BackendManager.get_backend(std_dev)
+        # Handle zero variance safely
+        var = backend.pow(std_dev, 2)
+        return cls(variance=var)
+
+    def _apply_jacobian(self, var: Any, jac: Any, backend: BackendOps) -> Any:
+        """Applies a Jacobian to a variance vector: var_out = (J^2) @ var_in.
+
+        For uncorrelated propagation, we only care about the variance mapping.
+        If J is a matrix, this is a linear transformation of variances.
+        """
+        if jac is None:
+            return var
+
+        # Elements of Jacobian squared
+        jac_sq = backend.pow(jac, 2)
+
+        if not backend.is_array(var) and not backend.is_array(jac):
+            # Scalar case
+            return backend.mul(jac_sq, var)
+
+        # Vector case
+        # Ensure var is a flat vector for math if it's an array
+        if backend.is_array(var):
+            original_shape = backend.shape(var)
+            size = backend.size(var)
+            var_flat = backend.reshape(var, (size, 1))
+        else:
+            # Broadcast scalar to match Jacobian column count if possible
+            # But sparse_matmul usually wants a vector.
+            # If jac is (M, N), var should be (N, 1).
+            # We don't know N easily from jac here without backend.shape.
+            # Most cases where jac is matrix, var is already vector.
+            # If not, let's try to convert to array first.
+            var_flat = backend.reshape(backend.asarray(var), (1, 1))
+            original_shape = ()
+
+        if not backend.is_array(jac):
+            # Scalar jacobian, vector variance
+            return backend.mul(jac_sq, var)
+
+        # Matrix jacobian, vector variance
+        # result = J_sq @ var_flat
+        try:
+            res = backend.sparse_matmul(jac_sq, var_flat)
+        except (ValueError, TypeError):
+            # Fallback for scalar/matrix mismatch
+            res = backend.mul(jac_sq, var)
+            if hasattr(res, "diagonal"):
+                res = res.diagonal()
+            if hasattr(res, "todense"):
+                res = res.todense()
+
+        # Reshape back to match input or broadcasted output
+        return (
+            backend.reshape(res, original_shape)
+            if original_shape != ()
+            else backend.reshape(res, ())
+        )
+
+    def add(
+        self,
+        other: Uncertainty[UncType],
+        jac_self: Any = 1.0,
+        jac_other: Any = 1.0,
+        out_magnitude: Any = None,
+    ) -> VarianceModel[UncType]:
+        backend = BackendManager.get_backend(self.variance)
+
+        # Ensure other has variance
+        if isinstance(other, VarianceModel):
+            other_var = other.variance
+        else:
+            other_var = backend.pow(other.std_dev, 2)
+
+        v_self = self._apply_jacobian(self.variance, jac_self, backend)
+        v_other = self._apply_jacobian(other_var, jac_other, backend)
+
+        new_var = backend.add(v_self, v_other)
+        return VarianceModel(new_var)
+
+    def propagate_mul_div(
+        self,
+        other: Uncertainty[Any],
+        val1: Any,
+        val2: Any,
+        result_value: Any,
+        jac_self: Any = None,
+        jac_other: Any = None,
+    ) -> VarianceModel[Any]:
+        backend = BackendManager.get_backend(val1)
+
+        if jac_self is None or jac_other is None:
+            # Fallback calculation of Jacobians
+            is_v2_zero = backend.all(backend.equal(val2, 0))
+            is_division = False
+            try:
+                if not is_v2_zero:
+                    quotient = backend.truediv(val1, val2)
+                    if backend.allclose(result_value, quotient):
+                        is_division = True
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+            if is_division:
+                jac_self = backend.truediv(1.0, val2)
+                denom = backend.pow(val2, 2)
+                jac_other = backend.truediv(backend.mul(val1, -1.0), denom)
+            else:
+                jac_self = val2
+                jac_other = val1
+
+        return self.add(other, jac_self, jac_other, out_magnitude=result_value)
+
+    def power(
+        self, exponent: float, value: Any, jac: Any = None
+    ) -> VarianceModel[Any]:
+        backend = BackendManager.get_backend(value)
+        if jac is None:
+            term = backend.pow(value, exponent - 1)
+            jac = backend.mul(term, exponent)
+
+        new_var = self._apply_jacobian(self.variance, jac, backend)
+        return VarianceModel(new_var)
+
+    def scale(self, factor: float | NDArray[Any]) -> VarianceModel[UncType]:
+        backend = BackendManager.get_backend(factor)
+        new_var = backend.mul(self.variance, backend.pow(factor, 2))
+        return VarianceModel(new_var)
+
+    def __hash__(self) -> int:
+        """Hash implementation for VarianceModel."""
+        # Check if variance is an array
+        from measurekit.core.dispatcher import BackendManager
+
+        backend = BackendManager.get_backend(self.variance)
+        if backend.is_array(self.variance):
+            raise TypeError(
+                "unhashable type: 'VarianceModel' with array variance"
+            )
+        return hash(self.variance)
+
+
+@dataclass(frozen=True, slots=True)
+class CovarianceModel(Uncertainty[UncType]):
+    """Correlated uncertainty model (Lineage or Covariance Matrix).
+
+    Tracks correlations using a lineage dictionary for scalars
+    and a global CovarianceStore for vectors.
+    """
+
+    std_dev_internal: UncType
+    lineage: dict[str, UncType] = field(default_factory=dict)
+    vector_slice: slice | None = None
+
+    @property
+    def std_dev(self) -> UncType:
+        return self.std_dev_internal
+
+    @classmethod
+    def from_standard(
+        cls, std_dev: UncType, measurement_id: str | None = None
+    ) -> CovarianceModel[UncType]:
         backend = BackendManager.get_backend(std_dev)
 
         if backend.is_array(std_dev):
@@ -92,207 +276,206 @@ class Uncertainty(Generic[UncType]):
 
             store = ensure_store(backend)
             slc = store.register_independent_array(std_dev)
-            return cls(std_dev=std_dev, vector_slice=slc)
-
-        import uuid
+            return cls(std_dev_internal=std_dev, vector_slice=slc)
 
         uid = measurement_id or str(uuid.uuid4())
-        # Check for non-zero (backend aware)
         is_pos = backend.greater(std_dev, 0)
         if backend.any(is_pos):
             lineage = {uid: std_dev}
         else:
             lineage = {}
 
-        return cls(std_dev=std_dev, lineage=lineage)
+        return cls(std_dev_internal=std_dev, lineage=lineage)
 
-    def ensure_vector_slice(self) -> slice:
-        """Returns the existing vector slice or registers if it's a scalar."""
+    def __hash__(self) -> int:
+        """Hash implementation for CovarianceModel."""
+        # lineage is a dict, so we convert to items tuple
+        lineage_items = tuple(sorted(self.lineage.items()))
+        # Handle unhashable std_dev_internal (arrays)
+        from measurekit.core.dispatcher import BackendManager
+
+        backend = BackendManager.get_backend(self.std_dev_internal)
+        if backend.is_array(self.std_dev_internal):
+            raise TypeError(
+                "unhashable type: 'CovarianceModel' with array std_dev"
+            )
+
+        return hash((self.std_dev_internal, lineage_items, self.vector_slice))
+
+    def ensure_vector_slice(self, backend: BackendOps | None = None) -> slice:
         if self.vector_slice:
             return self.vector_slice
-
-        # Lazy import because CovarianceStore depends on numpy
         from measurekit.domain.measurement.vectorized_uncertainty import (
             ensure_store,
         )
 
-        backend = BackendManager.get_backend(self.std_dev)
+        if backend is None:
+            backend = BackendManager.get_backend(self.std_dev_internal)
         store = ensure_store(backend)
-        slc = store.register_independent_array(self.std_dev)
-        return slc
+        return store.register_independent_array(self.std_dev_internal)
 
-    def _compute_std_dev(self, lineage: dict[str, UncType]) -> UncType:
-        """Computes total std_dev from lineage using sum of squares."""
+    def _compute_std_dev(
+        self, lineage: dict[str, UncType], backend: BackendOps
+    ) -> UncType:
         if not lineage:
             return cast("UncType", 0.0)
-
-        # We need a backend. Pick one from the first value.
         values = list(lineage.values())
-        backend = BackendManager.get_backend(values[0])
-
         squares = [backend.pow(v, 2) for v in values]
-
-        # Sum squares
         sum_sq = squares[0]
         for s in squares[1:]:
             sum_sq = backend.add(sum_sq, s)
-
         return cast("UncType", backend.sqrt(sum_sq))
 
     def add(
-        self, other: Uncertainty[UncType], scale: float = 1.0
+        self,
+        other: Uncertainty[UncType],
+        jac_self: Any = 1.0,
+        jac_other: Any = 1.0,
+        out_magnitude: Any = None,
     ) -> Uncertainty[UncType]:
-        """Propagates uncertainty for addition/subtraction (correlated)."""
-        new_lineage = self.lineage.copy()
-        backend = BackendManager.get_backend(self.std_dev)
+        backend = BackendManager.get_backend(self.std_dev_internal)
 
-        for uid, coeff in other.lineage.items():
-            # Get backend for the other coefficient
-            bk_coeff = BackendManager.get_backend(coeff)
-            val = bk_coeff.mul(coeff, scale)
+        # Vector Path
+        if (
+            out_magnitude is not None
+            and backend.is_array(out_magnitude)
+            and backend.size(out_magnitude) > 1
+        ):
+            from measurekit.domain.measurement.vectorized_uncertainty import (
+                ensure_store,
+            )
 
+            store = ensure_store(backend)
+
+            in_slices = []
+            jacobians = []
+
+            # Handle Self
+            in_slices.append(self.ensure_vector_slice(backend))
+            jacobians.append(jac_self)
+
+            # Handle Other
+            if isinstance(other, CovarianceModel):
+                in_slices.append(other.ensure_vector_slice(backend))
+                jacobians.append(jac_other)
+            else:
+                # Independent source for cross-model or simple inputs
+                slc = store.register_independent_array(other.std_dev)
+                in_slices.append(slc)
+                jacobians.append(jac_other)
+
+            out_size = backend.size(out_magnitude)
+            out_slice = store.allocate(out_size)
+            store.update_from_propagation(out_slice, in_slices, jacobians)
+
+            out_cov = store.get_covariance_block(out_slice, out_slice)
+            diag = backend.sparse_diagonal(out_cov)
+            std_dev = backend.reshape(
+                backend.sqrt(diag), backend.shape(out_magnitude)
+            )
+
+            return CovarianceModel(
+                std_dev_internal=std_dev, vector_slice=out_slice
+            )
+
+        # Scalar Path (Lineage)
+        other_lineage = (
+            other.lineage
+            if isinstance(other, CovarianceModel)
+            else {str(uuid.uuid4()): other.std_dev}
+        )
+
+        new_lineage = {}
+        for uid, coeff in self.lineage.items():
+            new_lineage[uid] = backend.mul(coeff, jac_self)
+
+        for uid, coeff in other_lineage.items():
+            val = backend.mul(coeff, jac_other)
             if uid in new_lineage:
-                current = new_lineage[uid]
-                bk_curr = BackendManager.get_backend(current)
-                new_lineage[uid] = bk_curr.add(current, val)
+                new_lineage[uid] = backend.add(new_lineage[uid], val)
             else:
                 new_lineage[uid] = val
 
-        # Clean up zero terms and build filtered lineage
         filtered_lineage = {
             k: v
             for k, v in new_lineage.items()
-            if (bk := BackendManager.get_backend(v)).any(bk.not_equal(v, 0))
+            if backend.any(backend.not_equal(v, 0))
         }
+        new_std = self._compute_std_dev(filtered_lineage, backend)
 
-        return Uncertainty(
-            std_dev=self._compute_std_dev(filtered_lineage),
-            lineage=filtered_lineage,
+        if (
+            backend.is_array(out_magnitude)
+            and backend.shape(out_magnitude) != ()
+        ):
+            new_std = backend.reshape(new_std, backend.shape(out_magnitude))
+
+        return CovarianceModel(
+            std_dev_internal=new_std, lineage=filtered_lineage
         )
-
-    def __add__(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
-        """Alias for add()."""
-        return self.add(other)
-
-    def __sub__(self, other: Uncertainty[UncType]) -> Uncertainty[UncType]:
-        """Propagates uncertainty for subtraction."""
-        return self.add(other, scale=-1.0)
 
     def propagate_mul_div(
-        self, other: Uncertainty[Any], val1: Any, val2: Any, result_value: Any
-    ) -> Uncertainty[Any]:
-        """Correlated propagation for multiplication or division."""
+        self,
+        other: Uncertainty[Any],
+        val1: Any,
+        val2: Any,
+        result_value: Any,
+        jac_self: Any = None,
+        jac_other: Any = None,
+    ) -> CovarianceModel[Any]:
         backend = BackendManager.get_backend(val1)
+        if jac_self is None or jac_other is None:
+            is_v1_zero = backend.all(backend.equal(val1, 0))
+            is_v2_zero = backend.all(backend.equal(val2, 0))
+            if is_v1_zero and is_v2_zero:
+                return CovarianceModel(backend.mul(result_value, 0))
 
-        # Check for zero
-        # if val1 == 0 and val2 == 0 ...
-        # Use backend logic
-        is_v1_zero = backend.all(backend.equal(val1, 0))
-        is_v2_zero = backend.all(backend.equal(val2, 0))
+            is_division = False
+            try:
+                if not is_v2_zero:
+                    quotient = backend.truediv(val1, val2)
+                    if backend.allclose(result_value, quotient):
+                        is_division = True
+            except (ValueError, TypeError, AttributeError):
+                pass
 
-        if is_v1_zero and is_v2_zero:
-            if backend.is_array(result_value):
-                # Create zeros like result_value
-                # shape = backend.shape(result_value)
-                # zeros = backend.zeros(shape) # We don't have zeros in protocol yet?
-                # fallback: mul(result_value, 0)
-                return Uncertainty(backend.mul(result_value, 0))
-            return Uncertainty(0.0)
-
-        # Check if it's division by looking at result_value vs val1*val2
-        is_division = False
-        try:
-            # result_value approx val1 / val2
-            # Use a slightly more robust check
-            # backend.allclose?
-            if backend.all(backend.not_equal(val2, 0)):
-                quotient = backend.truediv(val1, val2)
-                if backend.allclose(result_value, quotient):
-                    is_division = True
-        except (ValueError, TypeError, AttributeError):
-            pass
-
-        if is_division:
-            # z = x/y => dz = (1/y)dx - (x/y^2)dy
-            # f_x = 1.0 / val2
-            f_x = backend.truediv(1.0, val2)
-
-            # f_y = -val1 / (val2**2)
-            denom = backend.pow(val2, 2)
-            num = backend.mul(val1, -1.0)
-            f_y = backend.truediv(num, denom)
-        else:
-            # z = x*y => dz = y*dx + x*dy
-            f_x = val2
-            f_y = val1
-
-        new_lineage = {}
-        for uid, coeff in self.lineage.items():
-            # new_coeff = f_x * coeff
-            bk = BackendManager.get_backend(coeff)
-            new_lineage[uid] = bk.mul(coeff, f_x)
-
-        for uid, coeff in other.lineage.items():
-            # val = f_y * coeff
-            bk = BackendManager.get_backend(coeff)
-            val = bk.mul(coeff, f_y)
-
-            if uid in new_lineage:
-                curr = new_lineage[uid]
-                bk_curr = BackendManager.get_backend(curr)
-                new_lineage[uid] = bk_curr.add(curr, val)
+            if is_division:
+                jac_self = backend.truediv(1.0, val2)
+                denom = backend.pow(val2, 2)
+                jac_other = backend.truediv(backend.mul(val1, -1.0), denom)
             else:
-                new_lineage[uid] = val
+                jac_self = val2
+                jac_other = val1
 
-        filtered_lineage = {}
-        for k, v in new_lineage.items():
-            bk = BackendManager.get_backend(v)
-            if bk.any(bk.not_equal(v, 0)):
-                filtered_lineage[k] = v
-
-        return Uncertainty(
-            std_dev=self._compute_std_dev(filtered_lineage),
-            lineage=filtered_lineage,
+        return cast(
+            "CovarianceModel",
+            self.add(other, jac_self, jac_other, out_magnitude=result_value),
         )
 
-    def power(self, exponent: float, value: Any) -> Uncertainty[Any]:
-        """Correlated propagation for power: z = x^n => dz = n * x^(n-1) * dx."""
+    def power(
+        self, exponent: float, value: Any, jac: Any = None
+    ) -> CovarianceModel[Any]:
         backend = BackendManager.get_backend(value)
-        if backend.any(backend.equal(value, 0)):
-            return Uncertainty(0.0)
+        if jac is None:
+            term = backend.pow(value, exponent - 1)
+            jac = backend.mul(term, exponent)
 
-        # deriv = exponent * (value ** (exponent - 1))
-        term = backend.pow(value, exponent - 1)
-        deriv = backend.mul(term, exponent)
+        new_lineage = {
+            uid: backend.mul(coeff, jac) for uid, coeff in self.lineage.items()
+        }
+        filtered = {
+            k: v
+            for k, v in new_lineage.items()
+            if backend.any(backend.not_equal(v, 0))
+        }
+        new_std = self._compute_std_dev(filtered, backend)
 
-        new_lineage = {}
-        for uid, coeff in self.lineage.items():
-            bk = BackendManager.get_backend(coeff)
-            new_lineage[uid] = bk.mul(coeff, deriv)
+        return CovarianceModel(std_dev_internal=new_std, lineage=filtered)
 
-        filtered_lineage = {}
-        for k, v in new_lineage.items():
-            bk = BackendManager.get_backend(v)
-            if bk.any(bk.not_equal(v, 0)):
-                filtered_lineage[k] = v
-
-        return Uncertainty(
-            std_dev=self._compute_std_dev(filtered_lineage),
-            lineage=filtered_lineage,
-        )
-
-    def scale(self, factor: float | NDArray[Any]) -> Uncertainty[UncType]:
-        """Scales the uncertainty by a factor."""
-        # Use abs(factor) for std_dev but original factor for lineage
+    def scale(self, factor: float | NDArray[Any]) -> CovarianceModel[UncType]:
         backend = BackendManager.get_backend(factor)
-
-        new_lineage = {}
-        for uid, coeff in self.lineage.items():
-            bk = BackendManager.get_backend(coeff)
-            new_lineage[uid] = bk.mul(coeff, factor)
-
-        bk_std = BackendManager.get_backend(self.std_dev)
-        abs_factor = backend.abs(factor)
-        new_std = bk_std.mul(self.std_dev, abs_factor)
-
-        return Uncertainty(std_dev=new_std, lineage=new_lineage)
+        new_lineage = {
+            uid: backend.mul(coeff, factor)
+            for uid, coeff in self.lineage.items()
+        }
+        new_std = backend.mul(self.std_dev_internal, backend.abs(factor))
+        return CovarianceModel(std_dev_internal=new_std, lineage=new_lineage)

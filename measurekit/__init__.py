@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 from measurekit.application.context import (
     get_current_system,
+    get_propagation_mode,
+    propagation_mode,
     use_system,
 )
 from measurekit.application.factories import QuantityFactory
@@ -27,6 +29,21 @@ from measurekit.domain.measurement.units import get_default_system, units
 # Expose the primary factory method (Inbound Port)
 # QuantityFactory will use get_default_system() internally if no system provided.
 Q_ = QuantityFactory()
+
+
+# Configuration Access
+class ConfigProxy:
+    @property
+    def propagation_mode(self):
+        return propagation_mode
+
+    def set_propagation_mode(self, mode: str):
+        # This could set a global default if needed, but for now we use context
+        # Or we could have a setter that updates the ContextVar's default.
+        return propagation_mode(mode)
+
+
+config = ConfigProxy()
 
 
 # 3. Expose the `get_unit` function from the configured system instance.

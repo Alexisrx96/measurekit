@@ -214,28 +214,35 @@ class PythonBackend(BackendOps):
         return ()
 
     def reshape(self, obj: Any, shape: tuple[int, ...]) -> Any:
-        if shape == ():
+        if shape == () or shape == (1,):
             if isinstance(obj, (list, tuple)):
                 if len(obj) == 1:
                     return obj[0]
                 if len(obj) == 0:
-                    return 0.0  # obscure case
+                    return 0.0
             return obj
 
-        # Flatten logic for (N,)
+        # Flatten logic for (N,) or (-1,)
         if len(shape) == 1:
             total = shape[0]
             if isinstance(obj, (list, tuple)):
                 # If nested, flatten
                 if len(obj) > 0 and isinstance(obj[0], (list, tuple)):
                     flat = [item for sublist in obj for item in sublist]
-                    if len(flat) == total:
-                        return flat
-                if len(obj) == total:
-                    return obj
+                else:
+                    flat = list(obj)
+
+                if total == -1 or len(flat) == total:
+                    return flat
+
             # Scalar to vector
-            if total == 1 and not isinstance(obj, (list, tuple)):
+            if (total == 1 or total == -1) and not isinstance(
+                obj, (list, tuple)
+            ):
                 return [obj]
+
+        if shape == (1, 1) and not isinstance(obj, (list, tuple)):
+            return [[obj]]
 
         raise NotImplementedError(
             f"Reshape {shape} not fully supported in PythonBackend for obj {obj}"
