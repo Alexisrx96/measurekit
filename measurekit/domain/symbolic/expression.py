@@ -198,7 +198,7 @@ class SymbolicExpression:
         """
         if not hasattr(variable, "unit"):
             raise TypeError(
-                "Differentiation variable must be a SymbolicQuantity with units."
+                "Differentiation variable must be a SymbolicQuantity"
             )
 
         # 1. SymPy Operation

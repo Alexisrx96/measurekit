@@ -4,7 +4,7 @@ This module contains the `Quantity` class, which bundles a numerical value
 (magnitude), a `CompoundUnit`, and an optional `Uncertainty`. It is the central
 object that users interact with. The class overloads arithmetic, comparison,
 and other operators to provide intuitive, unit-aware calculations, automatic
-error propagation, and seamless integration with various backends (NumPy, etc.).
+    error propagation, and seamless integration with various backends.
 """
 
 from __future__ import annotations
@@ -28,8 +28,9 @@ from measurekit.core.dispatcher import BackendManager
 
 if TYPE_CHECKING:
     from measurekit.core.protocols import BackendOps
+    from measurekit.domain.measurement.dimensions import Dimension
+
 from measurekit.domain.exceptions import IncompatibleUnitsError
-from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.uncertainty import Uncertainty
 from measurekit.domain.measurement.units import (
     CompoundUnit,
@@ -130,39 +131,43 @@ class Quantity(Generic[ValueType, UncType]):
         backend = BackendManager.get_backend(self.magnitude)
         object.__setattr__(self, "_backend", backend)
 
-    def tree_flatten(self):
+    def tree_flatten(
+        self,
+    ) -> tuple[tuple[Any, Any], tuple[Any, Any, Any, Any]]:
         """Flattens the Quantity for JAX Pytree registration."""
-        # Children: the dynamic/differentiable parts (magnitude)
-        # Note: uncertainty is also dynamic if present?
-        # If uncertainty is used in gradients, it should be a child.
-        # However, uncertainty logic in functional is currently somewhat separate.
-        # But if we want JIT compatibility for uncertainty propagation, it must be traced.
-        # self.uncertainty_obj contains 'std_dev'.
-        return (self.magnitude, self.uncertainty_obj), (
+        # Children: raw magnitude and uncertainty arrays only
+        return (self.magnitude, self.uncertainty), (
             self.unit,
             self.system,
             self.fraction,
+            self.symbol,
         )
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(
+        cls, aux_data: Any, children: tuple[Any, Any]
+    ) -> Quantity:
         """Reconstructs the Quantity from JAX flatten results."""
-        magnitude, uncertainty_obj = children
-        unit, system, _ = aux_data  # fraction unused
+        magnitude, uncertainty = children
+        unit, system, fraction, symbol = aux_data
 
-        # Determine backend from magnitude (likely a JAX Tracer or Array)
-        # We use _fast_new to skip checks
-        # But we need 'dimension'.
+        # Re-derive metadata
         dimension = unit.dimension(system)
-
-        # We need backend ops.
-        # If magnitude is Tracer, BackendManager might fail or return NumpyBackend (default).
-        # We trust BackendManager or pass explicitly?
-        # Ideally BackendManager handles Tracers.
         backend = BackendManager.get_backend(magnitude)
 
+        # Reconstruct uncertainty object from standard deviation
+        uncertainty_obj = Uncertainty.from_standard(uncertainty)
+
+        # Use _fast_new to skip validation overhead
         return cls._fast_new(
-            magnitude, unit, uncertainty_obj, system, dimension, backend
+            magnitude,
+            unit,
+            uncertainty_obj,
+            system,
+            dimension,
+            backend,
+            fraction=fraction,
+            symbol=symbol,
         )
 
     @classmethod
@@ -174,15 +179,18 @@ class Quantity(Generic[ValueType, UncType]):
         system: UnitSystem,
         dimension: Dimension,
         backend: BackendOps | None = None,
+        fraction: Fraction | None = None,
+        symbol: str | None = None,
     ) -> Self:
-        """Bypasses __post_init__ and validation for high-performance creation."""
+        """Bypasses __post_init__ for high-performance creation."""
         obj = object.__new__(cls)
         object.__setattr__(obj, "magnitude", value)
         object.__setattr__(obj, "unit", unit)
         object.__setattr__(obj, "uncertainty_obj", uncertainty)
         object.__setattr__(obj, "system", system)
         object.__setattr__(obj, "dimension", dimension)
-        object.__setattr__(obj, "fraction", None)
+        object.__setattr__(obj, "fraction", fraction)
+        object.__setattr__(obj, "symbol", symbol)
 
         if backend is None:
             backend = BackendManager.get_backend(value)
@@ -217,19 +225,20 @@ class Quantity(Generic[ValueType, UncType]):
         backend = BackendManager.get_backend(value)
 
         # Ensure uncertainty matches backend type if array
-        if backend.is_array(value):
-            if not isinstance(
-                uncertainty, Uncertainty
-            ) and not backend.is_array(uncertainty):
-                try:
-                    shape = backend.shape(value)
-                    # Create array of ones with same shape
-                    ones = backend.ones(shape)
-                    # Multiply by scalar uncertainty to broadcast
-                    uncertainty = backend.mul(ones, uncertainty)
-                except (AttributeError, NotImplementedError):
-                    # Fallback if backend implementation is incomplete
-                    pass
+        if (
+            backend.is_array(value)
+            and not isinstance(uncertainty, Uncertainty)
+            and not backend.is_array(uncertainty)
+        ):
+            try:
+                shape = backend.shape(value)
+                # Create array of ones with same shape
+                ones = backend.ones(shape)
+                # Multiply by scalar uncertainty to broadcast
+                uncertainty = backend.mul(ones, uncertainty)
+            except (AttributeError, NotImplementedError):
+                # Fallback if backend implementation is incomplete
+                pass
 
         uncertainty_obj = (
             uncertainty
@@ -239,11 +248,10 @@ class Quantity(Generic[ValueType, UncType]):
 
         # Check for fraction support (Python backend only usually)
         frac = None
+        frac = None
         if not backend.is_array(value):
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 frac = Fraction(str(value))
-            except (ValueError, TypeError):
-                pass
 
         return cls(
             magnitude=cast("ValueType", value),
@@ -309,7 +317,7 @@ class Quantity(Generic[ValueType, UncType]):
         # Note: If magnitude is array, it might not be hashable.
         # Python arrays are not hashable. Tuple is.
         # We rely on self.magnitude.__hash__()
-        # If not hashable, it will raise TypeError which is expected behavior for mutable types.
+        # If not hashable, raises TypeError (expected for mutable types).
         try:
             return hash((self.magnitude, self.unit, self.uncertainty_obj))
         except TypeError:
@@ -318,7 +326,7 @@ class Quantity(Generic[ValueType, UncType]):
             # Usually Quantity with array magnitude != hashable.
             raise TypeError(
                 "unhashable type: 'Quantity' with unhashable magnitude"
-            )
+            ) from None
 
     @property
     def _has_uncertainty(self) -> bool:
@@ -329,10 +337,10 @@ class Quantity(Generic[ValueType, UncType]):
             if self._backend.is_array(unc):
                 return bool(self._backend.any(self._backend.not_equal(unc, 0)))
 
-            # Standard check (covers safe scalars and Python lists if backend matches)
+            # Standard check (covers safe scalars and lists if backend matches)
             res = unc != 0
 
-            # Handle Truth Value Ambiguity (e.g. Python backend with Numpy array uncertainty)
+            # Handle Truth Value Ambiguity (e.g. Python backend + Numpy array)
             try:
                 if res:
                     return True
@@ -346,6 +354,7 @@ class Quantity(Generic[ValueType, UncType]):
             return True  # Fallback for safety
 
     def __repr__(self) -> str:
+        """Returns string representation."""
         unit_str = self.unit.to_string(self.system)
         if self._has_uncertainty:
             return (
@@ -407,8 +416,8 @@ class Quantity(Generic[ValueType, UncType]):
         if mag_fmt:
             formatted_mag = format(self.magnitude, mag_fmt)
             if self._has_uncertainty:
-                # Formatting array uncertainty might fail if format spec is for scalar
-                # Python format() on array delegates to array.__format__ which is limited.
+                # Formatting array uncertainty might fail on scalar spec
+                # Python format() on array delegates to array.__format__ (limited)
                 # If unsafe, fallback to str?
                 try:
                     formatted_unc = format(self.uncertainty, mag_fmt)
@@ -445,9 +454,8 @@ class Quantity(Generic[ValueType, UncType]):
     ) -> Quantity[ValueType, UncType]:
         """Converts the quantity to a different unit or moves to a device."""
         if isinstance(target_unit, str):
-            # Check if target_unit is a device string (e.g. "cuda", "cpu", "mps")
-            # We assume units don't typically have these names exactly without prefixes.
-            # But more robustly, if target_unit is not in system and looks like a device:
+            # Check if target_unit is a device string (e.g. "cuda", "cpu")
+            # If target_unit is not in system and looks like a device:
             devices = {"cuda", "cpu", "mps"}
             if target_unit.lower() in devices or (
                 ":" in target_unit
@@ -466,12 +474,12 @@ class Quantity(Generic[ValueType, UncType]):
 
         # --- Polymorphic Conversion (Generic) ---
         # Handle cases where units are simple single-component units
-        # (e.g. Celsius -> Kelvin, Meters -> Feet) using their specific converters.
+        # (e.g. Celsius -> Kelvin) using specific converters.
         if (
             len(self.unit.exponents) == 1
-            and list(self.unit.exponents.values())[0] == 1
+            and next(iter(self.unit.exponents.values())) == 1
             and len(target_unit.exponents) == 1
-            and list(target_unit.exponents.values())[0] == 1
+            and next(iter(target_unit.exponents.values())) == 1
         ):
             source_name = next(iter(self.unit.exponents))
             target_name = next(iter(target_unit.exponents))
@@ -480,16 +488,15 @@ class Quantity(Generic[ValueType, UncType]):
             target_def = self.system.get_definition(target_name)
 
             if source_def and target_def:
-                # Delegate to converters: convert to base, then from base to target
-                # We assume converters handle the backend types or backend objects support ops
+                # Delegate to converters: to_base -> from_base
+                # We assume converters handle backend types.
                 base_val = source_def.converter.to_base(self.magnitude)
                 new_magnitude = target_def.converter.from_base(base_val)
 
                 # Uncertainty propagation:
                 # We need the scale factor (derivative).
                 # For Affine/Linear, access .scale.
-                # For Logarithmic, this is complex, but current logic assumes usage
-                # where we can approximate or fall back.
+                # For Logarithmic, assumes usage where we can approximate.
                 s_scale = getattr(source_def.converter, "scale", 1.0)
                 t_scale = getattr(target_def.converter, "scale", 1.0)
 
@@ -545,20 +552,16 @@ class Quantity(Generic[ValueType, UncType]):
         jac_other: Any = None,
     ) -> Uncertainty:
         """Helper to propagate vectorized uncertainty via the active Strategy."""
-        other_unc = (
-            other.uncertainty_obj
-            if isinstance(other, Quantity)
-            else Uncertainty.from_standard(0.0)
-        )
+        if isinstance(other, Quantity):
+            other_unc = other.uncertainty_obj
+        else:
+            other_unc = Uncertainty.from_standard(0.0)
         # Default Jacobians if they are None (often for scalar/constant operands)
         js = 1.0 if jac_self is None else jac_self
-        jo = (
-            0.0
-            if jac_other is None and not isinstance(other, Quantity)
-            else jac_other
-        )
-        if jo is None:
-            jo = 1.0
+        if jac_other is None and not isinstance(other, Quantity):
+            jo = 0.0
+        else:
+            jo = jac_other
 
         return self.uncertainty_obj.add(
             other_unc,
@@ -596,9 +599,10 @@ class Quantity(Generic[ValueType, UncType]):
         except Exception as e:
             # Fallback for array/tensor backends or non-symbolic magnitudes
             # For Phase 3, we focus on SymPy support.
+            # Within except, raise ... from e
             raise NotImplementedError(
-                f"Differentiation failed or not supported for this backend: {e}"
-            )
+                f"Differentiation failed or not supported: {e}"
+            ) from e
 
         # Update units: u_new = u_old / (u_var)^order
         new_exponents = dict(self.unit.exponents)
@@ -621,7 +625,7 @@ class Quantity(Generic[ValueType, UncType]):
             name, exp = next(iter(self.unit.exponents.items()))
             if exp == 1:
                 # Must exclude 'noprefix' check if key is there?
-                # CompoundUnit logic handles noprefix, but exponents might have it?
+                # CompoundUnit handles noprefix, exponents might have it?
                 # Usually exponents dict keys are purely unit names.
                 return self.system.get_definition(name).converter
         return None
@@ -694,7 +698,7 @@ class Quantity(Generic[ValueType, UncType]):
                 with contextlib.suppress(ValueError, TypeError):
                     res_mag = res_mag.item()
 
-            # Simplified uncertainty (assuming 1.0 correlation/scale propagation)
+            # Simplified uncertainty (assuming 1.0 correlation/scale prop)
             return Quantity.from_input(
                 res_mag, result_unit, self.system, uncertainty=0.0
             )
@@ -957,7 +961,7 @@ class Quantity(Generic[ValueType, UncType]):
 
         if self._backend.is_array(new_magnitude):
             size = self._backend.size(new_magnitude)
-            # In slow path, we assume arrays if is_array matches (simplification)
+            # In slow path, assume arrays if is_array matches
             j_self = self._backend.identity_operator(size)
             j_other = self._backend.identity_operator(size)
 
@@ -1029,16 +1033,15 @@ class Quantity(Generic[ValueType, UncType]):
 
                 # Broadcasting for subtraction
                 is_other_scalar = False
-                if isinstance(other, Quantity):
-                    if (
-                        self._backend.shape(other.magnitude) == ()
-                        or len(self._backend.shape(other.magnitude)) == 0
-                        or (
-                            hasattr(other.magnitude, "shape")
-                            and other.magnitude.shape == (1,)
-                        )
-                    ):
-                        is_other_scalar = True
+                if isinstance(other, Quantity) and (
+                    self._backend.shape(other.magnitude) == ()
+                    or len(self._backend.shape(other.magnitude)) == 0
+                    or (
+                        hasattr(other.magnitude, "shape")
+                        and other.magnitude.shape == (1,)
+                    )
+                ):
+                    is_other_scalar = True
 
                 if is_other_scalar:
                     j_other = self._backend.mul(
@@ -1119,7 +1122,12 @@ class Quantity(Generic[ValueType, UncType]):
             uncertainty=new_uncertainty_obj,
         )
 
+    def __rsub__(self, other: Any) -> Quantity:
+        """Right subtraction."""
+        return NotImplemented
+
     def __mul__(self, other: Any) -> Quantity:
+        """Multiplies two quantities."""
         if isinstance(other, (int, float, complex)) or self._backend.is_array(
             other
         ):
@@ -1257,6 +1265,7 @@ class Quantity(Generic[ValueType, UncType]):
         return NotImplemented
 
     def __truediv__(self, other: Any) -> Quantity:
+        """Divides two quantities."""
         if isinstance(other, (int, float, complex)) or self._backend.is_array(
             other
         ):
@@ -1327,8 +1336,6 @@ class Quantity(Generic[ValueType, UncType]):
                     j_self = self._backend.diags([recip_flat], [0])
 
                 # Term 2: -x/y^2 (coefficient for j_other)
-                # factor = - new_magnitude / other.magnitude  ? No (-x/y^2 = -(x/y)/y = -z/y)
-                # factor = - new_magnitude / other.magnitude
                 neg_z_over_y = self._backend.truediv(
                     self._backend.mul(new_magnitude, -1.0), other.magnitude
                 )
@@ -1412,6 +1419,7 @@ class Quantity(Generic[ValueType, UncType]):
         return NotImplemented
 
     def __pow__(self, exponent: float) -> Quantity:
+        """Raises quantity to power."""
         new_value = self._backend.pow(self.magnitude, exponent)
         new_unit = self.unit**exponent
         # Casting to float is tricky if it's array.
@@ -1432,8 +1440,8 @@ class Quantity(Generic[ValueType, UncType]):
     __rmul__ = __mul__
 
     def __rtruediv__(self, other: Any) -> Quantity:
-        # Note: We rely on the backend to handle division by zero (e.g. inf/nan)
-        # to ensure compatibility with JAX/Tracer environments where value checks are forbidden.
+        """Right division."""
+        # Note: Backend handles div by zero (inf/nan) usage (JAX/Tracer safe).
 
         new_magnitude = self._backend.truediv(other, self.magnitude)
         new_unit = 1 / self.unit
@@ -1531,9 +1539,8 @@ class Quantity(Generic[ValueType, UncType]):
                 if inputs[0] is self
                 else self.__rtruediv__(inputs[0])
             )
-        if ufunc == np.power:
-            if inputs[0] is self:
-                return self.__pow__(inputs[1])
+        if ufunc == np.power and inputs[0] is self:
+            return self.__pow__(inputs[1])
 
         # Unary math that changes unit
         if ufunc == np.sqrt:
@@ -1566,8 +1573,8 @@ class Quantity(Generic[ValueType, UncType]):
                     # The test registers 'rad' as dimensionless.
                     pass
 
-                # If dimensionless, units are dropped/cleared in result (e.g. sin(rad) -> 1)
-                # We verify dimensionless but result is pure number (dimensionless Quantity).
+                # If dimensionless, units are dropped/cleared
+                # Verify dimensionless; result is pure number.
                 if inp.dimension.is_dimensionless:
                     res_mag = ufunc(inp.magnitude, **kwargs)
                     return Quantity.from_input(
@@ -1717,21 +1724,24 @@ class Quantity(Generic[ValueType, UncType]):
             self.magnitude.backward(*args, **kwargs)
         else:
             raise TypeError(
-                f"Backend magnitude of type {type(self.magnitude)} does not support backward()"
+                f"Backend magnitude {type(self.magnitude)} no backward()"
             )
 
     # --- Representation ---
 
     def __int__(self) -> int:
+        """Converts to int."""
         return int(self.magnitude)
 
     def __round__(self, ndigits: int | None = None) -> Quantity:
+        """Rounds the quantity."""
         val = round(self.magnitude, ndigits)
         return Quantity.from_input(
             val, self.unit, self.system, self.uncertainty
         )
 
     def __floor__(self) -> Quantity:
+        """Returns floor of quantity."""
         import math
 
         return Quantity.from_input(
@@ -1742,6 +1752,7 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __ceil__(self) -> Quantity:
+        """Returns ceiling of quantity."""
         import math
 
         return Quantity.from_input(
@@ -1749,6 +1760,7 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     def __trunc__(self) -> Quantity:
+        """Truncates quantity."""
         import math
 
         return Quantity.from_input(
@@ -1774,6 +1786,7 @@ class Quantity(Generic[ValueType, UncType]):
     #         return self.magnitude
 
     def __float__(self) -> float:
+        """Converts to float."""
         return float(self.magnitude)  # May fail for arrays
 
     # --- Math & Vector Ops ---
@@ -1799,9 +1812,11 @@ class Quantity(Generic[ValueType, UncType]):
         return Quantity.from_input(mag, new_unit, self.system)
 
     def __len__(self) -> int:
+        """Returns length (if array)."""
         return len(self.magnitude)
 
     def __iter__(self):
+        """Iterates over elements."""
         # Yield quantities for each element
         # This is slow but correct for iteration
         for i in range(len(self)):
@@ -1823,7 +1838,7 @@ class Quantity(Generic[ValueType, UncType]):
         # Slicing uncertainty
         # If uncertainty is array, slice it.
         # If it's scalar, preserve it (it applies to all).
-        # We need to rely on backend or simple checks since we are in domain.
+        # Rely on backend or simple checks.
         # Check if uncertainty_obj.std_dev is array-like
         if hasattr(self.uncertainty, "__getitem__") and not isinstance(
             self.uncertainty, (str, float, int)
@@ -1850,8 +1865,8 @@ class Quantity(Generic[ValueType, UncType]):
             self.unit,
             new_unc_obj,
             self.system,
-            self.dimension,  # Re-use dimension as it doesn't change
-            self._backend,  # Backend explicitly passed
+            self.dimension,
+            self._backend,
         )
 
     def __setitem__(self, key: Any, value: Any) -> None:
@@ -1890,7 +1905,8 @@ class Quantity(Generic[ValueType, UncType]):
         return NotImplemented
 
     def __eq__(self, other: object) -> Any:
-        # Dataclass __eq__ is overridden to handle units logic if we want semantic equality
+        """Checks for equality."""
+        # Dataclass __eq__ overridden for semantic equality
         # But frozen dataclass uses fields.
         # We should allow semantic equality: 1 m == 100 cm
         if isinstance(other, Quantity):
