@@ -96,6 +96,9 @@ class Uncertainty(ABC, Generic[UncType]):
         # Auto-detect requirement for CovarianceModel
         backend = BackendManager.get_backend(std_dev)
         if backend.is_array(std_dev) and backend.size(std_dev) > 1:
+            # Check if all elements are zero to avoid unnecessary store registration
+            if not backend.any(backend.not_equal(std_dev, 0)):
+                return VarianceModel.from_standard(std_dev)
             return CovarianceModel.from_standard(std_dev, measurement_id)
 
         # Default to VarianceModel for scalars or simple cases
