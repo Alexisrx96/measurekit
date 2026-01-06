@@ -247,15 +247,17 @@ class TorchBackend(BackendOps):
 
     def eye(self, n: int, format: str = "csr", reference: Any = None) -> Any:
         """Returns an identity matrix."""
-        device = reference.device if hasattr(reference, "device") else None
-        return torch.eye(n, device=device)
+        device = getattr(reference, "device", None)
+        dtype = getattr(reference, "dtype", None)
+        return torch.eye(n, device=device, dtype=dtype)
 
     def sparse_eye(self, n: int, reference: Any = None) -> Any:
         """Returns a sparse identity matrix."""
-        device = reference.device if hasattr(reference, "device") else None
+        device = getattr(reference, "device", None)
+        dtype = getattr(reference, "dtype", None)
         # Manual construction for broader compatibility
         indices = torch.stack([torch.arange(n, device=device)] * 2)
-        values = torch.ones(n, device=device)
+        values = torch.ones(n, device=device, dtype=dtype)
         return torch.sparse_coo_tensor(indices, values, (n, n)).coalesce()
 
     def diags(
@@ -273,9 +275,13 @@ class TorchBackend(BackendOps):
             res = res + torch.diag(diagonals[i], diagonal=offsets[i])
         return res
 
-    def ones(self, shape: tuple[int, ...]) -> Float[Array, ...]:
+    def ones(
+        self, shape: tuple[int, ...], reference: Any = None
+    ) -> Float[Array, ...]:
         """Returns a tensor of ones."""
-        return torch.ones(shape)
+        device = getattr(reference, "device", None)
+        dtype = getattr(reference, "dtype", None)
+        return torch.ones(shape, device=device, dtype=dtype)
 
     def size(self, obj: Any) -> int:
         """Returns the total number of elements in the object."""
@@ -291,9 +297,9 @@ class TorchBackend(BackendOps):
 
     def identity_operator(self, size: int, reference: Any = None) -> Any:
         """Returns an identity operator."""
-        # Fixed logic to use reference.device
         device = getattr(reference, "device", None)
-        return torch.eye(size, device=device)
+        dtype = getattr(reference, "dtype", None)
+        return torch.eye(size, device=device, dtype=dtype)
 
     def diagonal_operator(self, diagonal: Any) -> Any:
         """Returns a diagonal operator from the given diagonal values."""
