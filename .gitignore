@@ -48,20 +48,10 @@ htmlcov/
 *.swo
 
 # Project specific temporary files
-*.log
 manual_sandbox/
-*.txt
+#*.log
+#*.txt
 !requirements.txt
-
-# Artifacts
-# benchmark_results.png
-# torch_fail.txt
-# backends_out.txt
-# pydantic_out.txt
-# all_skips.txt
-# invariants_fail.txt
-# test_out.txt
-# backends_test_out.txt
 
 # Documentation
 docs/_build/

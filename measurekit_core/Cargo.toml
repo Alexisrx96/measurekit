@@ -1,0 +1,13 @@
+[package]
+name = "measurekit_core"
+version = "0.1.0"
+edition = "2021" 
+
+[lib]
+name = "measurekit_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+# enabling "extension-module" is required for Python
+pyo3 = { version = "0.23", features = ["extension-module"] } 
+num-rational = "0.4"
