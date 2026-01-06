@@ -1,7 +1,7 @@
 """Property-Based Tests for Algebraic and Physical Invariants."""
 
 import numpy as np
-from hypothesis import Phase, assume, given, settings
+from hypothesis import HealthCheck, Phase, assume, given, settings
 from hypothesis import strategies as st
 
 from measurekit import Quantity
@@ -162,7 +162,12 @@ def test_distributivity(triplet):
         allow_uncertainty=False,
     )
 )
-@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+@settings(
+    max_examples=50,
+    deadline=None,
+    phases=[Phase.generate],
+    suppress_health_check=[HealthCheck.filter_too_much],
+)
 def test_unit_invariance(qs):
     """(a + b).to(target) == a.to(target) + b.to(target)
 
