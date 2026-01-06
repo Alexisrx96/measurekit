@@ -153,6 +153,10 @@ class VarianceModel(Uncertainty[UncType]):
     @property
     def std_dev(self) -> UncType:
         """Returns the standard deviation."""
+        # Handle JAX sentinel objects during tracing/structural validation
+        if type(self.variance) is object:
+            return self.variance
+
         backend = BackendManager.get_backend(self.variance)
         return cast("UncType", backend.sqrt(self.variance))
 
