@@ -29,6 +29,7 @@ SETTINGS = settings(max_examples=50, deadline=None)
         backend="numpy",
         unit_strategy=linear_units(),
         allow_uncertainty=False,
+        dtype=np.float64,
     )
 )
 @settings(max_examples=50, deadline=None, phases=[Phase.generate])
@@ -43,8 +44,8 @@ def test_commutativity_addition(qs):
         # Skip invalid shapes
         assume(False)
 
-    # Use loose tolerance for floating point
-    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-5, atol=1e-8)
+    # Use tight tolerance for float64
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-7, atol=1e-10)
     assert res1.unit == res2.unit
 
 
@@ -53,6 +54,7 @@ def test_commutativity_addition(qs):
         n=2,
         backend="numpy",
         allow_uncertainty=False,
+        dtype=np.float64,
     )
 )
 @settings(max_examples=50, deadline=None, phases=[Phase.generate])
@@ -65,7 +67,7 @@ def test_commutativity_multiplication(qs):
     except (ValueError, RuntimeError):
         assume(False)
 
-    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-5, atol=1e-8)
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-7, atol=1e-10)
     assert res1.unit == res2.unit
 
 
@@ -75,6 +77,7 @@ def test_commutativity_multiplication(qs):
         backend="numpy",
         unit_strategy=linear_units(),
         allow_uncertainty=False,
+        dtype=np.float64,
     )
 )
 @settings(max_examples=50, deadline=None, phases=[Phase.generate])
@@ -87,7 +90,8 @@ def test_associativity_addition(qs):
     except (ValueError, RuntimeError):
         assume(False)
 
-    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-4, atol=1e-7)
+    # Note: Even in float64, associativity can have very small differences
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-6, atol=1e-9)
 
 
 @given(
@@ -95,6 +99,7 @@ def test_associativity_addition(qs):
         n=3,
         backend="numpy",
         allow_uncertainty=False,
+        dtype=np.float64,
     )
 )
 @settings(max_examples=50, deadline=None, phases=[Phase.generate])
@@ -107,7 +112,7 @@ def test_associativity_multiplication(qs):
     except (ValueError, RuntimeError):
         assume(False)
 
-    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-4, atol=1e-7)
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-6, atol=1e-9)
     assert res1.unit == res2.unit
 
 
@@ -121,14 +126,18 @@ def distributivity_triplet(draw):
             backend="numpy",
             unit_strategy=linear_units(),
             allow_uncertainty=False,
+            dtype=np.float64,
         )
     )
     # 2. Generate a with same shape as b, c
     a = draw(
         quantities(
             backend="numpy",
-            magnitude=backend_arrays(shape=b.magnitude.shape, backend="numpy"),
+            magnitude=backend_arrays(
+                shape=b.magnitude.shape, backend="numpy", dtype=np.float64
+            ),
             allow_uncertainty=False,
+            dtype=np.float64,
         )
     )
     return a, b, c
@@ -145,7 +154,7 @@ def test_distributivity(triplet):
     except (ValueError, RuntimeError):
         assume(False)
 
-    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-4, atol=1e-7)
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-6, atol=1e-9)
     assert res1.unit == res2.unit
 
 
@@ -160,6 +169,7 @@ def test_distributivity(triplet):
         backend="numpy",
         unit_strategy=linear_units(),
         allow_uncertainty=False,
+        dtype=np.float64,
     )
 )
 @settings(
@@ -192,11 +202,12 @@ def test_unit_invariance(qs):
     except (ValueError, RuntimeError):
         assume(False)
 
-    assert np.allclose(lhs.magnitude, rhs.magnitude, rtol=1e-4, atol=1e-6)
+    # FP errors accumulate more here due to conversions
+    assert np.allclose(lhs.magnitude, rhs.magnitude, rtol=1e-5, atol=1e-8)
 
 
 @given(
-    quantities(backend="numpy", allow_uncertainty=False),
+    quantities(backend="numpy", allow_uncertainty=False, dtype=np.float64),
     st.floats(min_value=0.1, max_value=10.0),
 )
 @settings(max_examples=50, deadline=None, phases=[Phase.generate])
@@ -223,4 +234,4 @@ def test_dimensional_homogeneity_scaling(q, scale):
             return x.numpy()
         return np.asarray(x)
 
-    np.testing.assert_allclose(to_np(m1), to_np(m2), rtol=1e-5)
+    np.testing.assert_allclose(to_np(m1), to_np(m2), rtol=1e-7)
