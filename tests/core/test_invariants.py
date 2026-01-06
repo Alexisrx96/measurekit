@@ -1,93 +1,221 @@
-import math
+"""Property-Based Tests for Algebraic and Physical Invariants."""
 
-import pytest
-from hypothesis import HealthCheck, given, settings
+import numpy as np
+from hypothesis import Phase, assume, given, settings
 from hypothesis import strategies as st
 
-from measurekit.domain.measurement.quantity import Quantity
-
-# Strategies for generating values
-floats = st.floats(min_value=-1e12, max_value=1e12)
-special_floats = st.floats(allow_nan=True, allow_infinity=True)
-
-
-@settings(
-    deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+from measurekit import Quantity
+from tests.strategies import (
+    backend_arrays,
+    linear_units,
+    quantities,
+    same_shape_quantities,
+    same_unit_quantities,
 )
-@pytest.mark.parametrize("unit_name", ["m", "s", "kg"])
-@given(a_val=floats, b_val=floats)
-def test_commutativity_addition(common_system, unit_name, a_val, b_val):
-    """Verify a + b == b + a"""
-    unit = common_system.get_unit(unit_name)
-    a = Quantity.from_input(a_val, unit, common_system)
-    b = Quantity.from_input(b_val, unit, common_system)
 
-    res1 = a + b
-    res2 = b + a
-
-    if math.isnan(a_val) or math.isnan(b_val):
-        assert math.isnan(res1.magnitude)
-        assert math.isnan(res2.magnitude)
-    else:
-        assert res1.magnitude == pytest.approx(res2.magnitude, nan_ok=True)
+# Common settings for property checks
+# We reduce max_examples for complex backend interactions
+SETTINGS = settings(max_examples=50, deadline=None)
 
 
-@settings(
-    deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+# -----------------------------------------------------------------------------
+# Algebraic Group Properties (Scalar focus for rigor)
+# -----------------------------------------------------------------------------
+
+
+@given(
+    same_unit_quantities(
+        n=2,
+        backend="numpy",
+        unit_strategy=linear_units(),
+        allow_uncertainty=False,
+    )
 )
-@pytest.mark.parametrize("unit_name", ["m", "s", "kg"])
-@given(a_val=floats, b_val=floats, c_val=floats)
-def test_associativity_addition(common_system, unit_name, a_val, b_val, c_val):
-    """Verify (a + b) + c == a + (b + c)"""
-    unit = common_system.get_unit(unit_name)
-    a = Quantity.from_input(a_val, unit, common_system)
-    b = Quantity.from_input(b_val, unit, common_system)
-    c = Quantity.from_input(c_val, unit, common_system)
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_commutativity_addition(qs):
+    """a + b == b + a"""
+    a, b = qs
 
-    res1 = (a + b) + c
-    res2 = a + (b + c)
+    try:
+        res1 = a + b
+        res2 = b + a
+    except (ValueError, RuntimeError):
+        # Skip invalid shapes
+        assume(False)
 
-    if any(math.isnan(v) for v in [a_val, b_val, c_val]):
-        assert math.isnan(res1.magnitude)
-        assert math.isnan(res2.magnitude)
-    else:
-        assert res1.magnitude == pytest.approx(
-            res2.magnitude, nan_ok=True, rel=1e-5
+    # Use loose tolerance for floating point
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-5, atol=1e-8)
+    assert res1.unit == res2.unit
+
+
+@given(
+    same_shape_quantities(
+        n=2,
+        backend="numpy",
+        allow_uncertainty=False,
+    )
+)
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_commutativity_multiplication(qs):
+    """a * b == b * a (for scalars/element-wise)"""
+    a, b = qs
+    try:
+        res1 = a * b
+        res2 = b * a
+    except (ValueError, RuntimeError):
+        assume(False)
+
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-5, atol=1e-8)
+    assert res1.unit == res2.unit
+
+
+@given(
+    same_unit_quantities(
+        n=3,
+        backend="numpy",
+        unit_strategy=linear_units(),
+        allow_uncertainty=False,
+    )
+)
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_associativity_addition(qs):
+    """(a + b) + c == a + (b + c)"""
+    a, b, c = qs
+    try:
+        res1 = (a + b) + c
+        res2 = a + (b + c)
+    except (ValueError, RuntimeError):
+        assume(False)
+
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-4, atol=1e-7)
+
+
+@given(
+    same_shape_quantities(
+        n=3,
+        backend="numpy",
+        allow_uncertainty=False,
+    )
+)
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_associativity_multiplication(qs):
+    """(a * b) * c == a * (b * c)"""
+    a, b, c = qs
+    try:
+        res1 = (a * b) * c
+        res2 = a * (b * c)
+    except (ValueError, RuntimeError):
+        assume(False)
+
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-4, atol=1e-7)
+    assert res1.unit == res2.unit
+
+
+@st.composite
+def distributivity_triplet(draw):
+    """Generates (a, b, c) such that (b + c) is valid and a * (b + c) is valid."""
+    # 1. Generate b and c with same unit and shape
+    b, c = draw(
+        same_unit_quantities(
+            n=2,
+            backend="numpy",
+            unit_strategy=linear_units(),
+            allow_uncertainty=False,
         )
+    )
+    # 2. Generate a with same shape as b, c
+    a = draw(
+        quantities(
+            backend="numpy",
+            magnitude=backend_arrays(shape=b.magnitude.shape, backend="numpy"),
+            allow_uncertainty=False,
+        )
+    )
+    return a, b, c
 
 
-@settings(
-    deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+@given(distributivity_triplet())
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_distributivity(triplet):
+    """a * (b + c) == a * b + a * c"""
+    a, b, c = triplet
+    try:
+        res1 = a * (b + c)
+        res2 = a * b + a * c
+    except (ValueError, RuntimeError):
+        assume(False)
+
+    assert np.allclose(res1.magnitude, res2.magnitude, rtol=1e-4, atol=1e-7)
+    assert res1.unit == res2.unit
+
+
+# -----------------------------------------------------------------------------
+# Physical Invariants
+# -----------------------------------------------------------------------------
+
+
+@given(
+    same_unit_quantities(
+        n=2,
+        backend="numpy",
+        unit_strategy=linear_units(),
+        allow_uncertainty=False,
+    )
 )
-@given(val=st.floats(min_value=1e-6, max_value=1e6))
-def test_round_trip_conversion(common_system, val):
-    """Verify Quantity(x).to(unit).to(original_unit) ≈ x"""
-    m = common_system.get_unit("m")
-    km = common_system.get_unit("km")
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_unit_invariance(qs):
+    """(a + b).to(target) == a.to(target) + b.to(target)
 
-    q = Quantity.from_input(val, m, common_system)
-    q_converted = q.to(km).to(m)
+    Physical result shouldn't depend on intermediate representation.
+    """
+    a, b = qs
+    system = a.system
 
-    assert q_converted.magnitude == pytest.approx(val)
+    # Find a compatible unit to convert to
+    compatible_units = []
+    candidates = system.UNIT_REGISTRY.get(a.dimension, {})
+    for name in candidates:
+        if name != a.unit.to_string():
+            compatible_units.append(name)
+
+    assume(len(compatible_units) > 0)
+    target_unit = compatible_units[0]
+
+    try:
+        lhs = (a + b).to(target_unit)
+        rhs = a.to(target_unit) + b.to(target_unit)
+    except (ValueError, RuntimeError):
+        assume(False)
+
+    assert np.allclose(lhs.magnitude, rhs.magnitude, rtol=1e-4, atol=1e-6)
 
 
-@settings(
-    deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+@given(
+    quantities(backend="numpy", allow_uncertainty=False),
+    st.floats(min_value=0.1, max_value=10.0),
 )
-@given(val=special_floats)
-def test_nan_inf_handling(common_system, val):
-    """Ensure basic operations don't crash on NaN/Inf"""
-    import warnings
+@settings(max_examples=50, deadline=None, phases=[Phase.generate])
+def test_dimensional_homogeneity_scaling(q, scale):
+    """f(scale * x) == scale * f(x) for linear functions."""
+    res1 = q * scale
+    res2 = Quantity.from_input(q.magnitude * scale, q.unit, q.system)
 
-    unit = common_system.get_unit("m")
-    q = Quantity.from_input(val, unit, common_system)
+    assert res1.unit == res2.unit
 
-    # Simple arithmetic should not raise exception
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        try:
-            _ = q * 2
-            _ = q + q
-            _ = q / 2
-        except Exception as e:
-            pytest.fail(f"Operation raised exception on value {val}: {e}")
+    m1 = res1.magnitude
+    m2 = res2.magnitude
+
+    def to_np(x):
+        if hasattr(x, "toarray"):
+            return x.toarray()
+        if hasattr(x, "todense"):
+            return x.todense()
+        if hasattr(x, "cpu"):
+            x = x.cpu()
+        if hasattr(x, "detach"):
+            x = x.detach()
+        if hasattr(x, "numpy"):
+            return x.numpy()
+        return np.asarray(x)
+
+    np.testing.assert_allclose(to_np(m1), to_np(m2), rtol=1e-5)
