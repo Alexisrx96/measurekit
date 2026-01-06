@@ -3,11 +3,19 @@ from __future__ import annotations
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    TypeVar,
+    cast,
+)
 
 from measurekit.core.dispatcher import BackendManager
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from numpy.typing import NDArray
 
     from measurekit.core.protocols import BackendOps
@@ -80,12 +88,51 @@ class Uncertainty(ABC, Generic[UncType]):
 
         Checks global context to select CovarianceModel or VarianceModel.
         """
-        from measurekit.application.context import get_propagation_mode
+        # Auto-detect requirement for CovarianceModel
+        backend = BackendManager.get_backend(std_dev)
+        if backend.is_array(std_dev) and backend.size(std_dev) > 1:
+            return CovarianceModel.from_standard(std_dev, measurement_id)
 
-        mode = get_propagation_mode()
-        if mode == "uncorrelated":
-            return VarianceModel.from_standard(std_dev)
-        return CovarianceModel.from_standard(std_dev, measurement_id)
+        # Default to VarianceModel for scalars or simple cases
+        return VarianceModel.from_standard(std_dev)
+
+    @classmethod
+    def propagate(
+        cls,
+        func: Callable[..., Any],
+        values: Sequence[Any],
+        uncertainties: Sequence[Uncertainty[Any]],
+    ) -> tuple[Any, Uncertainty[Any]]:
+        """Generic Autograd-driven propagation.
+
+        Returns:
+            (result_value, new_uncertainty_model)
+        """
+        from measurekit.core.autograd import AutogradPropagator
+
+        # 1. Compute Jacobians
+        # We assume func(*values) -> result
+        # AutogradPropagator returns (result, (J1, J2, ...))
+        result, jacs = AutogradPropagator.compute_jacobians(func, values)
+
+        # 2. Dispatch based on model type
+        # We check the first uncertainty to decide strategy
+        if not uncertainties:
+            # If no uncertainties, usually zero uncertainty model
+            return result, cls.from_standard(0.0)
+
+        # If any is CovarianceModel, we use Covariance logic
+        if any(isinstance(u, CovarianceModel) for u in uncertainties):
+            new_unc = CovarianceModel._propagate_from_jacobians(
+                jacs, uncertainties, values, result
+            )
+        else:
+            # Else VarianceModel
+            new_unc = VarianceModel._propagate_from_jacobians(
+                jacs, uncertainties, values, result
+            )
+
+        return result, new_unc
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +158,47 @@ class VarianceModel(Uncertainty[UncType]):
         # Handle zero variance safely
         var = backend.pow(std_dev, 2)
         return cls(variance=var)
+
+    @classmethod
+    def _propagate_from_jacobians(
+        cls,
+        jacs: tuple[Any, ...],
+        uncertainties: Sequence[Uncertainty],
+        values: Sequence[Any],
+        result: Any,
+    ) -> VarianceModel:
+        """Internal propagation using pre-computed Jacobians."""
+        backend = BackendManager.get_backend(values[0])
+
+        total_var = 0.0
+        # Var_out = sum( (J_i)^2 * Var_i )
+
+        for i, (u, jac) in enumerate(zip(uncertainties, jacs, strict=False)):
+            if u is None:
+                continue  # Treat as zero uncertainty?
+
+            # Get variance
+            if isinstance(u, VarianceModel):
+                var_i = u.variance
+            else:
+                var_i = backend.pow(u.std_dev, 2)
+
+            # Apply J^2
+            # Use _apply_jacobian helper logic for consistency?
+            # But that is instance method. Let's make it static or assume logic here.
+
+            jac_sq = backend.pow(jac, 2)
+
+            # Simple element-wise multiplication for VarianceModel (uncorrelated)
+            # Assuming broadcast compatibility between J and Var
+            term = backend.mul(jac_sq, var_i)
+
+            if i == 0:
+                total_var = term
+            else:
+                total_var = backend.add(total_var, term)
+
+        return cls(variance=total_var)
 
     def _apply_jacobian(self, var: Any, jac: Any, backend: BackendOps) -> Any:
         """Applies a Jacobian to a variance vector: var_out = (J^2) @ var_in.
@@ -161,11 +249,22 @@ class VarianceModel(Uncertainty[UncType]):
                 res = res.todense()
 
         # Reshape back to match input or broadcasted output
-        return (
-            backend.reshape(res, original_shape)
-            if original_shape != ()
-            else backend.reshape(res, ())
-        )
+        # If result size differs from original size (e.g. broadcasting), don't force original shape
+        res_size = backend.size(res)
+
+        orig_size = 1
+        for dim in original_shape:
+            orig_size *= dim
+
+        if res_size != orig_size:
+            # Shape changed.
+            # If (N, 1), flatten to (N,)
+            res_shape = backend.shape(res)
+            if len(res_shape) == 2 and res_shape[1] == 1:
+                return backend.reshape(res, (res_shape[0],))
+            return res
+
+        return backend.reshape(res, original_shape)
 
     def add(
         self,
@@ -292,6 +391,98 @@ class CovarianceModel(Uncertainty[UncType]):
         lineage = {uid: std_dev} if backend.any(is_pos) else {}
 
         return cls(std_dev_internal=std_dev, lineage=lineage)
+
+    @classmethod
+    def _propagate_from_jacobians(
+        cls,
+        jacs: tuple[Any, ...],
+        uncertainties: Sequence[Uncertainty],
+        values: Sequence[Any],
+        result: Any,
+    ) -> CovarianceModel:
+        """Internal propagation for CovarianceModel."""
+        backend = BackendManager.get_backend(values[0])
+
+        # Check Vector Path
+        # If result is large array, use Store
+        if backend.is_array(result) and backend.size(result) > 1:
+            from measurekit.domain.measurement.vectorized_uncertainty import (
+                ensure_store,
+            )
+
+            store = ensure_store(backend)
+
+            in_slices = []
+            final_jacs = []
+
+            for u, jac in zip(uncertainties, jacs, strict=False):
+                if isinstance(u, CovarianceModel):
+                    in_slices.append(u.ensure_vector_slice(backend))
+                else:
+                    slc = store.register_independent_array(u.std_dev)
+                    in_slices.append(slc)
+                final_jacs.append(jac)
+
+            out_size = backend.size(result)
+            out_slice = store.allocate(out_size)
+            store.update_from_propagation(out_slice, in_slices, final_jacs)
+
+            out_cov = store.get_covariance_block(out_slice, out_slice)
+            diag = backend.sparse_diagonal(out_cov)
+            std_dev = backend.reshape(
+                backend.sqrt(diag), backend.shape(result)
+            )
+            return cls(std_dev_internal=std_dev, vector_slice=out_slice)
+
+        # Scalar Path (Lineage)
+        new_lineage = {}
+
+        # Merge all lineages
+        # coeff_new(uid) = sum( J_k * coeff_k(uid) )
+
+        # We process each input k
+        for u, jac in zip(uncertainties, jacs, strict=False):
+            # Ensure u has lineage
+            if isinstance(u, CovarianceModel):
+                src_lineage = u.lineage
+            else:
+                # treat as independent
+                # generate a random UID?
+                # If we re-use uncorrelated UIDs, we shouldn't mix them up accidentally.
+                # Actually, U = independent -> coeff = std_dev, uid = random
+                # But we don't have persistent UID for VarianceModel.
+                # So we assume it's a new independent noise source per operation instance?
+                # No, that's wrong. If A (var) and A (var) are added, are they correlated?
+                # VarianceModel assumes NO correlation.
+                # So we can treat it as: new noise component.
+                uid = str(uuid.uuid4())
+                src_lineage = {uid: u.std_dev}
+
+            for uid, coeff in src_lineage.items():
+                # contribution = jac * coeff
+                term = backend.mul(coeff, jac)
+                if uid in new_lineage:
+                    new_lineage[uid] = backend.add(new_lineage[uid], term)
+                else:
+                    new_lineage[uid] = term
+
+        # Filter zero coeffs
+        filtered_lineage = {
+            k: v
+            for k, v in new_lineage.items()
+            if backend.any(backend.not_equal(v, 0))
+        }
+
+        # Compute new std_dev_internal from lineage
+        # This is a bit circular, usually we compute from lineage.
+        # reuse helper
+        dummy_inst = cls(std_dev_internal=0.0)  # Helper access
+        new_std = dummy_inst._compute_std_dev(filtered_lineage, backend)
+
+        if backend.is_array(result) and backend.shape(result) != ():
+            new_std = backend.reshape(new_std, backend.shape(result))
+
+        return cls(std_dev_internal=new_std, lineage=filtered_lineage)
 
     def __hash__(self) -> int:
         """Hash implementation for CovarianceModel."""
