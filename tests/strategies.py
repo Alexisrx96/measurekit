@@ -187,6 +187,7 @@ def quantities(
     unit=None,
     backend: str | None = None,
     allow_uncertainty: bool = True,
+    dtype=np.float32,
 ) -> Quantity:
     """Generates a Quantity object.
 
@@ -210,9 +211,11 @@ def quantities(
         # 50% chance of scalar, 50% chance of array
         if draw(st.booleans()):
             # Scalar (treat as 0-d array for consistency in backend gen)
-            mag_val = draw(backend_arrays(shape=(), backend=backend))
+            mag_val = draw(
+                backend_arrays(shape=(), backend=backend, dtype=dtype)
+            )
         else:
-            mag_val = draw(backend_arrays(backend=backend))
+            mag_val = draw(backend_arrays(backend=backend, dtype=dtype))
     else:
         mag_val = draw(magnitude)
 
@@ -261,6 +264,7 @@ def same_unit_quantities(
     backend: str | None = None,
     unit_strategy=None,
     allow_uncertainty: bool = False,
+    dtype=np.float32,
 ) -> list[Quantity]:
     """Generates a list of N quantities with the same unit, backend, and shape."""
     # 1. Pick a shared backend
@@ -284,7 +288,7 @@ def same_unit_quantities(
     qs = []
     for _ in range(n):
         # We use a trick to force unit and shape
-        mag_strat = backend_arrays(shape=shape, backend=backend)
+        mag_strat = backend_arrays(shape=shape, backend=backend, dtype=dtype)
         qs.append(
             draw(
                 quantities(
@@ -292,6 +296,7 @@ def same_unit_quantities(
                     backend=backend,
                     magnitude=mag_strat,
                     allow_uncertainty=allow_uncertainty,
+                    dtype=dtype,
                 )
             )
         )
@@ -305,6 +310,7 @@ def same_shape_quantities(
     n: int = 2,
     backend: str | None = None,
     allow_uncertainty: bool = False,
+    dtype=np.float32,
 ) -> list[Quantity]:
     """Generates a list of N quantities with the same shape and backend, but potentially different units."""
     if backend is None:
@@ -319,13 +325,14 @@ def same_shape_quantities(
 
     qs = []
     for _ in range(n):
-        mag_strat = backend_arrays(shape=shape, backend=backend)
+        mag_strat = backend_arrays(shape=shape, backend=backend, dtype=dtype)
         qs.append(
             draw(
                 quantities(
                     backend=backend,
                     magnitude=mag_strat,
                     allow_uncertainty=allow_uncertainty,
+                    dtype=dtype,
                 )
             )
         )
