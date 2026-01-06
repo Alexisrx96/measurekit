@@ -416,9 +416,6 @@ class Quantity(Generic[ValueType, UncType]):
         if mag_fmt:
             formatted_mag = format(self.magnitude, mag_fmt)
             if self._has_uncertainty:
-                # Formatting array uncertainty might fail on scalar spec
-                # Python format() on array delegates to array.__format__ (limited)
-                # If unsafe, fallback to str?
                 try:
                     formatted_unc = format(self.uncertainty, mag_fmt)
                 except (TypeError, ValueError):
@@ -432,7 +429,14 @@ class Quantity(Generic[ValueType, UncType]):
         return f"{self.magnitude} {unit_str}"
 
     def to_latex(self) -> str:
-        """Returns the LaTeX representation."""
+        r"""Returns the LaTeX representation.
+
+        Examples:
+            >>> from measurekit import Q_
+            >>> q = Q_(10, "m/s^2")
+            >>> print(q.to_latex())
+            10 \; \frac{m}{s^{2}}
+        """
         unit_latex = self.unit.to_latex()
         if self._has_uncertainty:
             return (
@@ -444,6 +448,51 @@ class Quantity(Generic[ValueType, UncType]):
         """Returns LaTeX for Jupyter notebooks."""
         return f"${self.to_latex()}$"
 
+    def to_hdf5(self, group: Any, dataset_name: str) -> Any:
+        """Saves the quantity to an HDF5 group.
+
+        Args:
+            group: An h5py.Group or h5py.File object.
+            dataset_name: The name for the new dataset.
+
+        Returns:
+            The created h5py.Dataset.
+        """
+        from measurekit.ext.io import to_hdf5
+
+        return to_hdf5(self, group, dataset_name)
+
+    @classmethod
+    def from_hdf5(cls, dataset: Any) -> Quantity:
+        """Loads a quantity from an HDF5 dataset.
+
+        Args:
+            dataset: An h5py.Dataset object.
+
+        Returns:
+            A new Quantity object.
+        """
+        from measurekit.ext.io import from_hdf5
+
+        return from_hdf5(dataset)
+
+    def with_uncertainty(self, uncertainty: Any) -> Quantity:
+        """Returns a new Quantity with the specified uncertainty.
+
+        Args:
+            uncertainty: The standard deviation or Uncertainty object.
+
+        Returns:
+            A new Quantity object.
+        """
+        return Quantity.from_input(
+            self.magnitude,
+            self.unit,
+            self.system,
+            uncertainty=uncertainty,
+            symbol=self.symbol,
+        )
+
     @property
     def uncertainty(self) -> UncType:
         """Returns the standard deviation of the uncertainty."""
@@ -452,7 +501,17 @@ class Quantity(Generic[ValueType, UncType]):
     def to(
         self, target_unit: CompoundUnit | UnitName
     ) -> Quantity[ValueType, UncType]:
-        """Converts the quantity to a different unit or moves to a device."""
+        """Converts the quantity to a different unit or moves to a device.
+
+        Examples:
+            >>> from measurekit import Q_
+            >>> q = Q_(10, "m")
+            >>> q.to("km")
+            Quantity(0.01, km)
+            >>> temp = Q_(25, "degC")
+            >>> temp.to("K")
+            Quantity(298.15, K)
+        """
         if isinstance(target_unit, str):
             # Check if target_unit is a device string (e.g. "cuda", "cpu")
             # If target_unit is not in system and looks like a device:
@@ -585,6 +644,15 @@ class Quantity(Generic[ValueType, UncType]):
 
         Returns:
             Quantity: The derivative.
+
+        Examples:
+            >>> import sympy as sp
+            >>> from measurekit import Q_
+            >>> t = sp.Symbol("t")
+            >>> x = Q_(t**2, "m")
+            >>> v = x.diff("t")
+            >>> print(v)
+            2*t m
         """
         if isinstance(variable, Quantity):
             d_var = variable.magnitude
@@ -599,10 +667,8 @@ class Quantity(Generic[ValueType, UncType]):
         except Exception as e:
             # Fallback for array/tensor backends or non-symbolic magnitudes
             # For Phase 3, we focus on SymPy support.
-            # Within except, raise ... from e
-            raise NotImplementedError(
-                f"Differentiation failed or not supported: {e}"
-            ) from e
+            msg = f"Differentiation failed or not supported: {e}"
+            raise NotImplementedError(msg) from e
 
         # Update units: u_new = u_old / (u_var)^order
         new_exponents = dict(self.unit.exponents)

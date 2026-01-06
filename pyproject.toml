@@ -38,6 +38,7 @@ dependencies = [
     "array-api-compat>=1.4",
     "jax>=0.4.25",
     "pydantic>=2.10.0",
+    "h5py>=3.10.0",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +48,7 @@ jax = ["jax>=0.4.25", "jaxlib>=0.4.25"]
 pandas = ["pandas>=2.2.0"]
 pydantic = ["pydantic>=2.6.0"]
 rich = ["rich>=13.0.0"]
-interactive = ["rich>=13.0.0"]
+io = ["h5py>=3.10.0", "xarray>=2024.1.0", "netCDF4>=1.6.0"]
 all = [
     "numpy>=1.26.0",
     "scipy>=1.12.0",
@@ -57,6 +58,9 @@ all = [
     "jaxlib>=0.4.25",
     "pandas>=2.2.0",
     "pydantic>=2.6.0",
+    "h5py>=3.10.0",
+    "xarray>=2024.1.0",
+    "netCDF4>=1.6.0",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -71,6 +75,9 @@ docs = [
     "mkdocs-material>=9.5.0",
     "mkdocstrings[python]>=0.24.0",
     "mkdocs-jupyter>=0.24.0",
+    "mkdocs-htmlproofer-plugin>=0.12.0",
+    "nbmake>=1.5.0",
+    "papermill>=2.5.0",
 ]
 
 [project.urls]

@@ -44,10 +44,15 @@ plugins:
             docstring_style: google
   - mkdocs-jupyter:
       include_source: True
+  - htmlproofer:
+      type: url
+      check_external_links: True
+      raise_error: True
 
 nav:
   - Home: index.md
   - Tutorials:
-    - Getting Started using JAX: tutorials/jax_tutorial.ipynb
+      - Best Practices: tutorials/01_best_practices.ipynb
+      - JAX Integration: tutorials/jax_tutorial.ipynb
   - API Reference:
-    - Quantity: reference/quantity.md
+      - Quantity: reference/quantity.md

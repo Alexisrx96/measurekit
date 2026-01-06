@@ -78,7 +78,17 @@ def add_quantities(
     unit2: CompoundUnit,
     system: UnitSystem,
 ) -> tuple[Any, CompoundUnit]:
-    """Adds two quantities."""
+    """Adds two quantities.
+
+    Examples:
+        >>> from measurekit.application.startup import create_system
+        >>> sys = create_system()
+        >>> m = sys.get_unit("m")
+        >>> km = sys.get_unit("km")
+        >>> res_mag, res_unit = add_quantities(10, m, 1, km, sys)
+        >>> print(res_mag)
+        1010.0
+    """
     is_nonlinear = _check_nonlinear(unit1, unit2, system)
     if is_nonlinear:
         return _add_nonlinear(val1, unit1, val2, unit2, system)
