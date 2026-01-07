@@ -186,11 +186,11 @@ def test_unit_invariance(qs):
     a, b = qs
     system = a.system
 
-    # Find a compatible unit to convert to
+    # Find a compatible unit to convert to (must be linear)
     compatible_units = []
     candidates = system.UNIT_REGISTRY.get(a.dimension, {})
-    for name in candidates:
-        if name != a.unit.to_string():
+    for name, definition in candidates.items():
+        if name != a.unit.to_string() and definition.converter.is_linear:
             compatible_units.append(name)
 
     assume(len(compatible_units) > 0)
