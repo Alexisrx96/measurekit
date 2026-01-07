@@ -116,6 +116,13 @@ impl RationalUnit {
         h.finish()
     }
 
+    #[getter]
+    fn exponents(&self) -> HashMap<String, f64> {
+        self.dimensions.iter().map(|(k, (n, d))| {
+            (k.clone(), *n as f64 / *d as f64)
+        }).collect()
+    }
+
     pub fn __repr__(&self) -> String {
         if self.dimensions.is_empty() {
             return "Dimensionless".to_string();

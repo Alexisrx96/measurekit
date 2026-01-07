@@ -153,6 +153,22 @@ impl QuantityInner {
         })
     }
 
+    fn __neg__(&self) -> PyResult<QuantityInner> {
+        let neg_one = GaussianBackend { mean: -1.0, std_dev: 0.0 };
+        Ok(QuantityInner { 
+            value: self.value.propagate_mul(&neg_one), 
+            unit: self.unit.clone() 
+        })
+    }
+
+    fn __pos__(&self) -> QuantityInner {
+        self.clone()
+    }
+
+    fn __abs__(&self) -> QuantityInner {
+        self.propagate_function("abs".to_string())
+    }
+
     fn propagate_function(&self, func: String) -> QuantityInner {
         QuantityInner {
             value: self.value.propagate_function(&func),

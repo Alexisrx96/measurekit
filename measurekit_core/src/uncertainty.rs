@@ -77,6 +77,7 @@ impl UncertaintyBackend for GaussianBackend {
             "cos" => (m.cos(), (m.sin() * s).abs()),
             "exp" => (m.exp(), (m.exp() * s).abs()),
             "log" => (m.ln(), (s / m).abs()),
+            "abs" => (m.abs(), s),
             _ => (m, s), // Fallback
         };
         Box::new(GaussianBackend { mean: new_mean, std_dev: new_std })
@@ -140,6 +141,7 @@ impl UncertaintyBackend for MonteCarloBackend {
             "cos" => self.samples.mapv(|x| x.cos()),
             "exp" => self.samples.mapv(|x| x.exp()),
             "log" => self.samples.mapv(|x| x.ln()),
+            "abs" => self.samples.mapv(|x| x.abs()),
             _ => self.samples.clone(),
         };
         Box::new(MonteCarloBackend { samples: new_samples })
@@ -220,6 +222,7 @@ impl UncertaintyBackend for UnscentedBackend {
             "cos" => self.sigma_points.mapv(|x| x.cos()),
             "exp" => self.sigma_points.mapv(|x| x.exp()),
             "log" => self.sigma_points.mapv(|x| x.ln()),
+            "abs" => self.sigma_points.mapv(|x| x.abs()),
             _ => self.sigma_points.clone(),
         };
         Box::new(UnscentedBackend { sigma_points: new_points, weights: self.weights.clone() })
