@@ -61,6 +61,17 @@ When using **PyTorch** or **JAX**, explicitly manage your devices through the qu
 gpu_q = q.to_device("cuda:0")
 ```
 
+### 2.3. Compiler Integration (torch.compile)
+
+MeasureKit is compatible with `torch.compile` (TorchDynamo).
+
+**Best Practice:**
+
+- Use `fullgraph=True` to ensure zero Python overhead.
+- Avoid using `measurekit.application.tracing.context` features (like symbolic tracing) inside compiled functions, as `ContextVar` lookup is not supported by Dynamo.
+
+See `docs/torch_compile_integration.md` for implementation details.
+
 ---
 
 ## 3. Data Integrity & Validation
