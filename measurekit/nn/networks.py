@@ -8,12 +8,11 @@ from measurekit.domain.measurement.units import (
     CompoundUnit,
     get_default_system,
 )
-from measurekit.nn.layers import TorchPiLayer
-
 # --- PyTorch Implementation ---
 try:
     import torch
     import torch.nn as nn
+    from measurekit.nn.layers import TorchPiLayer
 
     class TorchUnitAwareMLP(nn.Module):
         """A Unit-Aware Multilayer Perceptron.
