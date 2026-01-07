@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -107,6 +107,26 @@ def propagation_mode(mode: str) -> Iterator[None]:
         yield
     finally:
         _propagation_mode.reset(token)
+
+
+_UNCERTAINTY_MODE: ContextVar[tuple[str, dict[str, Any]]] = ContextVar(
+    "uncertainty_mode", default=("python", {})
+)
+
+
+@contextmanager
+def uncertainty_mode(mode: str, **kwargs) -> Iterator[None]:
+    """Context manager to swap the uncertainty propagation strategy."""
+    token = _UNCERTAINTY_MODE.set((mode.lower(), kwargs))
+    try:
+        yield
+    finally:
+        _UNCERTAINTY_MODE.reset(token)
+
+
+def get_uncertainty_mode() -> tuple[str, dict[str, Any]]:
+    """Returns the currently active uncertainty mode and its arguments."""
+    return _UNCERTAINTY_MODE.get()
 
 
 def get_propagation_mode() -> str:

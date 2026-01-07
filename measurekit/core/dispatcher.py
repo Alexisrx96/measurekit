@@ -414,6 +414,56 @@ class PythonBackend(BackendOps):
         return 1.0
 
 
+class CoreBackend(BackendOps):
+    """Backend for the Rust-based QuantityInner core."""
+
+    def is_array(self, obj: Any) -> bool:
+        return False
+
+    def is_tracing(self, obj: Any) -> bool:
+        return False
+
+    def add(self, x: Any, y: Any) -> Any:
+        """Adds two core quantities or a core quantity and a scalar."""
+        return x + y
+
+    def sub(self, x: Any, y: Any) -> Any:
+        """Subtracts two core quantities or a core quantity and a scalar."""
+        return x - y
+
+    def mul(self, x: Any, y: Any) -> Any:
+        """Multiplies two core quantities or a core quantity and a scalar."""
+        return x * y
+
+    def truediv(self, x: Any, y: Any) -> Any:
+        """Divides two core quantities or a core quantity and a scalar."""
+        return x / y
+
+    def pow(self, x: Any, y: Any) -> Any:
+        """Computes power of a core quantity."""
+        return x**y
+
+    def sqrt(self, x: Any) -> Any:
+        """Computes square root of a core quantity."""
+        return x**0.5
+
+    def exp(self, x: Any) -> Any:
+        """Computes exponential of a core quantity."""
+        return x.propagate_function("exp")
+
+    def log(self, x: Any) -> Any:
+        """Computes natural logarithm of a core quantity."""
+        return x.propagate_function("log")
+
+    def sin(self, x: Any) -> Any:
+        """Computes sine of a core quantity."""
+        return x.propagate_function("sin")
+
+    def cos(self, x: Any) -> Any:
+        """Computes cosine of a core quantity."""
+        return x.propagate_function("cos")
+
+
 class BackendManager:
     """Manages backend dispatching and lazy loading."""
 
@@ -428,6 +478,9 @@ class BackendManager:
 
         if isinstance(data_obj, (int, float, complex, list, tuple)):
             return cls._get_python_backend()
+
+        if "QuantityInner" in str(type(data_obj)):
+            return cls._get_or_load_backend("core")
 
         cls_name = getattr(data_obj.__class__, "__name__", "").lower()
 
@@ -493,6 +546,8 @@ class BackendManager:
                 # Trigger JAX Pytree registration
                 if hasattr(module, "register_jax_behavior"):
                     module.register_jax_behavior()
+            elif name == "core":
+                cls._backends[name] = CoreBackend()
             else:
                 raise ValueError(f"Backend '{name}' not supported yet.")
         return cls._backends[name]

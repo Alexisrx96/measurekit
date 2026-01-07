@@ -11,12 +11,15 @@ unit management intricacies.
 # The default system is now lazily loaded by context.get_current_system().
 # We expose a proxy or simply rely on get_current_system().
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from measurekit.application.context import (
     get_current_system,
     get_propagation_mode,
     propagation_mode,
+    uncertainty_mode,
     use_system,
 )
 from measurekit.application.factories import QuantityFactory
@@ -24,11 +27,14 @@ from measurekit.application.startup import (
     create_default_system,
     create_system,
 )
-from measurekit.domain.measurement.units import get_default_system, units
+from measurekit.domain.measurement.units import (
+    CompoundUnit,
+    get_default_system,
+    units,
+)
 from measurekit.jit import jit
 
-# Expose the primary factory method (Inbound Port)
-# QuantityFactory uses get_default_system() internally if no system provided.
+# Expose primary factories
 Q_ = QuantityFactory()
 
 
@@ -63,7 +69,9 @@ from measurekit.domain.exceptions import (
 )
 from measurekit.domain.measurement.quantity import Quantity
 from measurekit.domain.measurement.uncertainty import Uncertainty
-from measurekit.domain.measurement.units import CompoundUnit
+
+# CompoundUnit is now imported directly above
+# from measurekit.domain.measurement.units import CompoundUnit
 
 __all__ = [
     "Q_",
@@ -80,6 +88,7 @@ __all__ = [
     "get_current_system",
     "get_unit",
     "jit",
+    "uncertainty_mode",
     "units",
     "use_system",
 ]
