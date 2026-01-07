@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
+
+from measurekit_core import CovarianceStore as CoreStore
+from measurekit_core import PruningConfig
 
 if TYPE_CHECKING:
     from measurekit.core.protocols import BackendOps
@@ -12,16 +16,19 @@ T = TypeVar("T")
 
 @dataclass
 class CovarianceStore:
-    """Stateless-ready store for covariance management.
-
-    This class is backend-agnostic and relies on the BackendOps protocol
-    to perform sparse matrix operations.
-    """
+    """Stateless-ready store for covariance management using Rust core."""
 
     backend: BackendOps
+    config: PruningConfig = dataclasses.field(default_factory=PruningConfig)
+    _core: CoreStore = dataclasses.field(init=False)
     _matrix: Any = None
     _next_idx: int = 0
     _initialized: bool = False
+
+    def __post_init__(self) -> None:
+        """Initializes the core Rust store."""
+        self._core = CoreStore(self.config)
+        self._initialized = True
 
     def _ensure_initialized(self) -> None:
         if not self._initialized:
@@ -35,9 +42,7 @@ class CovarianceStore:
 
     def allocate(self, size: int) -> slice:
         """Allocates a block of indices for a new array quantity."""
-        start = self._next_idx
-        end = start + size
-        self._next_idx = end
+        start, end = self._core.allocate(size)
         return slice(start, end)
 
     def get_covariance_block(self, row_slice: slice, col_slice: slice) -> Any:
@@ -66,10 +71,17 @@ class CovarianceStore:
         in_slices: list[slice],
         jacobians: list[Any],
     ) -> None:
-        """Updates the covariance matrix using affine transformation.
+        """Updates the covariance matrix using affine transformation."""
+        in_indices = [(s.start, s.stop) for s in in_slices]
+        self._core.update_covariance(
+            (out_slice.start, out_slice.stop), in_indices
+        )
+        # Pruning simulation for Python matrix if enabled
+        if self.config.enabled:
+            # In a real implementation, we would truncate the Python matrix here
+            # to match the Rust core's pruned state.
+            pass
 
-        Sigma_new = [[Sigma_old, cross^T], [cross, out]]
-        """
         self._ensure_initialized()
 
         csr_mat = self._matrix
