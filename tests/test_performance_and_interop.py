@@ -14,7 +14,7 @@ sys.path.insert(0, core_path)
 from measurekit_core import CovarianceStore as CoreStore
 from measurekit_core import (
     PruningConfig,
-    QuantityInner,
+    Quantity,
     RationalUnit,
     to_arrow_record_batch,
 )
@@ -55,7 +55,7 @@ def test_arrow_speed():
     u = RationalUnit({"m": (1, 1)})
     # Pre-generate 1M quantities
     print("  Generating 1M quantities...")
-    qs = [QuantityInner(float(i), 1.0, u) for i in range(1_000_000)]
+    qs = [Quantity(float(i), 1.0, u) for i in range(1_000_000)]
 
     print("  Converting to Arrow...")
     start = time.perf_counter()
