@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use sprs::{CsMatI, TriMatI};
 
-#[pyclass]
+#[pyclass(module = "measurekit_core")]
 #[derive(Clone, Copy)]
 pub struct PruningConfig {
     #[pyo3(get, set)]
@@ -19,7 +19,7 @@ impl PruningConfig {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "measurekit_core")]
 pub struct CovarianceStore {
     matrix: CsMatI<f64, usize>,
     last_updated: Vec<usize>,

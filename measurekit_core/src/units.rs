@@ -6,25 +6,39 @@ use num_rational::Rational64;
 use std::hash::{Hash, Hasher};
 
 /// A unit representation using rational exponents to avoid floating-point errors.
-#[pyclass]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[pyclass(module = "measurekit_core")]
+#[derive(Clone, Debug, Eq)]
 pub struct RationalUnit {
     /// Map of base unit names to their exponents as (numerator, denominator).
     #[pyo3(get)]
     pub dimensions: HashMap<String, (i64, i64)>,
+    #[pyo3(get)]
+    pub id: u64,
+}
+
+impl PartialEq for RationalUnit {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 
 impl Hash for RationalUnit {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Commutative hashing (XOR) avoids the need to sort keys (O(N) instead of O(N log N))
+        self.id.hash(state);
+    }
+}
+
+impl RationalUnit {
+    #[allow(dead_code)]
+    pub fn calculate_id(dimensions: &HashMap<String, (i64, i64)>) -> u64 {
         let mut h: u64 = 0;
-        for (k, v) in &self.dimensions {
+        for (k, v) in dimensions {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             k.hash(&mut hasher);
             v.hash(&mut hasher);
             h ^= hasher.finish();
         }
-        h.hash(state);
+        h
     }
 }
 
@@ -42,7 +56,8 @@ impl RationalUnit {
                 }
             }
         }
-        RationalUnit { dimensions }
+        let id = Self::calculate_id(&dimensions);
+        RationalUnit { dimensions, id }
     }
 
     pub fn __mul__(&self, other: &RationalUnit) -> RationalUnit {
@@ -58,7 +73,7 @@ impl RationalUnit {
                 new_dims.insert(base.clone(), (*res.numer(), *res.denom()));
             }
         }
-        RationalUnit { dimensions: new_dims }
+        RationalUnit::new(Some(new_dims))
     }
 
     pub fn __truediv__(&self, other: &RationalUnit) -> RationalUnit {
@@ -74,7 +89,7 @@ impl RationalUnit {
                 new_dims.insert(base.clone(), (*res.numer(), *res.denom()));
             }
         }
-        RationalUnit { dimensions: new_dims }
+        RationalUnit::new(Some(new_dims))
     }
 
     fn __pow__(&self, exponent: Bound<'_, PyAny>, _modulo: Option<Bound<'_, PyAny>>) -> PyResult<RationalUnit> {
@@ -96,9 +111,7 @@ impl RationalUnit {
                 new_dims.insert(base.clone(), (*res.numer(), *res.denom()));
             }
         }
-        Ok(RationalUnit {
-            dimensions: new_dims,
-        })
+        Ok(RationalUnit::new(Some(new_dims)))
     }
 
     fn __eq__(&self, other: &RationalUnit) -> bool {
@@ -106,14 +119,7 @@ impl RationalUnit {
     }
 
     fn __hash__(&self) -> u64 {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        let mut keys: Vec<&String> = self.dimensions.keys().collect();
-        keys.sort();
-        for k in keys {
-            k.hash(&mut h);
-            self.dimensions.get(k).unwrap().hash(&mut h);
-        }
-        h.finish()
+        self.id
     }
 
     #[getter]
@@ -143,7 +149,7 @@ impl RationalUnit {
 }
 
 /// A registry to hold unit definitions, ensuring state isolation.
-#[pyclass]
+#[pyclass(module = "measurekit_core")]
 pub struct UnitRegistry {
     base_units: HashMap<String, RationalUnit>,
     derived_units: HashMap<String, RationalUnit>,
@@ -164,7 +170,7 @@ impl UnitRegistry {
     fn add_base_unit(&mut self, name: String) {
         let mut dims = HashMap::new();
         dims.insert(name.clone(), (1, 1));
-        let unit = RationalUnit { dimensions: dims };
+        let unit = RationalUnit::new(Some(dims));
         self.base_units.insert(name, unit);
     }
 

@@ -7,7 +7,7 @@ use arrow::record_batch::RecordBatch;
 use arrow::datatypes::{DataType, Field, Schema};
 use std::sync::Arc;
 
-use crate::quantity::QuantityInner;
+use crate::quantity::Quantity;
 use crate::units::RationalUnit;
 
 #[pyfunction]
@@ -23,7 +23,7 @@ pub fn to_arrow_record_batch(quantities: Bound<'_, PyList>) -> PyResult<Vec<u8>>
 
     for q_any in quantities.iter() {
         // Optimization: downcast and borrow instead of extract (zero allocation)
-        let q_bound = q_any.downcast::<QuantityInner>()?;
+        let q_bound = q_any.downcast::<Quantity>()?;
         let q = q_bound.borrow();
         
         means.push(q.mean());

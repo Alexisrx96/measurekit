@@ -7,7 +7,7 @@ mod covariance;
 mod serialization;
 
 use units::{RationalUnit, UnitRegistry};
-use quantity::QuantityInner;
+use quantity::Quantity;
 use covariance::{CovarianceStore, PruningConfig};
 use serialization::to_arrow_record_batch;
 
@@ -15,7 +15,7 @@ use serialization::to_arrow_record_batch;
 fn measurekit_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RationalUnit>()?;
     m.add_class::<UnitRegistry>()?;
-    m.add_class::<QuantityInner>()?;
+    m.add_class::<Quantity>()?;
     m.add_class::<PruningConfig>()?;
     m.add_class::<CovarianceStore>()?;
     m.add_function(wrap_pyfunction!(to_arrow_record_batch, m)?)?;
