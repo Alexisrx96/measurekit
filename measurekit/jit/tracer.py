@@ -7,44 +7,75 @@ for exact dimensional validation.
 from __future__ import annotations
 
 import functools
-import sys
 from collections.abc import Callable
 from fractions import Fraction
-from pathlib import Path
 from typing import Any
 
-# Resolve core path relative to the project structure
-# Expecting: measurekit/jit/tracer.py -> ../../measurekit_core/target/release
-_BASE_PATH = Path(__file__).resolve().parent.parent.parent
-CORE_PATH = _BASE_PATH / "measurekit_core" / "target" / "release"
-if CORE_PATH.exists() and str(CORE_PATH) not in sys.path:
-    sys.path.insert(0, str(CORE_PATH))
-
 try:
-    import measurekit_core
     from measurekit_core import RationalUnit
 except ImportError:
-    # Minimal mock for local development if Rust core is missing
+
     class RationalUnit:
-        """Mock RationalUnit if Rust core is not linked."""
+        """Python fallback for RationalUnit when extension is missing."""
 
-        def __init__(self, dims: dict):
-            self.dimensions = dims
+        def __init__(self, dimensions: dict[str, tuple[int, int]]):
+            self.dimensions = dimensions
 
-        def __mul__(self, other):
-            return RationalUnit({})
-
-        def __truediv__(self, other):
-            return RationalUnit({})
-
-        def __pow__(self, other, modulo=None):
-            return RationalUnit({})
-
-        def __eq__(self, other):
-            return True
+        def __repr__(self):
+            return f"RationalUnit({self.dimensions})"
 
         def __hash__(self):
-            return 0
+            return hash(tuple(sorted(self.dimensions.items())))
+
+        def __eq__(self, other):
+            if isinstance(other, RationalUnit):
+                return self.dimensions == other.dimensions
+            return False
+
+        def __mul__(self, other):
+            if not isinstance(other, RationalUnit):
+                return NotImplemented
+            new_dims = self.dimensions.copy()
+            for k, v in other.dimensions.items():
+                f1 = Fraction(*new_dims.get(k, (0, 1)))
+                f2 = Fraction(*v)
+                res = f1 + f2
+                if res == 0:
+                    if k in new_dims:
+                        del new_dims[k]
+                else:
+                    new_dims[k] = (res.numerator, res.denominator)
+            return RationalUnit(new_dims)
+
+        def __truediv__(self, other):
+            if not isinstance(other, RationalUnit):
+                return NotImplemented
+            new_dims = self.dimensions.copy()
+            for k, v in other.dimensions.items():
+                f1 = Fraction(*new_dims.get(k, (0, 1)))
+                f2 = Fraction(*v)
+                res = f1 - f2
+                if res == 0:
+                    if k in new_dims:
+                        del new_dims[k]
+                else:
+                    new_dims[k] = (res.numerator, res.denominator)
+            return RationalUnit(new_dims)
+
+        def __pow__(self, power):
+            if isinstance(power, int):
+                p = Fraction(power, 1)
+            elif isinstance(power, tuple) and len(power) == 2:
+                p = Fraction(*power)
+            else:
+                return NotImplemented
+
+            new_dims = {}
+            for k, v in self.dimensions.items():
+                f = Fraction(*v) * p
+                if f != 0:
+                    new_dims[k] = (f.numerator, f.denominator)
+            return RationalUnit(new_dims)
 
 
 class DimensionalError(TypeError):
@@ -183,6 +214,13 @@ def jit(func: Callable):
 
         sig = (func, tuple(unit_sig))
 
+        # If an uncertainty mode other than the default "python" is active, bypass JIT to preserve proper uncertainty handling
+        from measurekit.application.context import get_uncertainty_mode
+
+        mode, _ = get_uncertainty_mode()
+        if mode != "python":
+            return func(*args, **kwargs)
+
         if sig not in _JIT_CACHE:
             # 2. Trace
             tracer_args = []
@@ -210,6 +248,13 @@ def jit(func: Callable):
         kernel, out_r_unit = _JIT_CACHE[sig]
         magnitudes = [getattr(a, "magnitude", a) for a in args]
         raw_res = kernel(*magnitudes)
+
+        # If an uncertainty mode other than the default "python" is active, bypass JIT to preserve proper uncertainty handling
+        from measurekit.application.context import get_uncertainty_mode
+
+        mode, _ = get_uncertainty_mode()
+        if mode != "python":
+            return func(*args, **kwargs)
 
         # 5. Re-wrap in Quantity
         # We need to convert RationalUnit back to CompoundUnit
@@ -240,13 +285,21 @@ def jit(func: Callable):
 def _ensure_rational(unit_obj: Any) -> RationalUnit:
     """Helper to convert any unit representation to core RationalUnit."""
     if isinstance(unit_obj, RationalUnit):
-        return unit_obj
+        ret = unit_obj
+    elif hasattr(unit_obj, "exponents"):
+        # We handle both integer and fractional exponents
+        dims = {}
+        for k, v in unit_obj.exponents.items():
+            if isinstance(v, tuple):  # Already (num, den)
+                dims[k] = v
+            elif isinstance(v, float) and not v.is_integer():
+                from fractions import Fraction
 
-    if hasattr(unit_obj, "dimensions"):
-        return unit_obj
-
-    if hasattr(unit_obj, "exponents"):
-        dims = {k: (v, 1) for k, v in unit_obj.exponents.items()}
-        return RationalUnit(dims)
-
-    return RationalUnit({})
+                f = Fraction(v).limit_denominator()
+                dims[k] = (f.numerator, f.denominator)
+            else:
+                dims[k] = (int(v), 1)
+        ret = RationalUnit(dims)
+    else:
+        ret = RationalUnit({})
+    return ret

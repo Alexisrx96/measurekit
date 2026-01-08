@@ -5,8 +5,32 @@ import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from measurekit_core import CovarianceStore as CoreStore
-from measurekit_core import PruningConfig
+try:
+    from measurekit_core import CovarianceStore as CoreStore
+    from measurekit_core import PruningConfig
+except ImportError:
+
+    @dataclass
+    class PruningConfig:
+        enabled: bool = False
+        threshold: float = 1e-6
+
+    class CoreStore:
+        """Python fallback for CovarianceStore."""
+
+        def __init__(self, config: PruningConfig):
+            self.config = config
+            self.current_size = 0
+
+        def allocate(self, size: int) -> tuple[int, int]:
+            start = self.current_size
+            self.current_size += size
+            return start, self.current_size
+
+        def update_covariance(self, out_indices, in_indices):
+            # No-op in python fallback, actual matrix math is handled by Python layer
+            pass
+
 
 if TYPE_CHECKING:
     from measurekit.core.protocols import BackendOps
