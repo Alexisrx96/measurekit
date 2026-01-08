@@ -62,11 +62,12 @@ except ImportError:
 # --- Generic Type Variables ---
 ValueType = TypeVar("ValueType")
 UncType = TypeVar("UncType")
+UnitType = TypeVar("UnitType")  # Phantom type for units
 Numeric = Any  # Ideally strictly typed via protocols, but simplified for now
 
 
 @dataclass(frozen=True, slots=True)
-class Quantity(Generic[ValueType, UncType]):
+class Quantity(Generic[ValueType, UncType, UnitType]):
     """Represents a physical quantity with magnitude, unit, and uncertainty.
 
     Examples:
@@ -170,6 +171,31 @@ class Quantity(Generic[ValueType, UncType]):
             symbol=symbol,
         )
 
+    def with_system(self, system: UnitSystem) -> Quantity:
+        """Returns a new Quantity bound to a different unit system."""
+        if self.system is system:
+            return self
+
+        # We must resolve the unit's identity in the new system.
+        # This ensures that 'm' in system A maps to 'm' (or equivalent) in B.
+        new_unit = system.get_unit(str(self.unit))
+
+        return self._fast_new(
+            self.magnitude,
+            new_unit,
+            self.uncertainty_obj,
+            system,
+            self.dimension,
+            self._backend,
+            self.fraction,
+            self.symbol,
+        )
+
+    def simplify(self) -> Quantity:
+        """Simplifies the unit of the quantity into the system's preferred form."""
+        new_unit = self.unit.simplify(self.system)
+        return self.to(new_unit)
+
     @classmethod
     def _fast_new(
         cls,
@@ -206,7 +232,8 @@ class Quantity(Generic[ValueType, UncType]):
         unit: CompoundUnit,
         system: UnitSystem,
         uncertainty: Any = 0.0,
-    ) -> Quantity[Any, Any]: ...
+        symbol: str | None = None,
+    ) -> Quantity[Any, Any, Any]: ...
 
     @classmethod
     def from_input(
@@ -259,13 +286,14 @@ class Quantity(Generic[ValueType, UncType]):
 
         # Core Mode Integration
         try:
-             import torch
-             if torch.compiler.is_compiling():
-                 mode, mode_args = ("python", None) # Default safe mode
-             else:
-                 mode, mode_args = _UNCERTAINTY_MODE.get()
+            import torch
+
+            if torch.compiler.is_compiling():
+                mode, mode_args = ("python", None)  # Default safe mode
+            else:
+                mode, mode_args = _UNCERTAINTY_MODE.get()
         except (ImportError, AttributeError):
-             mode, mode_args = _UNCERTAINTY_MODE.get()
+            mode, mode_args = _UNCERTAINTY_MODE.get()
 
         if ("QuantityInner" in str(type(value))) or (
             mode != "python" or mode_args
@@ -974,7 +1002,7 @@ class Quantity(Generic[ValueType, UncType]):
         return None
 
     # --- Arithmetic Dunder Methods ---
-    def __add__(self, other: Any) -> Quantity:
+    def __add__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Handles arithmetic with Affine Support."""
         if self.uncertainty_obj is None or (
             isinstance(other, Quantity) and other.uncertainty_obj is None
@@ -1141,7 +1169,7 @@ class Quantity(Generic[ValueType, UncType]):
             uncertainty=new_uncertainty_obj,
         )
 
-    def __sub__(self, other: Any) -> Quantity:
+    def __sub__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Handles cases like my_quantity - other."""
         if self.uncertainty_obj is None or (
             isinstance(other, Quantity) and other.uncertainty_obj is None
@@ -1292,11 +1320,11 @@ class Quantity(Generic[ValueType, UncType]):
             uncertainty=new_uncertainty_obj,
         )
 
-    def __rsub__(self, other: Any) -> Quantity:
+    def __rsub__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Right subtraction."""
         return NotImplemented
 
-    def __mul__(self, other: Any) -> Quantity:
+    def __mul__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Multiplies two quantities."""
         if self.uncertainty_obj is None or (
             isinstance(other, Quantity) and other.uncertainty_obj is None
@@ -1332,10 +1360,12 @@ class Quantity(Generic[ValueType, UncType]):
                     None, new_magnitude, j_self, None
                 )
             else:
-                new_uncertainty_obj = self.uncertainty_obj.scale(other)
+                new_uncertainty_obj = self.uncertainty_obj.scale(
+                    cast("Any", other)
+                )
 
             return cast(
-                "Quantity[ValueType, UncType]",
+                "Quantity[ValueType, UncType, Any]",
                 Quantity.from_input(
                     new_magnitude,
                     self.unit,
@@ -1446,7 +1476,23 @@ class Quantity(Generic[ValueType, UncType]):
             )
         return NotImplemented
 
-    def __truediv__(self, other: Any) -> Quantity:
+    def __rmul__(self, other: Any) -> Quantity:
+        """Handles reverse multiplication."""
+        return self.__mul__(other)
+
+    def __radd__(self, other: Any) -> Quantity:
+        """Handles reverse addition."""
+        return self.__add__(other)
+
+    def __rmul__(self, other: Any) -> Quantity:
+        """Handles reverse multiplication."""
+        return self.__mul__(other)
+
+    def __radd__(self, other: Any) -> Quantity:
+        """Handles reverse addition."""
+        return self.__add__(other)
+
+    def __truediv__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Divides two quantities."""
         if self.uncertainty_obj is None or (
             isinstance(other, Quantity) and other.uncertainty_obj is None
@@ -1482,10 +1528,12 @@ class Quantity(Generic[ValueType, UncType]):
                     None, new_magnitude, j_self, None
                 )
             else:
-                new_uncertainty_obj = self.uncertainty_obj.scale(1.0 / other)
+                new_uncertainty_obj = self.uncertainty_obj.scale(
+                    cast("Any", 1.0 / other)
+                )
 
             return cast(
-                "Quantity[ValueType, UncType]",
+                "Quantity[ValueType, UncType, Any]",
                 Quantity.from_input(
                     new_magnitude,
                     self.unit,
@@ -1612,7 +1660,7 @@ class Quantity(Generic[ValueType, UncType]):
             )
         return NotImplemented
 
-    def __pow__(self, exponent: float) -> Quantity:
+    def __pow__(self, exponent: float) -> Quantity[Any, Any, Any]:
         """Raises quantity to power."""
         if self.uncertainty_obj is None:
             new_val = self._backend.pow(self.magnitude, exponent)
@@ -1640,7 +1688,11 @@ class Quantity(Generic[ValueType, UncType]):
     __radd__ = __add__
     __rmul__ = __mul__
 
-    def __rtruediv__(self, other: Any) -> Quantity:
+    def __rpow__(self, other: Any) -> Quantity[Any, Any, Any]:
+        """Right power."""
+        return NotImplemented
+
+    def __rtruediv__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Right division."""
         # Note: Backend handles div by zero (inf/nan) usage (JAX/Tracer safe).
 
@@ -1972,19 +2024,20 @@ class Quantity(Generic[ValueType, UncType]):
         )
 
     # --- Container / Array Methods ---
-    # def __array__(self, dtype=None) -> Any:
-    #     """Returns the magnitude as a NumPy array (strips units)."""
-    #     # Note: Ideally avoid importing numpy, but this hook is for numpy.
-    #     # If magnitude is already array, return it.
-    #     # If not, convert.
-    #     try:
-    #         import numpy as np
-    #         if dtype:
-    #             return np.array(self.magnitude, dtype=dtype)
-    #         return np.array(self.magnitude)
-    #     except ImportError:
-    #         # Should not happen if this is called by numpy
-    #         return self.magnitude
+    def __array__(self, dtype=None) -> Any:
+        """Returns the magnitude as a NumPy array (strips units)."""
+        # Note: Ideally avoid importing numpy, but this hook is for numpy.
+        # If magnitude is already array, return it.
+        # If not, convert.
+        try:
+            import numpy as np
+
+            if dtype:
+                return np.array(self.magnitude, dtype=dtype)
+            return np.array(self.magnitude)
+        except ImportError:
+            # Should not happen if this is called by numpy
+            return self.magnitude
 
     def __float__(self) -> float:
         """Converts to float."""

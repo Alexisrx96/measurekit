@@ -8,10 +8,12 @@ creation of `Quantity` instances in a variety of ways.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from measurekit.application.context import get_active_system
-from measurekit.domain.measurement.quantity import Quantity, UncType, ValueType
+from measurekit.domain.measurement.quantity import (
+    Quantity,
+)
 from measurekit.domain.measurement.units import CompoundUnit
 
 if TYPE_CHECKING:
@@ -23,6 +25,11 @@ if TYPE_CHECKING:
 _STRING_PARSE_REGEX = re.compile(
     r"^\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(.*)$"
 )
+
+
+_V = TypeVar("_V")
+_U = TypeVar("_U")
+_UT = TypeVar("_UT")
 
 
 class SpecializedQuantityFactory:
@@ -46,19 +53,28 @@ class SpecializedQuantityFactory:
     @overload
     def __call__(
         self,
-        value: ValueType | Quantity = 1,
+        value: Quantity[_V, _U, Any],
         from_unit: str | CompoundUnit | None = None,
-        uncertainty: UncType = 0.0,
+        uncertainty: Any = 0.0,
         symbol: str | None = None,
-    ) -> Quantity[ValueType, UncType]: ...
+    ) -> Quantity[_V, _U, Any]: ...
+
+    @overload
+    def __call__(
+        self,
+        value: _V,
+        from_unit: str | CompoundUnit | None = None,
+        uncertainty: _U = 0.0,
+        symbol: str | None = None,
+    ) -> Quantity[_V, _U, Any]: ...
 
     def __call__(
         self,
-        value: ValueType | Quantity = 1,
+        value: Any = 1,
         from_unit: str | CompoundUnit | None = None,
-        uncertainty: UncType = 0.0,
+        uncertainty: Any = 0.0,
         symbol: str | None = None,
-    ) -> Quantity:
+    ) -> Quantity[Any, Any, Any]:
         """Creates a Quantity with the factory's default unit."""
         system = (
             self._system if self._system is not None else get_active_system()
@@ -104,34 +120,68 @@ class QuantityFactory:
     @overload
     def __call__(
         self,
-        value: ValueType,
-        unit: str | CompoundUnit,
-        uncertainty: UncType = 0.0,
+        value: _V,
+        unit: CompoundUnit,
+        uncertainty: _U = 0.0,
         symbol: str | None = None,
-    ) -> Quantity[ValueType, UncType]: ...
+    ) -> Quantity[_V, _U, Any]: ...
+
+    @overload
+    def __call__(
+        self,
+        value: _V,
+        unit: _UT,
+        uncertainty: _U = 0.0,
+        symbol: str | None = None,
+    ) -> Quantity[_V, _U, _UT]: ...
 
     @overload
     def __call__(
         self,
         value: str,
-    ) -> Quantity[float, float]: ...
+    ) -> Quantity[float, float, Any]: ...
 
     def __call__(
         self,
-        value: ValueType | str = 1,
-        unit: str | CompoundUnit | None = None,
-        uncertainty: UncType = 0.0,
+        value: Any = 1,
+        unit: Any = None,
+        uncertainty: Any = 0.0,
         symbol: str | None = None,
-    ) -> Quantity:
+    ) -> Quantity[Any, Any, Any]:
         """Creates a Quantity, parsing strings if necessary."""
         system = (
             self._system if self._system is not None else get_active_system()
         )
 
-        # Handle string input like "10 m/s"
+        if isinstance(value, Quantity):
+            # If a unit is provided, convert to that unit first (in its own
+            # system)
+            if unit is not None:
+                # Resolve unit in the target system preferably
+                target_unit = (
+                    system.get_unit(unit) if isinstance(unit, str) else unit
+                )
+                value = value.to(target_unit)
+
+            # Move to the target system if different
+            if value.system != system:
+                # We need to ensure the unit is valid in the new system
+                # and the conversion factor is preserved.
+                # For now, we assume dimension equality is enough and we keep
+                # magnitude.
+                # A more robust way: converted_val = value.to(unit_in_new_system)
+
+                # Check if unit exists in target system and has same scale
+                # Actually, simplified: just transfer magnitude and uncertainty
+                # if units are compatible.
+                return value.with_system(system)
+            return value
+
+        # Handle string parsing if value is a string and no unit is provided
         if isinstance(value, str) and unit is None:
             value, unit = self._parse_string_value(value, system)
 
+        # Handle string unit resolution
         if unit is None:
             unit = system.get_unit("dimensionless")
         elif isinstance(unit, str):
@@ -165,7 +215,7 @@ class QuantityFactory:
 
     def _parse_string_value(
         self, value_str: str, system: UnitSystem
-    ) -> tuple[ValueType, CompoundUnit]:
+    ) -> tuple[Any, CompoundUnit]:
         """Parses a string like '10 m/s' into a value and a unit."""
         match = _STRING_PARSE_REGEX.match(value_str)
         if not match:
@@ -182,12 +232,12 @@ class QuantityFactory:
                 and "e" not in num_str.lower()
             ):
                 parsed_value = int(parsed_value)
-
-            unit = (
-                system.get_unit(unit_str.strip())
-                if unit_str
-                else system.get_unit("dimensionless")
-            )
-            return parsed_value, unit
         except ValueError:
             return value_str, system.get_unit("dimensionless")
+
+        unit = (
+            system.get_unit(unit_str.strip())
+            if unit_str
+            else system.get_unit("dimensionless")
+        )
+        return parsed_value, unit

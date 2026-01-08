@@ -74,7 +74,9 @@ class MeasureKitArray(ExtensionArray):
     ):
         """Initializes the MeasureKitArray."""
         self._data = (
-            np.array(values, copy=True) if copy else np.asarray(values)
+            np.array(values, dtype=object, copy=True)
+            if copy
+            else np.array(values, dtype=object)
         )
         self._dtype = dtype or MeasureKitDtype()
 
