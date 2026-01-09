@@ -1,4 +1,7 @@
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
 try:
     import triton
@@ -61,9 +64,9 @@ if HAS_TRITON:
             & (offs_bn[None, :] < n_elements),
         )
 
-    def apply_covariance_update_triton(
-        sigma: torch.Tensor, jac: torch.Tensor
-    ) -> torch.Tensor:
+    from typing import Any
+
+    def apply_covariance_update_triton(sigma: Any, jac: Any) -> Any:
         """Applies J * Sigma * J^T assuming J is diagonal (vector)."""
         assert sigma.is_cuda and jac.is_cuda
         n = sigma.shape[0]
@@ -84,8 +87,7 @@ if HAS_TRITON:
         return out
 
 else:
+    from typing import Any
 
-    def apply_covariance_update_triton(
-        sigma: torch.Tensor, jac: torch.Tensor
-    ) -> torch.Tensor:
+    def apply_covariance_update_triton(sigma: Any, jac: Any) -> Any:
         raise RuntimeError("Triton kernels are not available on this system.")
