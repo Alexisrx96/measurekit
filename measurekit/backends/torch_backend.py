@@ -475,7 +475,19 @@ class TorchBackend(BackendOps):
             # Dense @ Sparse
             # Convert a to sparse? Or b to dense?
             # b.to_dense() is safer for now.
-            return torch.matmul(a, b.to_dense())
+            b_dense = b.to_dense()
+            if a.dtype != b_dense.dtype:
+                a = a.to(b_dense.dtype)
+            return torch.matmul(a, b_dense)
+
+        if a.dtype != b.dtype:
+            # Ensure same dtype for matmul
+            if a.dtype == torch.float64 or b.dtype == torch.float64:
+                a = a.to(torch.float64)
+                b = b.to(torch.float64)
+            else:
+                a = a.to(torch.float32)
+                b = b.to(torch.float32)
 
         return torch.matmul(a, b)
 

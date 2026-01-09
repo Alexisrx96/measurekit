@@ -189,11 +189,17 @@ def _apply_affine(
     )
 
     # 4. Construct Result Quantity
+    from measurekit.domain.measurement.quantity import Quantity
     from measurekit.domain.measurement.uncertainty import CovarianceModel
 
     diag = backend.sparse_diagonal(new_matrix)
     res_diag = diag[out_slice]
     res_std = backend.sqrt(res_diag)
+
+    # print(f"DEBUG: new_matrix diag={diag}")
+    # print(f"DEBUG: res_diag={res_diag}")
+    # print(f"DEBUG: res_std={res_std}")
+
     res_std = backend.reshape(res_std, backend.shape(res_mag))
 
     res_unc = CovarianceModel(
@@ -201,16 +207,12 @@ def _apply_affine(
         vector_slice=out_slice,
     )
 
-    res_q = a._fast_new(
-        res_mag,
-        a.unit,
-        res_unc,
-        a.system,
-        a.dimension,
-        backend,
-    )
-
-    return res_q, FunctionalState(state.store, new_matrix, state.registry)
+    return Quantity.from_input(
+        value=res_mag,
+        unit=a.unit,
+        system=a.system,
+        uncertainty=res_unc,
+    ), FunctionalState(state.store, new_matrix, state.registry)
 
 
 def register_functional_pytree():

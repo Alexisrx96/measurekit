@@ -31,7 +31,11 @@ if TYPE_CHECKING:
     from measurekit.domain.measurement.dimensions import Dimension
 
 from measurekit.domain.exceptions import IncompatibleUnitsError
-from measurekit.domain.measurement.uncertainty import Uncertainty
+from measurekit.domain.measurement.uncertainty import (
+    CovarianceModel,
+    Uncertainty,
+    VarianceModel,
+)
 from measurekit.domain.measurement.units import (
     CompoundUnit,
     get_default_system,
@@ -106,15 +110,38 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
     def __new__(cls, magnitude, unit, *args, **kwargs):
         """Ensures the core object is initialized with a RationalUnit."""
         r_unit = _ensure_rational(unit)
-        # Call the base class __new__ with positional arguments (mean, std_dev, unit)
-        return CoreQuantity.__new__(cls, magnitude, 0.0, r_unit)
 
-    def __getnewargs__(self):
-        """Support for pickling: arguments passed to __new__."""
-        return (self.magnitude, self.unit)
+        # Pull uncertainty from kwargs if present, else try args[0]
+        uncertainty = kwargs.get("uncertainty")
+        if uncertainty is None:
+            uncertainty = kwargs.get("uncertainty_obj")
 
-    magnitude: ValueType
-    unit: CompoundUnit
+        if uncertainty is None:
+            if args:
+                uncertainty = args[0]
+            else:
+                uncertainty = 0.0
+
+        # Ensure we pass the numerical standard deviation to Rust, not the Python model object.
+        # Python keeps the model in self.uncertainty_obj.
+        raw_uncertainty = uncertainty
+        if isinstance(uncertainty, Uncertainty):
+            raw_uncertainty = uncertainty.std_dev
+
+        # Call the base class __new__ with positional arguments (mean, unit, uncertainty)
+        return CoreQuantity.__new__(cls, magnitude, r_unit, raw_uncertainty)
+
+    def __reduce__(self):
+        """Custom reduce to ensuring proper subclass reconstruction."""
+        # Use Rust's implementation for args and state
+        res = super().__reduce__()
+        # If it returns (func, args, state), replace func with this class
+        if isinstance(res, tuple) and len(res) >= 2:
+            return (self.__class__,) + res[1:]
+        return res
+
+    magnitude: ValueType = field(init=False)
+    unit: UnitType = field(init=False)
     uncertainty_obj: Uncertainty[UncType] = field(
         default_factory=lambda: cast(
             "Uncertainty[UncType]", Uncertainty.from_standard(0.0)
@@ -127,9 +154,55 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
     symbol: str | None = field(default=None, repr=False, compare=False)
     __weakref__: Any = field(init=False, repr=False, compare=False)
 
+    def __init__(
+        self,
+        magnitude: Any = None,
+        unit: Any = None,
+        uncertainty_obj: Uncertainty[UncType] | None = None,
+        fraction: Fraction | None = None,
+        system: UnitSystem | None = None,
+        symbol: str | None = None,
+    ):
+        """Initializes the entity, ignoring magnitude and unit if already set by core."""
+        # magnitude and unit are handled by CoreQuantity properties.
+        # We manually set the other fields.
+        if uncertainty_obj is not None:
+            from measurekit.domain.measurement.uncertainty import (
+                Uncertainty,
+            )
+
+            if not isinstance(uncertainty_obj, Uncertainty):
+                uncertainty_obj = Uncertainty.from_standard(uncertainty_obj)
+            object.__setattr__(self, "uncertainty_obj", uncertainty_obj)
+        else:
+            from measurekit.domain.measurement.uncertainty import Uncertainty
+
+            object.__setattr__(
+                self, "uncertainty_obj", Uncertainty.from_standard(0.0)
+            )
+
+        if fraction is not None:
+            object.__setattr__(self, "fraction", fraction)
+
+        if system is not None:
+            object.__setattr__(self, "system", system)
+        else:
+            object.__setattr__(self, "system", get_default_system())
+
+        if symbol is not None:
+            object.__setattr__(self, "symbol", symbol)
+
+        # After fields are basic-set, run logic
+        self.__post_init__()
+
     def __post_init__(self):
         """Calculates derived fields after the object is initialized."""
-        calculated_dimension = self.unit.dimension(self.system)
+        # Ensure we can call unit.dimension()
+        unit = self.unit
+        if not hasattr(unit, "dimension"):
+            unit = CompoundUnit(unit.exponents)
+
+        calculated_dimension = unit.dimension(self.system)
         object.__setattr__(self, "dimension", calculated_dimension)
 
         # Determine and set backend
@@ -145,31 +218,30 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             if (tracer := get_active_tracer()) is not None:
                 tracer.register_leaf(self, self.symbol)
 
-    def __getstate__(self):
-        """Custom pickling to exclude _backend."""
-        return {
-            "magnitude": self.magnitude,
-            "unit": self.unit,
-            "uncertainty_obj": self.uncertainty_obj,
-            "fraction": self.fraction,
-            "system": self.system,
-            "dimension": self.dimension,
-        }
-
-    def __setstate__(self, state):
-        """Restore state and re-derive backend."""
-        for k, v in state.items():
-            object.__setattr__(self, k, v)
-
-        backend = BackendManager.get_backend(self.magnitude)
-        object.__setattr__(self, "_backend", backend)
-
     def tree_flatten(
         self,
     ) -> tuple[tuple[Any, Any], tuple[Any, Any, Any, Any]]:
         """Flattens the Quantity for JAX Pytree registration."""
+        mag = self.magnitude
+        unc = self.uncertainty
+
+        # JAX vmap requirement: mapped leaves must have consistent batch dimension.
+        # If magnitude is an array but uncertainty is a scalar, vmap(in_axes=0) fails.
+        # We broadcast uncertainty to match magnitude's shape if it's a scalar.
+        if self._backend.is_array(mag):
+            try:
+                mag_shape = self._backend.shape(mag)
+                if not self._backend.is_array(unc) or (
+                    self._backend.size(unc) == 1 and len(mag_shape) > 0
+                ):
+                    # Broadcast to mag shape
+                    ones = self._backend.ones(mag_shape, reference=mag)
+                    unc = self._backend.mul(ones, unc)
+            except (AttributeError, TypeError, ValueError):
+                pass
+
         # Children: raw magnitude and uncertainty arrays only
-        return (self.magnitude, self.uncertainty), (
+        return (mag, unc), (
             self.unit,
             self.system,
             self.fraction,
@@ -242,9 +314,10 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
     ) -> Self:
         """Bypasses __post_init__ for high-performance creation."""
         # We MUST call cls.__new__ (or CoreQuantity.__new__) for native subclasses.
-        obj = cls.__new__(cls, magnitude=value, unit=unit)
-        object.__setattr__(obj, "magnitude", value)
-        object.__setattr__(obj, "unit", unit)
+        # Pass uncertainty to __new__ so the CoreQuantity knows about the std_dev.
+        obj = cls.__new__(
+            cls, magnitude=value, unit=unit, uncertainty=uncertainty
+        )
         object.__setattr__(obj, "uncertainty_obj", uncertainty)
         object.__setattr__(obj, "system", system)
         object.__setattr__(obj, "dimension", dimension)
@@ -332,17 +405,21 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                 r_unit = _ensure_rational(unit)
                 std_dev = getattr(uncertainty_obj, "std_dev", uncertainty_obj)
                 # Create core magnitude
+                # Create core magnitude
                 value = CoreQuantity(
                     float(value),
-                    float(std_dev or 0.0),
                     r_unit,
+                    float(std_dev or 0.0),
                     mode,
                     **mode_args,
                 )
 
             backend = BackendManager.get_backend(value)
-            # Core handles uncertainty
-            uncertainty_obj = None
+            # Core handles uncertainty, but we keep the object if it's a specific model
+            if not isinstance(
+                uncertainty_obj, (VarianceModel, CovarianceModel)
+            ):
+                uncertainty_obj = None
 
         return cls(
             magnitude=cast("ValueType", value),
@@ -459,29 +536,6 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                 "unhashable type: 'Quantity' with unhashable magnitude"
             ) from None
 
-
-if IS_CORE_AVAILABLE:
-    # Remove Python fallbacks to enforce use of Rust Core for 10/10 Performance
-    # This eliminates the Python stack frame for arithmetic dispatch.
-    _methods_to_remove = [
-        "__add__",
-        "__radd__",
-        "__sub__",
-        "__rsub__",
-        "__mul__",
-        "__rmul__",
-        "__truediv__",
-        "__rtruediv__",
-        "__pow__",
-        "__rpow__",
-        "__neg__",
-        "__pos__",
-        "__abs__",
-    ]
-    for _m in _methods_to_remove:
-        if _m in Quantity.__dict__:
-            delattr(Quantity, _m)
-
     @property
     def _has_uncertainty(self) -> bool:
         """Checks if uncertainty is non-zero, safely handling arrays."""
@@ -589,7 +643,7 @@ if IS_CORE_AVAILABLE:
             >>> from measurekit import Q_
             >>> q = Q_(10, "m/s^2")
             >>> print(q.to_latex())
-            10 \; \frac{m}{s^{2}}
+            10.0 \; \frac{m}{s^{2}}
         """
         unit_latex = self.unit.to_latex()
         if self._has_uncertainty:
@@ -648,23 +702,63 @@ if IS_CORE_AVAILABLE:
         )
 
     @property
-    def uncertainty(self) -> UncType:
+    def uncertainty(self) -> Any:
         """Returns the standard deviation of the uncertainty."""
-        # Prefer Core logic if available
-        if hasattr(super(), "std_dev"):
-            # For some reason super() access to properties is tricky on extensions
-            # But self.std_dev should call the getter from CoreQuantity if Quantity doesn't override it.
-            # Wait, separate field in Quantity overrides it? No, Quantity doesn't have 'std_dev' field.
-            # It has 'std_dev' method in Rust, exposed as property or method?
-            # IN Rust: #[getter] fn std_dev... so it is a property.
-            try:
-                return super().std_dev
-            except AttributeError:
-                pass
+        # Source of truth: Rust Core std_dev if available and non-zero
+        core_std = 0.0
+        try:
+            core_std = self.std_dev
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
-        if self.uncertainty_obj is None:
-            return getattr(self.magnitude, "std_dev", 0.0)
-        return self.uncertainty_obj.std_dev
+        # Python-side state
+        python_unc = getattr(self, "uncertainty_obj", None)
+
+        # If Core has non-zero uncertainty, it usually means it's the primary source
+        # (especially after unpickling or Rust arithmetic)
+        # We check non-zero in a tracer-safe way (avoiding .any() on tracers)
+        is_nonzero = False
+        if core_std is not None:
+            if not isinstance(core_std, (int, float, complex)):
+                # Probably a tracer or array, assume it's the primary source
+                is_nonzero = True
+            elif core_std != 0:
+                is_nonzero = True
+
+        if is_nonzero:
+            return core_std
+
+        # Fallback to Python-only logic or specific models
+        if python_unc is not None:
+            if hasattr(python_unc, "std_dev"):
+                return python_unc.std_dev
+            return python_unc
+
+        return core_std if core_std is not None else 0.0
+
+    @property
+    def unit(self) -> Any:
+        """Retrieves the unit of the quantity as a CompoundUnit."""
+        # This ensures we hit the Python-side Flyweight cache
+        import measurekit.domain.measurement.units as units_module
+
+        # Use a safe reference if shadowed
+        CU = getattr(
+            units_module, "_STABLE_COMPOUND_UNIT", units_module.CompoundUnit
+        )
+
+        u = super().unit
+        try:
+            if isinstance(u, CU):
+                return u
+        except (TypeError, AttributeError):
+            pass
+
+        # Wrap raw RationalUnit from Rust in CompoundUnit to use Python cache
+        dims = getattr(u, "dimensions", None)
+        if dims is None:
+            dims = getattr(u, "exponents", {})
+        return CU(dims)
 
     def to(
         self, target_unit: CompoundUnit | UnitName
@@ -1195,11 +1289,9 @@ if IS_CORE_AVAILABLE:
                 else:
                     j_other = self._backend.identity_operator(
                         size,
-                        reference=(
-                            other.magnitude
-                            if isinstance(other, Quantity)
-                            else None
-                        ),
+                        reference=other.magnitude
+                        if isinstance(other, Quantity)
+                        else None,
                     )
 
                 new_unc = self._propagate_vectorized(
@@ -2289,3 +2381,26 @@ if IS_CORE_AVAILABLE:
     def __ge__(self, other: Any) -> Any:
         """Checks if greater than or equal to other."""
         return self._compare(other, operator.ge)
+
+
+# if IS_CORE_AVAILABLE:
+#     # Remove Python fallbacks to enforce use of Rust Core for 10/10 Performance
+#     # This eliminates the Python stack frame for arithmetic dispatch.
+#     _methods_to_remove = [
+#         "__add__",
+#         "__radd__",
+#         "__sub__",
+#         "__rsub__",
+#         "__mul__",
+#         "__rmul__",
+#         "__truediv__",
+#         "__rtruediv__",
+#         "__pow__",
+#         "__rpow__",
+#         "__neg__",
+#         "__pos__",
+#         "__abs__",
+#     ]
+#     for _m in _methods_to_remove:
+#         if hasattr(Quantity, _m):
+#             delattr(Quantity, _m)
