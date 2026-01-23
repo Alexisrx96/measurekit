@@ -101,6 +101,8 @@ except ImportError:
 class CompoundUnit(RationalUnit, BaseExponentEntity):
     """Represents a unit composed of base units raised to various powers."""
 
+    _is_compound: ClassVar[bool] = True
+
     def dimension(self, system: UnitSystem | None = None) -> Dimension:
         """Calculates the physical dimension of the composite unit."""
         from measurekit.domain.measurement.dimensions import Dimension
@@ -153,7 +155,7 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
                     unit_dim = base_unit.dimension(system)
                 else:
                     unit_dim = Dimension({unit_name: 1})
-            dims *= unit_dim**exp
+            dims = dims * (unit_dim**exp)
         return dims
 
     _cache: ClassVar[weakref.WeakValueDictionary[tuple, CompoundUnit]] = (
