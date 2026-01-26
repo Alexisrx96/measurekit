@@ -2109,10 +2109,22 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                 # If dimensionless, units are dropped/cleared
                 # Verify dimensionless; result is pure number.
                 if inp.dimension.is_dimensionless:
-                    res_mag = ufunc(inp.magnitude, **kwargs)
-                    return Quantity.from_input(
-                        res_mag, CompoundUnit({}), self.system
-                    )
+                    if inp.uncertainty_obj and inp.uncertainty_obj.std_dev != 0:
+                        # Propagate uncertainty
+                        res_mag, res_unc = Uncertainty.propagate(
+                            ufunc, [inp.magnitude], [inp.uncertainty_obj]
+                        )
+                        return Quantity.from_input(
+                            res_mag,
+                            CompoundUnit({}),
+                            self.system,
+                            uncertainty=res_unc,
+                        )
+                    else:
+                        res_mag = ufunc(inp.magnitude, **kwargs)
+                        return Quantity.from_input(
+                            res_mag, CompoundUnit({}), self.system
+                        )
 
                 raise IncompatibleUnitsError(inp.unit, CompoundUnit({}))
 
