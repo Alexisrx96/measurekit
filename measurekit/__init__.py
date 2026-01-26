@@ -20,7 +20,7 @@ from measurekit.application.context import (
     get_propagation_mode,
     propagation_mode,
     uncertainty_mode,
-    use_system,
+    use_system as system_context,
 )
 from measurekit.application.factories import QuantityFactory
 from measurekit.application.startup import (
@@ -88,6 +88,7 @@ __all__ = [
     "get_current_system",
     "get_unit",
     "jit",
+    "system_context",
     "uncertainty_mode",
     "units",
     "use_system",
