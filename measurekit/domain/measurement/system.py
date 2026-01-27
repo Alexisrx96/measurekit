@@ -392,6 +392,18 @@ class UnitSystem(IUnitRepository):
 
         return result if not result.is_dimensionless else CompoundUnit({})
 
+    def __contains__(self, item: str) -> bool:
+        """Checks if a unit symbol or alias exists in the system."""
+        return (
+            item in self.UNIT_DIMENSIONS
+            or item in self.ALIAS_TO_EXPONENTS
+            or (
+                self._core_registry is not None
+                and hasattr(self._core_registry, "contains")
+                and self._core_registry.contains(item)
+            )
+        )
+
     def __getattr__(self, name: str) -> CompoundUnit:
         """Allows accessing units as attributes."""
         try:
