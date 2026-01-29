@@ -1,77 +1,143 @@
-"""MeasureKit: A Python Library for Unit-Aware Scientific Calculations.
+"""MeasureKit: A Python Library for Unit-Aware Scientific Calculations."""
 
-This library provides a comprehensive framework for performing calculations
-with physical quantities, ensuring dimensional consistency and providing a
-robust system for unit conversions. It is designed to be intuitive and easy,
-allowing developers to focus on calculation logic without worrying about
-unit management intricacies.
-"""
+import sys
+from typing import Any
 
-# --- Application Assembly ---
-# The default system is now lazily loaded by context.get_current_system().
-# We expose a proxy or simply rely on get_current_system().
-
-from contextlib import contextmanager
-from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any
-
-from measurekit.application.context import (
-    get_current_system,
-    get_propagation_mode,
-    propagation_mode,
-    uncertainty_mode,
-    use_system as system_context,
-)
-from measurekit.application.factories import QuantityFactory
-from measurekit.application.startup import (
-    create_default_system,
-    create_system,
-)
-from measurekit.domain.measurement.units import (
-    CompoundUnit,
-    get_default_system,
-    units,
-)
-from measurekit.jit import jit
-
-# Expose primary factories
-Q_ = QuantityFactory()
+# Version
+__version__ = "0.0.3"
 
 
-# Configuration Access
-class ConfigProxy:
-    @property
-    def propagation_mode(self):
-        return propagation_mode
+def __getattr__(name: str) -> Any:
+    """Implement lazy loading for all public API members."""
+    if name == "save_state":
+        from measurekit.application.io import save_state
 
-    def set_propagation_mode(self, mode: str):
-        # This could set a global default if needed, but for now we use context
-        # Or we could have a setter that updates the ContextVar's default.
-        return propagation_mode(mode)
+        return save_state
+
+    if name == "load_state":
+        from measurekit.application.io import load_state
+
+        return load_state
+
+    if name == "Q_":
+        from measurekit.application.factories import QuantityFactory
+
+        return QuantityFactory()
+
+    if name == "units":
+        from measurekit.domain.measurement.units import units
+
+        return units
+
+    if name == "CompoundUnit":
+        from measurekit.domain.measurement.units import CompoundUnit
+
+        return CompoundUnit
+
+    if name == "Quantity":
+        from measurekit.domain.measurement.quantity import Quantity
+
+        return Quantity
+
+    if name == "Uncertainty":
+        from measurekit.domain.measurement.uncertainty import Uncertainty
+
+        return Uncertainty
+
+    if name == "create_system":
+        from measurekit.application.startup import create_system
+
+        return create_system
+
+    if name == "create_default_system":
+        from measurekit.application.startup import create_default_system
+
+        return create_default_system
+
+    if name == "default_system":
+        from measurekit.domain.measurement.units import get_default_system
+
+        return get_default_system()
+
+    if name == "jit":
+        from measurekit._jit import jit
+
+        return jit
+
+    if name in (
+        "get_current_system",
+        "get_active_system",
+        "get_propagation_mode",
+        "propagation_mode",
+        "uncertainty_mode",
+        "system_context",
+    ):
+        from measurekit.application.context import (
+            get_current_system,
+            get_propagation_mode,
+            propagation_mode,
+            uncertainty_mode,
+            use_system,
+        )
+
+        if name == "get_current_system":
+            return get_current_system
+        if name == "get_active_system":
+            return get_current_system
+        if name == "get_propagation_mode":
+            return get_propagation_mode
+        if name == "propagation_mode":
+            return propagation_mode
+        if name == "uncertainty_mode":
+            return uncertainty_mode
+        if name == "system_context":
+            return use_system
+
+    if name == "get_unit":
+
+        def get_unit(unit_expression):
+            from measurekit.application.context import get_current_system
+
+            return get_current_system().get_unit(unit_expression)
+
+        return get_unit
+
+    if name in ("ConversionError", "MeasureKitError", "UnitNotFoundError"):
+        import measurekit.domain.exceptions as exc
+
+        return getattr(exc, name)
+
+    if name == "config":
+
+        class ConfigProxy:
+            @property
+            def propagation_mode(self):
+                from measurekit.application.context import propagation_mode
+
+                return propagation_mode
+
+            def set_propagation_mode(self, mode: str):
+                from measurekit.application.context import propagation_mode
+
+                return propagation_mode(mode)
+
+        return ConfigProxy()
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-config = ConfigProxy()
+# Register Extensions only if libraries are already loaded
+if "pandas" in sys.modules:
+    try:
+        from measurekit.ext import pandas_support
+    except (ImportError, AttributeError):
+        pass
 
-
-# 3. Expose the `get_unit` function from the configured system instance.
-def get_unit(unit_expression):
-    """Retrieve a unit by its expression from the active unit system."""
-    return get_current_system().get_unit(unit_expression)
-
-
-# --- Expose Core Domain Objects and Exceptions ---
-# IMPORTANT: get_active_system is an alias for get_current_system
-from measurekit.application.context import get_active_system
-from measurekit.domain.exceptions import (
-    ConversionError,
-    MeasureKitError,
-    UnitNotFoundError,
-)
-from measurekit.domain.measurement.quantity import Quantity
-from measurekit.domain.measurement.uncertainty import Uncertainty
-
-# CompoundUnit is now imported directly above
-# from measurekit.domain.measurement.units import CompoundUnit
+if "numba" in sys.modules:
+    try:
+        import measurekit.ext.numba_support
+    except (ImportError, AttributeError):
+        pass
 
 __all__ = [
     "Q_",
@@ -88,33 +154,9 @@ __all__ = [
     "get_current_system",
     "get_unit",
     "jit",
+    "load_state",
+    "save_state",
     "system_context",
     "uncertainty_mode",
     "units",
-    "use_system",
 ]
-
-__version__ = "0.0.3"
-
-
-def __getattr__(name: str) -> Any:
-    """Implement lazy loading for default_system."""
-    if name == "default_system":
-        return get_default_system()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# Register Pandas Accessor if pandas is available
-try:
-    import pandas as pd
-
-    from measurekit.ext import pandas_support
-except (ImportError, AttributeError):
-    pass
-
-try:
-    import numba
-
-    import measurekit.ext.numba_support
-except (ImportError, AttributeError):
-    pass

@@ -251,6 +251,16 @@ def get_current_store() -> CovarianceStore | None:
     return _current_store.get()
 
 
+def get_active_store() -> CovarianceStore | None:
+    """Returns the current store, falling back to the global store if unique."""
+    store = _current_store.get()
+    if store is not None:
+        return store
+    if len(_global_stores) == 1:
+        return next(iter(_global_stores.values()))
+    return None
+
+
 _global_stores: dict[type, CovarianceStore] = {}
 
 

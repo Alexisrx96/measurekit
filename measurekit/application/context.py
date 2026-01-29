@@ -61,39 +61,35 @@ def _get_current_system_impl() -> UnitSystem:
 
 
 # Helper for Dynamo: Eager execution to freeze the context
-try:
-    import torch
+def get_current_system() -> UnitSystem:
+    """Returns the currently active UnitSystem.
 
-    @torch.compiler.disable
-    def _get_current_system_eager():
-        return _get_current_system_impl()
+    Resolution order:
+    1. ContextVar.
+    2. Global Cache.
+    3. Lazy Load SI.
 
-    def get_current_system() -> UnitSystem:
-        """Returns the currently active UnitSystem.
+    Dynamo Note: If compiling, this function runs eagerly to 'freeze' the
+    system into the graph as a constant.
+    """
+    try:
+        # Check if we are inside a torch.compile session without a full top-level import
+        import sys
 
-        Resolution order:
-        1. ContextVar.
-        2. Global Cache.
-        3. Lazy Load SI.
+        if "torch" in sys.modules:
+            import torch
 
-        Dynamo Note: If compiling, this function runs eagerly to 'freeze' the
-        system into the graph as a constant.
-        """
-        if torch.compiler.is_compiling():
-            return _get_current_system_eager()
-        return _get_current_system_impl()
+            if torch.compiler.is_compiling():
 
-except (ImportError, AttributeError):
-    # Fallback if torch is missing
-    def get_current_system() -> UnitSystem:
-        """Returns the currently active UnitSystem.
+                @torch.compiler.disable
+                def _eager():
+                    return _get_current_system_impl()
 
-        Resolution order:
-        1. ContextVar.
-        2. Global Cache.
-        3. Lazy Load SI.
-        """
-        return _get_current_system_impl()
+                return _eager()
+    except (ImportError, AttributeError):
+        pass
+
+    return _get_current_system_impl()
 
 
 @contextmanager
