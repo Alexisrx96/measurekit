@@ -22,14 +22,15 @@ except ImportError:
 
     @dataclass
     class PruningConfig:
+        max_age: int = 100
         enabled: bool = False
-        threshold: float = 1e-6
+        corr_threshold: float = 1e-6
 
     class CoreStore:
         """Python fallback for CovarianceStore where Rust is missing."""
 
-        def __init__(self, config: PruningConfig):
-            self.config = config
+        def __init__(self, config: PruningConfig = None):
+            self.config = config or PruningConfig()
             self.matrix = {}
 
         def register_variable(self, var_id, variance):
@@ -234,12 +235,19 @@ _current_store: contextvars.ContextVar[CovarianceStore | None] = (
 
 
 class MeasureKitContext:
-    def __init__(self, backend_type: str = "numpy"):
+    def __init__(
+        self,
+        backend_type: str = "numpy",
+        pruning_config: PruningConfig | None = None,
+    ):
         self.backend_type = backend_type
+        self.pruning_config = pruning_config
         self.token = None
 
     def __enter__(self) -> CovarianceStore:
-        store = CovarianceStore(backend=None)  # type: ignore
+        # Use default config if none provided
+        config = self.pruning_config or PruningConfig()
+        store = CovarianceStore(backend=None, config=config)  # type: ignore
         self.token = _current_store.set(store)
         return store
 

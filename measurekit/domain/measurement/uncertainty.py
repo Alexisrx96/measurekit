@@ -101,6 +101,14 @@ class Uncertainty(ABC, Generic[UncType]):
                 return VarianceModel.from_standard(std_dev)
             return CovarianceModel.from_standard(std_dev, measurement_id)
 
+        # Scalar Context-aware dispatch
+        from measurekit.domain.measurement.vectorized_uncertainty import (
+            get_current_store,
+        )
+
+        if get_current_store() is not None:
+            return CovarianceModel.from_standard(std_dev, measurement_id)
+
         # Default to VarianceModel for scalars or simple cases
         return VarianceModel.from_standard(std_dev)
 
