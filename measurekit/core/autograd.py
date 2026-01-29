@@ -12,17 +12,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-try:
-    import torch
-    import torch.func
-except ImportError:
-    torch = None
-
-try:
-    import jax
-    import jax.numpy as jnp
-except ImportError:
-    jax = None
+# Heavy libraries (torch, jax) are imported lazily inside methods.
 
 
 class AutogradPropagator:
@@ -70,7 +60,10 @@ class AutogradPropagator:
     def _compute_torch(
         func: Callable[..., Any], primals: Sequence[Any]
     ) -> tuple[Any, tuple[Any, ...]]:
-        if torch is None:
+        try:
+            import torch
+            import torch.func
+        except ImportError:
             raise ImportError("Torch not available for Autograd.")
 
         # primals might be a mix of tensors and scalars.
@@ -104,7 +97,10 @@ class AutogradPropagator:
     def _compute_jax(
         func: Callable[..., Any], primals: Sequence[Any]
     ) -> tuple[Any, tuple[Any, ...]]:
-        if jax is None:
+        try:
+            import jax
+            import jax.numpy as jnp
+        except ImportError:
             raise ImportError("JAX not available for Autograd.")
 
         # Ensure arrays

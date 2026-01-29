@@ -11,14 +11,17 @@ from typing import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-try:
-    from jaxtyping import Array, Bool, Float
-except ImportError:
-    from typing import Any
-
+    try:
+        from jaxtyping import Array, Bool, Float
+    except ImportError:
+        Array = Any
+        Bool = Any
+        Float = Any
+else:
     Array = Any
     Bool = Any
     Float = Any
+    Sequence = Any
 
 
 T = TypeVar("T")

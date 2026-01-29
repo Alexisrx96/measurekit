@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
-import sympy as sp
+# sympy is imported lazily inside parse() to improve startup performance.
+_SAFE_GLOBALS = None
+
+
+def _get_safe_globals():
+    global _SAFE_GLOBALS
+    if _SAFE_GLOBALS is None:
+        import sympy as sp
+
+        _SAFE_GLOBALS = {
+            "Mul": sp.Mul,
+            "Add": sp.Add,
+            "Pow": sp.Pow,
+            "Integer": sp.Integer,
+            "Float": sp.Float,
+            "Rational": sp.Rational,
+            "Symbol": sp.Symbol,
+        }
+    return _SAFE_GLOBALS
+
 
 from measurekit.core.parsing.sanitizer import UnitSanitizer
 from measurekit.core.parsing.transformer import SymPyTransformer
 from measurekit.domain.measurement.units import CompoundUnit
-
-# Define safe globals to prevent SymPy internal names (N, I, E, S, etc.)
-# from clashing with unit symbols (Newtons, Current, Energy, Siemens).
-_SAFE_GLOBALS = {
-    "Mul": sp.Mul,
-    "Add": sp.Add,
-    "Pow": sp.Pow,
-    "Integer": sp.Integer,
-    "Float": sp.Float,
-    "Rational": sp.Rational,
-    "Symbol": sp.Symbol,
-}
 
 
 class SymPyUnitParser:
@@ -45,10 +52,12 @@ class SymPyUnitParser:
 
         # 2. Parse into SymPy AST
         # evaluate=False ensures we control the structure.
-        # global_dict=_SAFE_GLOBALS ensures that common identifiers are parsed as Symbols.
+        # global_dict=_get_safe_globals() ensures that common identifiers are parsed as Symbols.
+        import sympy as sp
+
         try:
             sympy_ast = sp.parse_expr(
-                clean_expr, evaluate=False, global_dict=_SAFE_GLOBALS
+                clean_expr, evaluate=False, global_dict=_get_safe_globals()
             )
         except Exception as e:
             raise ValueError(

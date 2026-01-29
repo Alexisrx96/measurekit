@@ -6,13 +6,21 @@ from __future__ import annotations
 import functools
 from typing import TypeVar
 
-from measurekit.core.parsing.sympy_parser import SymPyUnitParser
 from measurekit.domain.notation.protocols import ExponentEntityProtocol
 
 T = TypeVar("T", bound=ExponentEntityProtocol)
 
-# Singleton parser instance
-_PARSER = SymPyUnitParser()
+# Singleton parser instance, loaded lazily
+_PARSER = None
+
+
+def _get_parser():
+    global _PARSER
+    if _PARSER is None:
+        from measurekit.core.parsing.sympy_parser import SymPyUnitParser
+
+        _PARSER = SymPyUnitParser()
+    return _PARSER
 
 
 @functools.lru_cache(maxsize=2048)
@@ -32,7 +40,7 @@ def parse_unit_string(expression: str, entity_cls: type[T]) -> T:
     # 1. Parse into CompoundUnit using SymPy engine
     try:
         # returns CompoundUnit (which has .exponents)
-        compound_unit = _PARSER.parse(expression)
+        compound_unit = _get_parser().parse(expression)
     except Exception as e:
         # Wrap as ValueError for API compatibility (legacy)
         raise ValueError(f"Parsing failed: {e}") from e
