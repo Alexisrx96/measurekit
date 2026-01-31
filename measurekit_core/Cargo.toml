@@ -1,6 +1,6 @@
 [package]
 name = "measurekit-core"
-version = "0.1.8"
+version = "0.1.11"
 edition = "2021"
 description = "Core Rust implementation for MeasureKit"
 license = "MIT"
@@ -10,7 +10,7 @@ readme = "README.md"
 
 [lib]
 name = "measurekit_core"
-crate-type = ["cdylib"]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 # enabling "extension-module" is required for Python
@@ -26,3 +26,7 @@ arrow = "53.0"
 chrono = "0.4"
 sprs = "0.11"
 numpy = "0.23"
+
+[profile.release]
+panic = "abort"
+lto = true
