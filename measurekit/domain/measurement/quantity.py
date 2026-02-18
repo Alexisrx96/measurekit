@@ -10,6 +10,7 @@ and other operators to provide intuitive, unit-aware calculations, automatic
 from __future__ import annotations
 
 import contextlib
+import math
 import operator
 import sys
 from dataclasses import dataclass, field
@@ -33,9 +34,7 @@ if TYPE_CHECKING:
 
 from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.uncertainty import (
-    CovarianceModel,
     Uncertainty,
-    VarianceModel,
 )
 from measurekit.domain.measurement.units import (
     CompoundUnit,
@@ -131,14 +130,14 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         18.0 km/h
     """
 
+    __array_priority__ = 1000.0
+
     def __new__(cls, magnitude, unit, *args, **kwargs):
         """Ensures the core object is initialized with a RationalUnit."""
         r_unit = _ensure_rational(unit)
 
         # Pull uncertainty from kwargs if present, else try args[0]
         uncertainty = kwargs.get("uncertainty")
-        if uncertainty is None:
-            uncertainty = kwargs.get("uncertainty_obj")
 
         if uncertainty is None:
             if args:
@@ -146,10 +145,17 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             else:
                 uncertainty = 0.0
 
-        # Ensure we pass the numerical standard deviation to Rust, not the Python model object.
-        # Python keeps the model in self.uncertainty_obj.
+        # Ensure we pass the numerical standard deviation to Rust ONLY if it's a simple type.
+        # If it's a rich Uncertainty model, pass it as-is so Rust can store it in TensorBackend.
         raw_uncertainty = uncertainty
-        if isinstance(uncertainty, Uncertainty):
+        if hasattr(uncertainty, "std_dev") and not isinstance(
+            uncertainty, (int, float, complex)
+        ):
+            # We want to keep the rich model if it's a CovarianceModel etc.
+            # Actually, if we pass it as-is, Rust's extract::<f64>() will fail,
+            # falling back to TensorBackend which is what we want.
+            pass
+        elif hasattr(uncertainty, "std_dev"):
             raw_uncertainty = uncertainty.std_dev
 
         # Extract dimensions dict to pass to Dynamo-compatible helper
@@ -158,9 +164,6 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         if dims is None:
             dims = getattr(r_unit, "exponents", {})
 
-        # Call via the allowed helper
-        # We DO NOT pass 'cls' here to keep the graph inputs simple (Tensor, Unit, Float)
-        # This assumes we always want a 'Quantity' instance which is true for __add__ etc.
         return _create_core_quantity_from_dims(
             magnitude, dims, raw_uncertainty
         )
@@ -174,32 +177,26 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             return (self.__class__,) + res[1:]
         return res
 
-    magnitude: ValueType = field(init=False)
-    unit: UnitType = field(init=False)
-    uncertainty_obj: Uncertainty[UncType] = field(
-        default_factory=lambda: cast(
-            "Uncertainty[UncType]", Uncertainty.from_standard(0.0)
-        )
-    )
-    fraction: Fraction | None = None
+    magnitude: ValueType
+    unit: CompoundUnit
+    uncertainty: Any = 0.0
     system: UnitSystem = field(default_factory=get_default_system)
+    symbol: str | None = None
+    _uncertainty_obj: Any = field(default=None, repr=False, compare=False)
     dimension: Dimension = field(init=False)
     _backend: BackendOps = field(init=False, repr=False)
-    symbol: str | None = field(default=None, repr=False, compare=False)
     __weakref__: Any = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
         magnitude: Any = None,
         unit: Any = None,
-        uncertainty_obj: Uncertainty[UncType] | None = None,
-        fraction: Fraction | None = None,
+        uncertainty: Any = None,
         system: UnitSystem | None = None,
         symbol: str | None = None,
+        **kwargs,
     ):
         """Initializes the entity, ignoring magnitude and unit if already set by core."""
-        # Check if already initialized (subclassing) or fresh
-
         # Reconstruct CompoundUnit wrapper ensuring we hit the Python-side Flyweight cache
         import measurekit.domain.measurement.units as units_module
 
@@ -216,26 +213,6 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         # Always call CU(dims) to ensure we get the cached singleton instance
         object.__setattr__(self, "_unit", CU(dims))
 
-        # magnitude and unit are handled by CoreQuantity properties.
-        # We manually set the other fields.
-        if uncertainty_obj is not None:
-            from measurekit.domain.measurement.uncertainty import (
-                Uncertainty,
-            )
-
-            if not isinstance(uncertainty_obj, Uncertainty):
-                uncertainty_obj = Uncertainty.from_standard(uncertainty_obj)
-            object.__setattr__(self, "uncertainty_obj", uncertainty_obj)
-        else:
-            from measurekit.domain.measurement.uncertainty import Uncertainty
-
-            object.__setattr__(
-                self, "uncertainty_obj", Uncertainty.from_standard(0.0)
-            )
-
-        if fraction is not None:
-            object.__setattr__(self, "fraction", fraction)
-
         if system is not None:
             object.__setattr__(self, "system", system)
         else:
@@ -245,6 +222,20 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
         if symbol is not None:
             object.__setattr__(self, "symbol", symbol)
+
+        # DEBUG INIT
+        # with open("debug_init.txt", "a") as f:
+        #    f.write(f"DEBUG: Quantity.__init__ uncertainty type={type(uncertainty)}\n")
+
+        # Store rich uncertainty model if provided (Phase 5 Fix)
+        if "_uncertainty_obj" in kwargs:
+            object.__setattr__(
+                self, "_uncertainty_obj", kwargs["_uncertainty_obj"]
+            )
+        elif isinstance(uncertainty, Uncertainty):
+            # with open("debug_init.txt", "a") as f:
+            #    f.write(f"DEBUG: Setting _uncertainty_obj to {uncertainty}\n")
+            object.__setattr__(self, "_uncertainty_obj", uncertainty)
 
         # After fields are basic-set, run logic
         self.__post_init__()
@@ -314,7 +305,6 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         return (mag, unc), (
             self.unit,
             self.system,
-            self.fraction,
             self.symbol,
         )
 
@@ -324,24 +314,20 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
     ) -> Quantity:
         """Reconstructs the Quantity from JAX flatten results."""
         magnitude, uncertainty = children
-        unit, system, fraction, symbol = aux_data
+        unit, system, symbol = aux_data
 
         # Re-derive metadata
         dimension = unit.dimension(system)
         backend = BackendManager.get_backend(magnitude)
 
-        # Reconstruct uncertainty object from standard deviation
-        uncertainty_obj = Uncertainty.from_standard(uncertainty)
-
         # Use _fast_new to skip validation overhead
         return cls._fast_new(
             magnitude,
             unit,
-            uncertainty_obj,
+            uncertainty,
             system,
             dimension,
             backend,
-            fraction=fraction,
             symbol=symbol,
         )
 
@@ -357,11 +343,10 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         return self._fast_new(
             self.magnitude,
             new_unit,
-            self.uncertainty_obj,
+            self.std_dev,
             system,
             self.dimension,
             self._backend,
-            self.fraction,
             self.symbol,
         )
 
@@ -369,35 +354,6 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         """Simplifies the unit of the quantity into the system's preferred form."""
         new_unit = self.unit.simplify(self.system)
         return self.to(new_unit)
-
-    @classmethod
-    def _fast_new(
-        cls,
-        value: ValueType,
-        unit: CompoundUnit,
-        uncertainty: Uncertainty[UncType],
-        system: UnitSystem,
-        dimension: Dimension,
-        backend: BackendOps | None = None,
-        fraction: Fraction | None = None,
-        symbol: str | None = None,
-    ) -> Self:
-        """Bypasses __post_init__ for high-performance creation."""
-        # Use Dynamo-safe opaque helper to construct AND initialize attributes.
-        # This avoids executing 'object.__setattr__' on a proxy/graph-variable,
-        # which can cause graph breaks or errors.
-        if backend is None:
-            backend = BackendManager.get_backend(value)
-
-        # Extract unit dimensions for core creation
-        dims = getattr(unit, "dimensions", None)
-        if dims is None:
-            dims = getattr(unit, "exponents", {})
-
-        obj = _create_full_quantity(
-            value, dims, uncertainty, system, fraction, symbol
-        )
-        return cast("Self", obj)
 
     @overload
     @classmethod
@@ -426,6 +382,9 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
         backend = BackendManager.get_backend(value)
 
+        # Lazy imports to avoid circularity
+        from measurekit.domain.measurement.uncertainty import Uncertainty
+
         # Ensure uncertainty matches backend type if array
         if (
             backend.is_array(value)
@@ -442,10 +401,10 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                 # Fallback if backend implementation is incomplete
                 pass
 
-        uncertainty_obj = (
+        uncertainty_val = (
             uncertainty
-            if isinstance(uncertainty, Uncertainty)
-            else Uncertainty.from_standard(uncertainty)
+            if isinstance(uncertainty, (int, float, complex))
+            else getattr(uncertainty, "std_dev", uncertainty)
         )
 
         # Cast scalar int to float for consistency with test expectations
@@ -475,8 +434,7 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         ):
             if "CoreQuantity" not in str(type(value)):
                 r_unit = _ensure_rational(unit)
-                std_dev = getattr(uncertainty_obj, "std_dev", uncertainty_obj)
-                # Create core magnitude
+                std_dev = getattr(uncertainty, "std_dev", uncertainty)
                 # Create core magnitude
                 value = CoreQuantity(
                     float(value),
@@ -488,17 +446,47 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
             backend = BackendManager.get_backend(value)
             # Core handles uncertainty, but we keep the object if it's a specific model
-            if not isinstance(
-                uncertainty_obj, (VarianceModel, CovarianceModel)
-            ):
-                uncertainty_obj = None
+            # For Phase 1, we don't store the rich model in Python anymore.
+            pass
+
+        # Extract raw standard deviation if it's a rich model
+        raw_uncertainty = getattr(uncertainty, "std_dev", uncertainty)
+
+        u_obj = None
+        if isinstance(uncertainty, Uncertainty):
+            u_obj = uncertainty
+        else:
+            # Upgrade to rich model (handles active store + scalar/array logic)
+            u_obj = Uncertainty.from_standard(uncertainty)
 
         return cls(
             magnitude=cast("ValueType", value),
             unit=unit,
-            uncertainty_obj=cast("Uncertainty[UncType]", uncertainty_obj),
-            fraction=frac,
+            uncertainty=raw_uncertainty,
             system=resolved_system,
+            symbol=symbol,
+            _uncertainty_obj=u_obj,
+        )
+
+    @classmethod
+    def _fast_new(
+        cls,
+        value: ValueType,
+        unit: CompoundUnit,
+        uncertainty: Any,
+        system: UnitSystem,
+        dimension: Dimension,
+        backend: BackendOps | None = None,
+        symbol: str | None = None,
+    ) -> Self:
+        """Bypasses some validation for high-performance creation."""
+        # Now that we've removed shadow state, this can be a simple call to cls()
+        # or we could optimize further if needed.
+        return cls(
+            magnitude=value,
+            unit=unit,
+            uncertainty=uncertainty,
+            system=system,
             symbol=symbol,
         )
 
@@ -599,7 +587,7 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         # We rely on self.magnitude.__hash__()
         # If not hashable, raises TypeError (expected for mutable types).
         try:
-            return hash((self.magnitude, self.unit, self.uncertainty_obj))
+            return hash((self.magnitude, self.unit, self.uncertainty))
         except TypeError:
             # Fallback for unhashable magnitude (like numpy array)
             # Maybe hash bytes? Or raise.
@@ -609,37 +597,57 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             ) from None
 
     @property
+    def _numeric_std_dev(self) -> Any:
+        """Returns the numeric standard deviation, even if std_dev returns a model."""
+        import numpy as np
+
+        u = self.std_dev
+        if hasattr(u, "std_dev") and not isinstance(
+            u, (int, float, complex, np.ndarray)
+        ):
+            return u.std_dev
+        return u
+
+    @property
     def _has_uncertainty(self) -> bool:
-        """Checks if uncertainty is non-zero, safely handling arrays."""
-        unc = self.uncertainty
+        """Checks if uncertainty is non-zero, safely handling arrays and models."""
+        unc = self._numeric_std_dev
+
         try:
-            # Backend-aware check
+            # Backend-aware check for numeric uncertainty
             if self._backend.is_array(unc):
                 return bool(self._backend.any(self._backend.not_equal(unc, 0)))
 
-            # Standard check (covers safe scalars and lists if backend matches)
-            res = unc != 0
+            # Scalar check
+            if isinstance(unc, (int, float, complex)):
+                return unc != 0
 
-            # Handle Truth Value Ambiguity (e.g. Python backend + Numpy array)
-            try:
-                if res:
-                    return True
-            except ValueError:
-                # If "The truth value of an array is ambiguous"
-                if hasattr(res, "any"):
-                    return bool(res.any())
-                return True  # Default to True if complex structure
-            return False
+            return bool(unc)
         except Exception:
-            return True  # Fallback for safety
+            return True
 
     def __repr__(self) -> str:
         """Returns string representation."""
         unit_str = self.unit.to_string(self.system)
         if self._has_uncertainty:
+            # Prefer simple float repr for scalar VarianceModel to keep repr clean (Phase 5 Reg Fix)
+            from measurekit.domain.measurement.uncertainty import VarianceModel
+
+            if (
+                isinstance(self._uncertainty_obj, VarianceModel)
+                and self._uncertainty_obj.vector_slice is None
+                and not self._backend.is_array(self._uncertainty_obj.variance)
+            ):
+                unc_repr = repr(self.uncertainty)
+            else:
+                unc_repr = (
+                    repr(self._uncertainty_obj)
+                    if self._uncertainty_obj is not None
+                    else repr(self.uncertainty)
+                )
             return (
                 f"Quantity({self.magnitude!r}, {unit_str}, "
-                f"uncertainty={self.uncertainty!r})"
+                f"uncertainty={unc_repr})"
             )
         return f"Quantity({self.magnitude!r}, {unit_str})"
 
@@ -647,7 +655,8 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         """Returns a user-friendly string representation."""
         unit_str = self.unit.to_string(self.system)
         if self._has_uncertainty:
-            return f"({self.magnitude} ± {self.uncertainty}) {unit_str}"
+            unc_str = str(self.uncertainty)
+            return f"({self.magnitude} ± {unc_str}) {unit_str}"
         return f"{self.magnitude} {unit_str}"
 
     def __rich__(self) -> Any:
@@ -690,23 +699,37 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
         unit_str = self.unit.to_string(self.system, use_alias=use_alias)
 
-        if "frac" in parts and self.fraction is not None:
-            return f"{self.fraction} {unit_str}"
+        if "frac" in parts:
+            from fractions import Fraction
+
+            try:
+                f = Fraction(str(self.magnitude))
+                mag_str = f"{f.numerator}/{f.denominator}"
+                if use_alias:
+                    return f"{mag_str} {unit_str}"
+                return f"{mag_str} {unit_str}"
+            except (ValueError, TypeError):
+                pass
 
         if mag_fmt:
             formatted_mag = format(self.magnitude, mag_fmt)
             if self._has_uncertainty:
                 try:
-                    formatted_unc = format(self.uncertainty, mag_fmt)
+                    formatted_unc = format(self._numeric_std_dev, mag_fmt)
                 except (TypeError, ValueError):
-                    formatted_unc = str(self.uncertainty)
+                    formatted_unc = str(self._numeric_std_dev)
                 return f"({formatted_mag} ± {formatted_unc}) {unit_str}"
             return f"{formatted_mag} {unit_str}"
 
-        # Default behavior matches __str__
-        if self._has_uncertainty:
-            return f"({self.magnitude} ± {self.uncertainty}) {unit_str}"
-        return f"{self.magnitude} {unit_str}"
+        # Default behavior (handles alias if present)
+        if use_alias:
+            if self._has_uncertainty:
+                return (
+                    f"({self.magnitude} ± {self._numeric_std_dev}) {unit_str}"
+                )
+            return f"{self.magnitude} {unit_str}"
+
+        return self.__str__()
 
     def to_latex(self) -> str:
         r"""Returns the LaTeX representation.
@@ -774,39 +797,22 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         )
 
     @property
+    def uncertainty_model(self) -> str:
+        """Returns the type of uncertainty model used by the core."""
+        try:
+            # Delegate to Rust CoreQuantity if available
+            return getattr(self.magnitude, "uncertainty_model", "gaussian")
+        except (AttributeError, RuntimeError):
+            return "gaussian"
+
+    @property
     def uncertainty(self) -> Any:
         """Returns the standard deviation of the uncertainty."""
-        # Source of truth: Rust Core std_dev if available and non-zero
-        core_std = 0.0
+        # Source of truth: Rust Core std_dev
         try:
-            core_std = self.std_dev
+            return self.std_dev
         except (AttributeError, RuntimeError, TypeError):
-            pass
-
-        # Python-side state
-        python_unc = getattr(self, "uncertainty_obj", None)
-
-        # If Core has non-zero uncertainty, it usually means it's the primary source
-        # (especially after unpickling or Rust arithmetic)
-        # We check non-zero in a tracer-safe way (avoiding .any() on tracers)
-        is_nonzero = False
-        if core_std is not None:
-            if not isinstance(core_std, (int, float, complex)):
-                # Probably a tracer or array, assume it's the primary source
-                is_nonzero = True
-            elif core_std != 0:
-                is_nonzero = True
-
-        if is_nonzero:
-            return core_std
-
-        # Fallback to Python-only logic or specific models
-        if python_unc is not None:
-            if hasattr(python_unc, "std_dev"):
-                return python_unc.std_dev
-            return python_unc
-
-        return core_std if core_std is not None else 0.0
+            return 0.0
 
     @property
     def unit(self) -> Any:
@@ -946,25 +952,178 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         out_magnitude: Any,
         jac_self: Any,
         jac_other: Any = None,
-    ) -> Uncertainty:
-        """Helper to propagate vectorized uncertainty via the active Strategy."""
-        if isinstance(other, Quantity):
-            other_unc = other.uncertainty_obj
-        else:
-            other_unc = Uncertainty.from_standard(0.0)
-        # Default Jacobians if they are None (often for scalar/constant operands)
-        js = 1.0 if jac_self is None else jac_self
-        if jac_other is None and not isinstance(other, Quantity):
-            jo = 0.0
-        else:
-            jo = jac_other
+    ) -> Any:
+        """Helper to propagate vectorized uncertainty."""
+        # Check for rich model first
+        is_other_q = isinstance(other, Quantity)
+        u_obj_other = other._uncertainty_obj if is_other_q else None
 
-        return self.uncertainty_obj.add(
-            other_unc,
-            jac_self=js,
-            jac_other=jo,
-            out_magnitude=out_magnitude,
-        )
+        if self._uncertainty_obj is not None or u_obj_other is not None:
+            # For Phase 1, we assume they are compatible or the lineage handles it.
+
+            # Case 1: Self has rich model
+            if self._uncertainty_obj is not None:
+                # Upgrade other if needed
+                u_other = u_obj_other
+                j_other = jac_other
+
+                if u_other is None:
+                    if is_other_q:
+                        u_other = Uncertainty.from_standard(other.uncertainty)
+                    else:
+                        u_other = Uncertainty.from_standard(0.0)
+                        # If we synthesize uncertainty for scalar, jac_other might be None
+                        if j_other is None:
+                            j_other = 0.0
+
+                new_u_obj = self._uncertainty_obj.add(
+                    u_other,
+                    jac_self=jac_self,
+                    jac_other=j_other,
+                    out_magnitude=out_magnitude,
+                )
+                return new_u_obj.std_dev
+
+            # Case 2: Other has rich model (reverse add)
+            elif u_obj_other is not None:
+                # Upgrade self
+                u_self = Uncertainty.from_standard(self.uncertainty)
+
+                j_self_for_other = jac_other
+                if j_self_for_other is None:
+                    j_self_for_other = 0.0
+
+                # Swap Jacobians because we call other.add(self)
+                new_u_obj = u_obj_other.add(
+                    u_self,
+                    jac_self=j_self_for_other,
+                    jac_other=jac_self,
+                    out_magnitude=out_magnitude,
+                )
+                return new_u_obj.std_dev
+
+        # Standard Gaussian propagation (uncorrelated fallback)
+        u_self = self.uncertainty
+        u_other = other.uncertainty if is_other_q else 0.0
+
+        if self._backend.is_array(u_self):
+            # Flatten to vector
+            u_self = self._backend.reshape(u_self, (-1,))
+        if self._backend.is_array(u_other):
+            u_other = self._backend.reshape(u_other, (-1,))
+
+        # u_out^2 = (J_self^2 @ u_self^2) + (J_other^2 @ u_other^2)
+        var_self = self._backend.pow(u_self, 2)
+        # Force numeric array once and for all to avoid dtype('O') issues
+        var_self = self._backend.asarray(var_self)
+        if hasattr(var_self, "astype"):
+            var_self = var_self.astype("float64", copy=False)
+
+        jac_self_sq = self._backend.pow(jac_self, 2)
+        if hasattr(jac_self_sq, "astype"):
+            jac_self_sq = jac_self_sq.astype("float64", copy=False)
+
+        res_var = self._backend.dot(jac_self_sq, var_self)
+
+        # Fix for potential object array result from sparse dot product
+        # Scipy sparse dot can return object arrays of sparse matrices/arrays
+        # when broadcasting with certain shapes. We must densify them.
+        def _densify(x):
+            if hasattr(x, "toarray"):  # Sparse matrix
+                return x.toarray().item() if x.size == 1 else x.toarray().sum()
+            if hasattr(x, "item") and x.size == 1:  # Scalar-like array
+                return x.item()
+            if (
+                hasattr(x, "sum") and hasattr(x, "shape") and x.shape != ()
+            ):  # Array
+                return x.sum()
+            return x
+
+        if hasattr(res_var, "dtype") and res_var.dtype == object:
+            try:
+                res_var = res_var.astype("float64")
+            except (ValueError, TypeError):
+                # Fallback: Densify elements
+                try:
+                    import numpy as np
+
+                    # Use ravel() to iterate over objects, not into them
+                    # Force conversion to python float to avoid nested array creation
+                    flat_data = [float(_densify(x)) for x in res_var.ravel()]
+
+                    res_var = (
+                        np.array(flat_data)
+                        .reshape(res_var.shape)
+                        .astype("float64")
+                    )
+                except Exception:
+                    pass
+
+        if jac_other is not None:
+            # Ensure var_other is strictly numeric (float64) to prevent object array pollution
+            if hasattr(u_other, "astype"):
+                var_other = self._backend.pow(u_other, 2).astype(
+                    "float64", copy=False
+                )
+            else:
+                var_other = self._backend.pow(u_other, 2)
+
+            jac_other_sq = self._backend.pow(jac_other, 2)
+            # Ensure macobian is numeric if it came from identity_operator
+            if hasattr(jac_other_sq, "astype"):
+                jac_other_sq = jac_other_sq.astype("float64", copy=False)
+
+            term2 = self._backend.dot(jac_other_sq, var_other)
+            if hasattr(term2, "dtype") and term2.dtype == object:
+                try:
+                    term2 = term2.astype("float64")
+                except (ValueError, TypeError):
+                    # Reuse densify logic
+                    try:
+                        import numpy as np
+
+                        # Explicit iteration
+                        r2 = term2.reshape(-1)
+                        flat_data = []
+                        for i in range(r2.size):
+                            val = r2[i]
+                            flat_data.append(float(_densify(val)))
+
+                        term2 = (
+                            np.array(flat_data)
+                            .reshape(term2.shape)
+                            .astype("float64")
+                        )
+                    except Exception:
+                        pass
+
+            # Fix broadcasting issue where dot produced matrix instead of vector
+            # due to scalar variance being treated as scaling factor
+            if hasattr(res_var, "shape") and hasattr(term2, "shape"):
+                if (
+                    term2.ndim == 2
+                    and res_var.ndim == 1
+                    and term2.shape[0] == term2.shape[1] == res_var.shape[0]
+                ):
+                    try:
+                        import numpy as np
+
+                        if hasattr(term2, "diagonal"):
+                            term2 = term2.diagonal()
+                        else:
+                            term2 = np.diag(term2)
+                    except:
+                        pass
+
+            res_var = self._backend.add(res_var, term2)
+
+        if hasattr(self._backend, "sqrt"):
+            u_out = self._backend.sqrt(res_var)
+        else:
+            u_out = self._backend.pow(res_var, 0.5)
+
+        # Reshape to match magnitude
+        return self._backend.reshape(u_out, self._backend.shape(out_magnitude))
 
     def diff(self, variable: Quantity | str, order: int = 1) -> Quantity:
         """Calculates the n-th derivative with respect to a variable.
@@ -1147,25 +1306,46 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def _apply_transcendental(self, func_name: str) -> Quantity:
         """Applies a dimensionless transcendental function (sin, exp, etc.)."""
-        # 1. Verification: Argument must be dimensionless (or we ignore for now/warn)
-        # Ideally we convert angle to rad.
-        # For Phase 2, we assume input is already appropriate magnitude if dimensionless.
+        # 1. Verification: Argument must be dimensionless
         if len(self.unit.exponents) > 0:
-            # Check if it's an angle?
-            # If not, raise Error.
-            # Assuming strictly dimensionless for safe Autograd demo.
-            # (Users can use q.magnitude for unsafe ops)
-            # Actually, let's allow it but warn? No, strict is better for physics.
+            # For now, we allow it but in strict mode we should raise.
             pass
 
         # 2. Get backend function
         op = getattr(self._backend, func_name)
 
-        # 3. Propagate
-        # Uncertainty.propagate returns (result_value, result_uncertainty)
-        val, unc = Uncertainty.propagate(
-            op, [self.magnitude], [self.uncertainty_obj]
-        )
+        # 3. Propagate with explicit derivatives for accuracy
+        if func_name == "sin":
+            val = self._backend.sin(self.magnitude)
+            der = self._backend.cos(self.magnitude)
+        elif func_name == "cos":
+            val = self._backend.cos(self.magnitude)
+            der = self._backend.mul(-1.0, self._backend.sin(self.magnitude))
+        elif func_name == "tan":
+            val = self._backend.tan(self.magnitude)
+            der = self._backend.add(1.0, self._backend.pow(val, 2))
+        elif func_name == "exp":
+            val = self._backend.exp(self.magnitude)
+            der = val
+        elif func_name == "log":
+            val = self._backend.log(self.magnitude)
+            der = self._backend.truediv(1.0, self.magnitude)
+        elif func_name == "tanh":
+            val = self._backend.tanh(self.magnitude)
+            der = self._backend.sub(1.0, self._backend.pow(val, 2))
+        else:
+            # Fallback to finite difference if no explicit derivative
+            h = 1e-7
+            der = self._backend.truediv(
+                self._backend.sub(
+                    op(self._backend.add(self.magnitude, h)),
+                    op(self._backend.sub(self.magnitude, h)),
+                ),
+                2 * h,
+            )
+            val = op(self.magnitude)
+
+        unc = self._backend.mul(self._backend.abs(der), self.uncertainty)
 
         # 4. Return result (Dimensionless)
         return Quantity.from_input(
@@ -1282,100 +1462,73 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
     # --- Arithmetic Dunder Methods ---
     def __add__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Handles arithmetic with Affine Support."""
-        if self.uncertainty_obj is None or (
-            isinstance(other, Quantity) and other.uncertainty_obj is None
-        ):
-            new_val = self._backend.add(
-                self.magnitude,
-                other.magnitude if isinstance(other, Quantity) else other,
-            )
-            return Quantity.from_input(new_val, self.unit, self.system)
-
         if isinstance(other, Quantity):
-            # Affine Logic
+            # 1. Affine and Logarithmic Logic (MUST BE ABOVE INITIAL CHECKS)
             res_affine = self._affine_check(other, is_add=True)
             if res_affine is not None:
-                from measurekit.application.tracing.context import (
-                    get_active_tracer,
-                )
-
-                if (tracer := get_active_tracer()) is not None:
-                    tracer.record_operation(
-                        "add", operands=(self, other), result=res_affine
-                    )
                 return res_affine
 
-            # Logarithmic Logic (Fallback for old behavior dB + dB)
             res_log = self._logarithmic_add_sub(other, is_add=True)
             if res_log is not None:
-                from measurekit.application.tracing.context import (
-                    get_active_tracer,
-                )
-
-                if (tracer := get_active_tracer()) is not None:
-                    tracer.record_operation(
-                        "add", operands=(self, other), result=res_log
-                    )
                 return res_log
 
-        # --- FAST PATH ---
-        if type(other) is Quantity and self.unit is other.unit:
+        # 2. Optimized path for no uncertainty
+        is_other_q = isinstance(other, Quantity)
+        u_self = self.uncertainty
+        u_other = other.uncertainty if is_other_q else 0.0
+
+        if (
+            u_self is None
+            or (isinstance(u_self, (int, float)) and u_self == 0.0)
+        ) and (
+            not is_other_q
+            or (
+                u_other is None
+                or (isinstance(u_other, (int, float)) and u_other == 0.0)
+            )
+        ):
+            if is_other_q:
+                if self.unit != other.unit:
+                    if self.dimension != other.dimension:
+                        raise IncompatibleUnitsError(self.unit, other.unit)
+                    other_val = other.to(self.unit).magnitude
+                else:
+                    other_val = other.magnitude
+            else:
+                other_val = other
+
+            new_val = self._backend.add(self.magnitude, other_val)
+            res = Quantity.from_input(new_val, self.unit, self.system)
+
+            from measurekit.application.tracing.context import (
+                get_active_tracer,
+            )
+
+            if (tracer := get_active_tracer()) is not None:
+                tracer.record_operation(
+                    "add", operands=(self, other), result=res
+                )
+            return res
+
+        # 3. Vectorized Path (Same Unit)
+        if is_other_q and self.unit is other.unit:
             new_magnitude = self._backend.add(self.magnitude, other.magnitude)
 
             if self._backend.is_array(new_magnitude):
                 size = self._backend.size(new_magnitude)
 
-                # Broadcasting for self
-                is_self_scalar = (
-                    self._backend.shape(self.magnitude) == ()
-                    or len(self._backend.shape(self.magnitude)) == 0
-                    or (
-                        hasattr(self.magnitude, "shape")
-                        and self.magnitude.shape == (1,)
-                    )
+                # Jacobians are identity matrices for addition
+                j_self = self._backend.identity_operator(
+                    size, reference=self.magnitude
                 )
-
-                if is_self_scalar:
-                    j_self = self._backend.ones(
-                        (size, 1), reference=self.magnitude
-                    )
-                else:
-                    j_self = self._backend.identity_operator(
-                        size, reference=self.magnitude
-                    )
-
-                # Check for broadcasting
-                # if other is scalar-like, broadcast Jacobian
-                is_other_scalar = False
-                if isinstance(other, Quantity):
-                    other_shape = self._backend.shape(other.magnitude)
-                    is_other_scalar = (
-                        other_shape == ()
-                        or len(other_shape) == 0
-                        or (
-                            hasattr(other.magnitude, "shape")
-                            and other.magnitude.shape == (1,)
-                        )
-                    )
-
-                if is_other_scalar:
-                    j_other = self._backend.ones(
-                        (size, 1),
-                        reference=other.magnitude
-                        if isinstance(other, Quantity)
-                        else None,
-                    )
-                else:
-                    j_other = self._backend.identity_operator(
-                        size,
-                        reference=other.magnitude
-                        if isinstance(other, Quantity)
-                        else None,
-                    )
+                j_other = self._backend.identity_operator(
+                    size, reference=other.magnitude
+                )
 
                 new_unc = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
                 )
+
                 res = self._fast_new(
                     new_magnitude,
                     self.unit,
@@ -1384,6 +1537,16 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                     self.dimension,
                     self._backend,
                 )
+                # Re-attach rich model if created by _propagate_vectorized
+                if self._uncertainty_obj is not None:
+                    u_obj_other = other._uncertainty_obj
+                    res._uncertainty_obj = self._uncertainty_obj.add(
+                        u_obj_other,
+                        jac_self=j_self,
+                        jac_other=j_other,
+                        out_magnitude=new_magnitude,
+                    )
+
                 from measurekit.application.tracing.context import (
                     get_active_tracer,
                 )
@@ -1394,137 +1557,110 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                     )
                 return res
 
-            # Scalar path
+            # 4. Scalar Path (Same Unit)
+            u_obj_other = other._uncertainty_obj
+            new_u_obj = None
+            if self._uncertainty_obj is not None:
+                new_u_obj = self._uncertainty_obj.add(
+                    u_obj_other,
+                    jac_self=1.0,
+                    jac_other=1.0,
+                    out_magnitude=new_magnitude,
+                )
+                res_unc = new_u_obj.std_dev
+            else:
+                sum_var = self._backend.add(
+                    self._backend.pow(self.uncertainty, 2),
+                    self._backend.pow(u_other, 2),
+                )
+                res_unc = self._backend.pow(sum_var, 0.5)
+
             res = self._fast_new(
                 new_magnitude,
                 self.unit,
-                self.uncertainty_obj + other.uncertainty_obj,
+                res_unc,
                 self.system,
                 self.dimension,
                 self._backend,
             )
+            if new_u_obj is not None:
+                res._uncertainty_obj = new_u_obj
+            return res
+
+        # 5. Generic Path (Unit Conversion Required)
+        if not is_other_q:
+            return NotImplemented
+
+        if self.dimension != other.dimension:
+            raise IncompatibleUnitsError(self.unit, other.unit)
+
+        # Recurse with unit-converted other
+        return self + other.to(self.unit)
+
+    def __sub__(self, other: Any) -> Quantity[Any, Any, Any]:
+        """Handles subtraction."""
+        if isinstance(other, Quantity):
+            # 1. Affine and Logarithmic Logic
+            res_affine = self._affine_check(other, is_add=False)
+            if res_affine is not None:
+                return res_affine
+
+            res_log = self._logarithmic_add_sub(other, is_add=False)
+            if res_log is not None:
+                return res_log
+
+        # 2. Optimized path for no uncertainty
+        is_other_q = isinstance(other, Quantity)
+        u_self = self.uncertainty
+        u_other = other.uncertainty if is_other_q else 0.0
+
+        if (
+            u_self is None
+            or (isinstance(u_self, (int, float)) and u_self == 0.0)
+        ) and (
+            not is_other_q
+            or (
+                u_other is None
+                or (isinstance(u_other, (int, float)) and u_other == 0.0)
+            )
+        ):
+            if is_other_q:
+                if self.unit != other.unit:
+                    if self.dimension != other.dimension:
+                        raise IncompatibleUnitsError(self.unit, other.unit)
+                    other_val = other.to(self.unit).magnitude
+                else:
+                    other_val = other.magnitude
+            else:
+                other_val = other
+
+            new_val = self._backend.sub(self.magnitude, other_val)
+            res = Quantity.from_input(new_val, self.unit, self.system)
+
             from measurekit.application.tracing.context import (
                 get_active_tracer,
             )
 
             if (tracer := get_active_tracer()) is not None:
                 tracer.record_operation(
-                    "add", operands=(self, other), result=res
+                    "sub", operands=(self, other), result=res
                 )
             return res
-        # -----------------
 
-        if not isinstance(other, Quantity):
-            return NotImplemented
-
-        if self.dimension != other.dimension:
-            raise IncompatibleUnitsError(self.unit, other.unit)
-        other_converted = other.to(self.unit)
-        new_magnitude = self._backend.add(
-            self.magnitude, other_converted.magnitude
-        )
-
-        if self._backend.is_array(new_magnitude):
-            size = self._backend.size(new_magnitude)
-            # In slow path, assume arrays if is_array matches
-            j_self = self._backend.identity_operator(size)
-            j_other = self._backend.identity_operator(size)
-
-            new_uncertainty_obj = self._propagate_vectorized(
-                other_converted, new_magnitude, j_self, j_other
-            )
-        else:
-            new_uncertainty_obj = self.uncertainty_obj.add(
-                other_converted.uncertainty_obj
-            )
-
-        return Quantity.from_input(
-            new_magnitude,
-            self.unit,
-            self.system,
-            uncertainty=new_uncertainty_obj,
-        )
-
-    def __sub__(self, other: Any) -> Quantity[Any, Any, Any]:
-        """Handles cases like my_quantity - other."""
-        if self.uncertainty_obj is None or (
-            isinstance(other, Quantity) and other.uncertainty_obj is None
-        ):
-            new_val = self._backend.sub(
-                self.magnitude,
-                other.magnitude if isinstance(other, Quantity) else other,
-            )
-            return Quantity.from_input(new_val, self.unit, self.system)
-
-        if isinstance(other, Quantity):
-            # Affine Logic
-            res_affine = self._affine_check(other, is_add=False)
-            if res_affine is not None:
-                from measurekit.application.tracing.context import (
-                    get_active_tracer,
-                )
-
-                if (tracer := get_active_tracer()) is not None:
-                    tracer.record_operation(
-                        "sub", operands=(self, other), result=res_affine
-                    )
-                return res_affine
-
-            # Logarithmic Logic
-            res_log = self._logarithmic_add_sub(other, is_add=False)
-            if res_log is not None:
-                from measurekit.application.tracing.context import (
-                    get_active_tracer,
-                )
-
-                if (tracer := get_active_tracer()) is not None:
-                    tracer.record_operation(
-                        "sub", operands=(self, other), result=res_log
-                    )
-                return res_log
-
-        # --- FAST PATH ---
-        if type(other) is Quantity and self.unit is other.unit:
+        # 3. Vectorized Path (Same Unit)
+        if is_other_q and self.unit is other.unit:
             new_magnitude = self._backend.sub(self.magnitude, other.magnitude)
             if self._backend.is_array(new_magnitude):
                 size = self._backend.size(new_magnitude)
-
-                # Broadcasting for self
-                is_self_scalar = (
-                    self._backend.shape(self.magnitude) == ()
-                    or len(self._backend.shape(self.magnitude)) == 0
-                    or (
-                        hasattr(self.magnitude, "shape")
-                        and self.magnitude.shape == (1,)
-                    )
+                j_self = self._backend.identity_operator(
+                    size, reference=self.magnitude
                 )
-
-                if is_self_scalar:
-                    j_self = self._backend.ones((size, 1))
-
-                else:
-                    j_self = self._backend.identity_operator(size)
-
-                # Broadcasting for subtraction
-                is_other_scalar = False
-                if isinstance(other, Quantity) and (
-                    self._backend.shape(other.magnitude) == ()
-                    or len(self._backend.shape(other.magnitude)) == 0
-                    or (
-                        hasattr(other.magnitude, "shape")
-                        and other.magnitude.shape == (1,)
-                    )
-                ):
-                    is_other_scalar = True
-
-                if is_other_scalar:
-                    j_other = self._backend.mul(
-                        self._backend.ones((size, 1)), -1
-                    )
-                else:
-                    j_other = self._backend.mul(
-                        self._backend.identity_operator(size), -1
-                    )
+                j_other = self._backend.mul(
+                    self._backend.identity_operator(
+                        size, reference=other.magnitude
+                    ),
+                    -1.0,
+                )
 
                 new_unc = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
@@ -1537,6 +1673,15 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                     self.dimension,
                     self._backend,
                 )
+                # Re-attach rich model
+                if self._uncertainty_obj is not None:
+                    res._uncertainty_obj = self._uncertainty_obj.add(
+                        other._uncertainty_obj,
+                        jac_self=j_self,
+                        jac_other=j_other,
+                        out_magnitude=new_magnitude,
+                    )
+
                 from measurekit.application.tracing.context import (
                     get_active_tracer,
                 )
@@ -1546,14 +1691,36 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                         "sub", operands=(self, other), result=res
                     )
                 return res
+
+            # 4. Scalar Path (Same Unit)
+            u_obj_other = other._uncertainty_obj
+            new_u_obj = None
+            if self._uncertainty_obj is not None:
+                new_u_obj = self._uncertainty_obj.add(
+                    u_obj_other,
+                    jac_self=1.0,
+                    jac_other=-1.0,
+                    out_magnitude=new_magnitude,
+                )
+                res_unc = new_u_obj.std_dev
+            else:
+                sum_var = self._backend.add(
+                    self._backend.pow(self.uncertainty, 2),
+                    self._backend.pow(u_other, 2),
+                )
+                res_unc = self._backend.pow(sum_var, 0.5)
+
             res = self._fast_new(
                 new_magnitude,
                 self.unit,
-                self.uncertainty_obj - other.uncertainty_obj,
+                res_unc,
                 self.system,
                 self.dimension,
                 self._backend,
             )
+            if new_u_obj is not None:
+                res._uncertainty_obj = new_u_obj
+
             from measurekit.application.tracing.context import (
                 get_active_tracer,
             )
@@ -1564,37 +1731,14 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                 )
             return res
 
-        if not isinstance(other, Quantity):
+        # 5. Generic Path (Unit Conversion Required)
+        if not is_other_q:
             return NotImplemented
 
         if self.dimension != other.dimension:
             raise IncompatibleUnitsError(self.unit, other.unit)
-        other_converted = other.to(self.unit)
-        new_magnitude = self._backend.sub(
-            self.magnitude, other_converted.magnitude
-        )
 
-        if self._backend.is_array(new_magnitude):
-            size = self._backend.size(new_magnitude)
-            j_self = self._backend.identity_operator(size)
-            j_other = self._backend.mul(
-                self._backend.identity_operator(size), -1
-            )
-
-            new_uncertainty_obj = self._propagate_vectorized(
-                other_converted, new_magnitude, j_self, j_other
-            )
-        else:
-            new_uncertainty_obj = (
-                self.uncertainty_obj - other_converted.uncertainty_obj
-            )
-
-        return Quantity.from_input(
-            new_magnitude,
-            self.unit,
-            self.system,
-            uncertainty=new_uncertainty_obj,
-        )
+        return self - other.to(self.unit)
 
     def __rsub__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Right subtraction."""
@@ -1602,154 +1746,246 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def __mul__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Multiplies two quantities."""
-        if self.uncertainty_obj is None or (
-            isinstance(other, Quantity) and other.uncertainty_obj is None
+        if isinstance(other, CompoundUnit):
+            new_unit = self.unit * other
+            return Quantity.from_input(
+                self.magnitude,
+                new_unit,
+                self.system,
+                uncertainty=self.uncertainty,
+            )
+
+        is_other_q = isinstance(other, Quantity)
+
+        # 1. Optimized path for no uncertainty
+        u_self = self.uncertainty
+        u_other = other.uncertainty if is_other_q else 0.0
+
+        if (
+            u_self is None
+            or (isinstance(u_self, (int, float)) and u_self == 0.0)
+        ) and (
+            not is_other_q
+            or (
+                u_other is None
+                or (isinstance(u_other, (int, float)) and u_other == 0.0)
+            )
         ):
             new_val = self._backend.mul(
                 self.magnitude,
-                other.magnitude if isinstance(other, Quantity) else other,
+                other.magnitude if is_other_q else other,
             )
-            new_unit = self.unit * (
-                other.unit if isinstance(other, Quantity) else other
-            )
-            return Quantity.from_input(new_val, new_unit, self.system)
+            new_unit = self.unit * (other.unit if is_other_q else other)
+            res = Quantity.from_input(new_val, new_unit, self.system)
 
-        if isinstance(other, (int, float, complex)) or self._backend.is_array(
-            other
-        ):
-            new_magnitude = self._backend.mul(self.magnitude, other)
-            if self._backend.is_array(new_magnitude):
-                size = self._backend.size(new_magnitude)
-
-                if self._backend.is_array(other):
-                    # flatten
-                    (other_flat,) = self._backend.broadcast_and_flatten(
-                        [other]
-                    )
-                    j_self = self._backend.diagonal_operator(other_flat)
-                else:
-                    j_self = self._backend.mul(
-                        self._backend.identity_operator(size), other
-                    )
-
-                new_uncertainty_obj = self._propagate_vectorized(
-                    None, new_magnitude, j_self, None
-                )
-            else:
-                new_uncertainty_obj = self.uncertainty_obj.scale(
-                    cast("Any", other)
-                )
-
-            return cast(
-                "Quantity[ValueType, UncType, Any]",
-                Quantity.from_input(
-                    new_magnitude,
-                    self.unit,
-                    self.system,
-                    uncertainty=new_uncertainty_obj,
-                ),
-            )
-
-        if isinstance(other, Quantity):
-            new_magnitude = self._backend.mul(self.magnitude, other.magnitude)
-            new_unit = self.unit * other.unit
-            new_dimension = self.dimension * other.dimension
-
-            if self._backend.is_array(new_magnitude):
-                size = self._backend.size(new_magnitude)
-
-                # Flatten/Broadcast using new backend capability
-                self_flat, other_flat = self._backend.broadcast_and_flatten(
-                    [self.magnitude, other.magnitude]
-                )
-
-                # Determine j_self structure
-                is_self_scalar = (
-                    self._backend.shape(self.magnitude) == ()
-                    or len(self._backend.shape(self.magnitude)) == 0
-                    or (
-                        hasattr(self.magnitude, "shape")
-                        and self.magnitude.shape == (1,)
-                    )
-                )
-
-                if is_self_scalar:
-                    j_self = self._backend.reshape(other_flat, (size, 1))
-                else:
-                    j_self = self._backend.diagonal_operator(other_flat)
-
-                # Determine j_other structure
-                is_other_scalar = (
-                    self._backend.shape(other.magnitude) == ()
-                    or len(self._backend.shape(other.magnitude)) == 0
-                    or (
-                        hasattr(other.magnitude, "shape")
-                        and other.magnitude.shape == (1,)
-                    )
-                )
-
-                if is_other_scalar:
-                    j_other = self._backend.reshape(self_flat, (size, 1))
-                    new_uncertainty_obj = self._propagate_vectorized(
-                        other, new_magnitude, j_self, j_other
-                    )
-                    res = self._fast_new(
-                        new_magnitude,
-                        new_unit,
-                        new_uncertainty_obj,
-                        self.system,
-                        new_dimension,
-                        self._backend,
-                    )
-                    from measurekit.application.tracing.context import (
-                        get_active_tracer,
-                    )
-
-                    if (tracer := get_active_tracer()) is not None:
-                        tracer.record_operation(
-                            "mul", operands=(self, other), result=res
-                        )
-                    return res
-                j_other = self._backend.diagonal_operator(self_flat)
-
-                new_uncertainty_obj = self._propagate_vectorized(
-                    other, new_magnitude, j_self, j_other
-                )
-            else:
-                new_uncertainty_obj = self.uncertainty_obj.propagate_mul_div(
-                    other.uncertainty_obj,
-                    self.magnitude,
-                    other.magnitude,
-                    new_magnitude,
-                    jac_self=other.magnitude,
-                    jac_other=self.magnitude,
-                )
-            res_q = self._fast_new(
-                new_magnitude,
-                new_unit,
-                new_uncertainty_obj,
-                self.system,
-                new_dimension,
-                self._backend,
-            )
             from measurekit.application.tracing.context import (
                 get_active_tracer,
             )
 
             if (tracer := get_active_tracer()) is not None:
                 tracer.record_operation(
-                    "mul", operands=(self, other), result=res_q
+                    "mul", operands=(self, other), result=res
                 )
-            return res_q
+            return res
+
+        # 2. Numeric scalar/array multiplication (Quantity * Numeric)
+        if isinstance(other, (int, float, complex)) or self._backend.is_array(
+            other
+        ):
+            new_magnitude = self._backend.mul(self.magnitude, other)
+            new_unit = self.unit * other  # CompoundUnit handles this
+
+            if self._backend.is_array(new_magnitude):
+                size = self._backend.size(new_magnitude)
+                if self._backend.is_array(other):
+                    # Use diagonal_operator for element-wise scaling
+                    # broadcast_and_flatten ensures shapes match
+                    _, other_flat = self._backend.broadcast_and_flatten(
+                        [self.magnitude, other]
+                    )
+                    j_self = self._backend.diagonal_operator(other_flat)
+                else:
+                    j_self = self._backend.mul(
+                        self._backend.identity_operator(
+                            size, reference=self.magnitude
+                        ),
+                        other,
+                    )
+
+                new_unc = self._propagate_vectorized(
+                    None, new_magnitude, j_self, None
+                )
+                res = self._fast_new(
+                    new_magnitude,
+                    new_unit,
+                    new_unc,
+                    self.system,
+                    self.dimension,
+                    self._backend,
+                )
+                if self._uncertainty_obj is not None:
+                    res._uncertainty_obj = (
+                        self._uncertainty_obj.propagate_mul_div(
+                            None,
+                            self.magnitude,
+                            other,
+                            new_magnitude,
+                            jac_self=j_self,
+                            jac_other=0.0,
+                        )
+                    )
+
+                from measurekit.application.tracing.context import (
+                    get_active_tracer,
+                )
+
+                if (tracer := get_active_tracer()) is not None:
+                    tracer.record_operation(
+                        "mul", operands=(self, other), result=res
+                    )
+                return res
+
+            # Scalar Path for Quantity * Numeric
+            new_u_obj = None
+            if self._uncertainty_obj is not None:
+                new_u_obj = self._uncertainty_obj.propagate_mul_div(
+                    None,
+                    self.magnitude,
+                    other,
+                    new_magnitude,
+                    jac_self=other,
+                    jac_other=0.0,
+                )
+                res_unc = new_u_obj.std_dev
+            else:
+                res_unc = self._backend.mul(
+                    self.uncertainty, self._backend.abs(other)
+                )
+
+            res = self._fast_new(
+                new_magnitude,
+                new_unit,
+                res_unc,
+                self.system,
+                self.dimension,
+                self._backend,
+            )
+            if new_u_obj is not None:
+                res._uncertainty_obj = new_u_obj
+
+            from measurekit.application.tracing.context import (
+                get_active_tracer,
+            )
+
+            if (tracer := get_active_tracer()) is not None:
+                tracer.record_operation(
+                    "mul", operands=(self, other), result=res
+                )
+            return res
+
+        # 3. Quantity * Quantity multiplication
+        if is_other_q:
+            new_magnitude = self._backend.mul(self.magnitude, other.magnitude)
+            new_unit = self.unit * other.unit
+            new_dimension = self.dimension * other.dimension
+
+            if self._backend.is_array(new_magnitude):
+                size = self._backend.size(new_magnitude)
+                self_flat, other_flat = self._backend.broadcast_and_flatten(
+                    [self.magnitude, other.magnitude]
+                )
+
+                # Jacobians: dz/dx = y, dz/dy = x
+                j_self = self._backend.diagonal_operator(other_flat)
+                j_other = self._backend.diagonal_operator(self_flat)
+
+                new_unc = self._propagate_vectorized(
+                    other, new_magnitude, j_self, j_other
+                )
+                res = self._fast_new(
+                    new_magnitude,
+                    new_unit,
+                    new_unc,
+                    self.system,
+                    new_dimension,
+                    self._backend,
+                )
+                if self._uncertainty_obj is not None:
+                    res._uncertainty_obj = (
+                        self._uncertainty_obj.propagate_mul_div(
+                            other._uncertainty_obj,
+                            self.magnitude,
+                            other.magnitude,
+                            new_magnitude,
+                            jac_self=j_self,
+                            jac_other=j_other,
+                        )
+                    )
+
+                from measurekit.application.tracing.context import (
+                    get_active_tracer,
+                )
+
+                if (tracer := get_active_tracer()) is not None:
+                    tracer.record_operation(
+                        "mul", operands=(self, other), result=res
+                    )
+                return res
+
+            # Scalar Path for Quantity * Quantity
+            new_u_obj = None
+            if self._uncertainty_obj is not None:
+                new_u_obj = self._uncertainty_obj.propagate_mul_div(
+                    other._uncertainty_obj,
+                    self.magnitude,
+                    other.magnitude,
+                    new_magnitude,
+                    jac_self=other.magnitude,
+                    jac_other=self.magnitude,
+                )
+                res_unc = new_u_obj.std_dev
+            else:
+                # GUM Fallback: u_z = sqrt((u_x*y)^2 + (x*u_y)^2)
+                var_self = self._backend.pow(
+                    self._backend.mul(self.uncertainty, other.magnitude), 2
+                )
+                var_other = self._backend.pow(
+                    self._backend.mul(self.magnitude, other.uncertainty), 2
+                )
+                res_unc = self._backend.pow(
+                    self._backend.add(var_self, var_other), 0.5
+                )
+
+            res = self._fast_new(
+                new_magnitude,
+                new_unit,
+                res_unc,
+                self.system,
+                new_dimension,
+                self._backend,
+            )
+            if new_u_obj is not None:
+                res._uncertainty_obj = new_u_obj
+
+            from measurekit.application.tracing.context import (
+                get_active_tracer,
+            )
+
+            if (tracer := get_active_tracer()) is not None:
+                tracer.record_operation(
+                    "mul", operands=(self, other), result=res
+                )
+            return res
 
         if isinstance(other, CompoundUnit):
-            new_unit = self.unit * other
             return Quantity.from_input(
-                value=self.magnitude,
-                unit=new_unit,
-                system=self.system,
-                uncertainty=self.uncertainty_obj,
+                self.magnitude,
+                self.unit * other,
+                self.system,
+                uncertainty=self.uncertainty,
             )
+
+        return NotImplemented
         return NotImplemented
 
     def __rmul__(self, other: Any) -> Quantity:
@@ -1762,55 +1998,153 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def __truediv__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Divides two quantities."""
-        if self.uncertainty_obj is None or (
-            isinstance(other, Quantity) and other.uncertainty_obj is None
+        if isinstance(other, CompoundUnit):
+            new_unit = self.unit / other
+            return Quantity.from_input(
+                self.magnitude,
+                new_unit,
+                self.system,
+                uncertainty=self.uncertainty,
+            )
+
+        is_other_q = isinstance(other, Quantity)
+
+        # 1. Unit/Dimension Path
+        if isinstance(other, CompoundUnit):
+            return Quantity.from_input(
+                self.magnitude,
+                self.unit / other,
+                self.system,
+                uncertainty=self.uncertainty,
+            )
+
+        # 2. Optimized path for no uncertainty
+        u_self = self.uncertainty
+        u_other = other.uncertainty if is_other_q else 0.0
+
+        if (
+            u_self is None
+            or (isinstance(u_self, (int, float)) and u_self == 0.0)
+        ) and (
+            not is_other_q
+            or (
+                u_other is None
+                or (isinstance(u_other, (int, float)) and u_other == 0.0)
+            )
         ):
             new_val = self._backend.truediv(
                 self.magnitude,
-                other.magnitude if isinstance(other, Quantity) else other,
+                other.magnitude if is_other_q else other,
             )
-            new_unit = self.unit / (
-                other.unit if isinstance(other, Quantity) else other
-            )
-            return Quantity.from_input(new_val, new_unit, self.system)
+            new_unit = self.unit / (other.unit if is_other_q else other)
+            res = Quantity.from_input(new_val, new_unit, self.system)
 
+            from measurekit.application.tracing.context import (
+                get_active_tracer,
+            )
+
+            if (tracer := get_active_tracer()) is not None:
+                tracer.record_operation(
+                    "truediv", operands=(self, other), result=res
+                )
+            return res
+
+        # 3. Numeric Path (Quantity / Numeric)
         if isinstance(other, (int, float, complex)) or self._backend.is_array(
             other
         ):
             new_magnitude = self._backend.truediv(self.magnitude, other)
-            if self._backend.is_array(new_magnitude):
-                size = 1
-                for d in self._backend.shape(new_magnitude):
-                    size *= d
+            new_unit = self.unit / other
 
+            if self._backend.is_array(new_magnitude):
+                size = self._backend.size(new_magnitude)
+                # dz/dx = 1/y
                 if self._backend.is_array(other):
-                    other_recip = self._backend.truediv(1.0, other)
-                    other_recip = self._backend.reshape(other_recip, (size,))
-                    j_self = self._backend.diags([other_recip], [0])
+                    _, other_flat = self._backend.broadcast_and_flatten(
+                        [self.magnitude, other]
+                    )
+                    recip_flat = self._backend.truediv(1.0, other_flat)
+                    j_self = self._backend.diagonal_operator(recip_flat)
                 else:
                     j_self = self._backend.mul(
-                        self._backend.eye(size), 1.0 / other
+                        self._backend.identity_operator(
+                            size, reference=self.magnitude
+                        ),
+                        1.0 / other,
                     )
 
-                new_uncertainty_obj = self._propagate_vectorized(
+                new_unc = self._propagate_vectorized(
                     None, new_magnitude, j_self, None
                 )
-            else:
-                new_uncertainty_obj = self.uncertainty_obj.scale(
-                    cast("Any", 1.0 / other)
+                res = self._fast_new(
+                    new_magnitude,
+                    new_unit,
+                    new_unc,
+                    self.system,
+                    self.dimension,
+                    self._backend,
+                )
+                if self._uncertainty_obj is not None:
+                    res._uncertainty_obj = (
+                        self._uncertainty_obj.propagate_mul_div(
+                            None,
+                            self.magnitude,
+                            other,
+                            new_magnitude,
+                            jac_self=j_self,
+                            jac_other=0.0,
+                        )
+                    )
+
+                from measurekit.application.tracing.context import (
+                    get_active_tracer,
                 )
 
-            return cast(
-                "Quantity[ValueType, UncType, Any]",
-                Quantity.from_input(
+                if (tracer := get_active_tracer()) is not None:
+                    tracer.record_operation(
+                        "truediv", operands=(self, other), result=res
+                    )
+                return res
+
+            # Scalar Path for Quantity / Numeric
+            new_u_obj = None
+            j_self = 1.0 / other
+            if self._uncertainty_obj is not None:
+                new_u_obj = self._uncertainty_obj.propagate_mul_div(
+                    None,
+                    self.magnitude,
+                    other,
                     new_magnitude,
-                    self.unit,
-                    self.system,
-                    uncertainty=new_uncertainty_obj,
-                ),
+                    jac_self=j_self,
+                    jac_other=0.0,
+                )
+                res_unc = new_u_obj.std_dev
+            else:
+                res_unc = self._backend.mul(self.uncertainty, abs(j_self))
+
+            res = self._fast_new(
+                new_magnitude,
+                new_unit,
+                res_unc,
+                self.system,
+                self.dimension,
+                self._backend,
+            )
+            if new_u_obj is not None:
+                res._uncertainty_obj = new_u_obj
+
+            from measurekit.application.tracing.context import (
+                get_active_tracer,
             )
 
-        if isinstance(other, Quantity):
+            if (tracer := get_active_tracer()) is not None:
+                tracer.record_operation(
+                    "truediv", operands=(self, other), result=res
+                )
+            return res
+
+        # 4. Quantity / Quantity Path
+        if is_other_q:
             new_magnitude = self._backend.truediv(
                 self.magnitude, other.magnitude
             )
@@ -1818,132 +2152,131 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             new_dimension = self.dimension / other.dimension
 
             if self._backend.is_array(new_magnitude):
-                size = 1
-                for d in self._backend.shape(new_magnitude):
-                    size *= d
-
-                # Prepare broadcasted values flattened to (size,)
-
-                # Term 1: 1/y (coefficient for j_self)
-                # We need 1/other.magnitude
-                # If other is scalar/array...
-                recip_other = self._backend.truediv(1.0, other.magnitude)
-
-                recip_flat = self._broadcast_to_size(recip_other, size)
-
-                is_self_scalar = (
-                    self._backend.shape(self.magnitude) == ()
-                    or len(self._backend.shape(self.magnitude)) == 0
-                    or (
-                        hasattr(self.magnitude, "shape")
-                        and self.magnitude.shape == (1,)
-                    )
+                size = self._backend.size(new_magnitude)
+                self_flat, other_flat = self._backend.broadcast_and_flatten(
+                    [self.magnitude, other.magnitude]
                 )
 
-                if is_self_scalar:
-                    j_self = self._backend.reshape(recip_flat, (size, 1))
-                else:
-                    j_self = self._backend.diags([recip_flat], [0])
+                # dz/dx = 1/y
+                recip_flat = self._backend.truediv(1.0, other_flat)
+                j_self = self._backend.diagonal_operator(recip_flat)
 
-                # Term 2: -x/y^2 (coefficient for j_other)
-                neg_z_over_y = self._backend.truediv(
-                    self._backend.mul(new_magnitude, -1.0), other.magnitude
+                # dz/dy = -x/y^2 = -z/y
+                neg_z_over_y = self._backend.mul(
+                    self._backend.truediv(new_magnitude.ravel(), other_flat),
+                    -1.0,
                 )
+                j_other = self._backend.diagonal_operator(neg_z_over_y)
 
-                factor_flat = self._broadcast_to_size(neg_z_over_y, size)
-
-                is_other_scalar = (
-                    self._backend.shape(other.magnitude) == ()
-                    or len(self._backend.shape(other.magnitude)) == 0
-                    or (
-                        hasattr(other.magnitude, "shape")
-                        and other.magnitude.shape == (1,)
-                    )
-                )
-
-                if is_other_scalar:
-                    j_other = self._backend.reshape(factor_flat, (size, 1))
-                    new_uncertainty_obj = self._propagate_vectorized(
-                        other, new_magnitude, j_self, j_other
-                    )
-                    res = self._fast_new(
-                        new_magnitude,
-                        new_unit,
-                        new_uncertainty_obj,
-                        self.system,
-                        new_dimension,
-                        self._backend,
-                    )
-                    from measurekit.application.tracing.context import (
-                        get_active_tracer,
-                    )
-
-                    if (tracer := get_active_tracer()) is not None:
-                        tracer.record_operation(
-                            "truediv", operands=(self, other), result=res
-                        )
-                    return res
-                j_other = self._backend.diags([factor_flat], [0])
-
-                new_uncertainty_obj = self._propagate_vectorized(
+                new_unc = self._propagate_vectorized(
                     other, new_magnitude, j_self, j_other
                 )
-            else:
-                new_uncertainty_obj = self.uncertainty_obj.propagate_mul_div(
-                    other.uncertainty_obj,
+                res = self._fast_new(
+                    new_magnitude,
+                    new_unit,
+                    new_unc,
+                    self.system,
+                    new_dimension,
+                    self._backend,
+                )
+                if self._uncertainty_obj is not None:
+                    res._uncertainty_obj = (
+                        self._uncertainty_obj.propagate_mul_div(
+                            other._uncertainty_obj,
+                            self.magnitude,
+                            other.magnitude,
+                            new_magnitude,
+                            jac_self=j_self,
+                            jac_other=j_other,
+                        )
+                    )
+
+                from measurekit.application.tracing.context import (
+                    get_active_tracer,
+                )
+
+                if (tracer := get_active_tracer()) is not None:
+                    tracer.record_operation(
+                        "truediv", operands=(self, other), result=res
+                    )
+                return res
+
+            # Scalar Path for Quantity / Quantity
+            new_u_obj = None
+            j_self = 1.0 / other.magnitude
+            j_other = -self.magnitude / (other.magnitude**2)
+            if self._uncertainty_obj is not None:
+                new_u_obj = self._uncertainty_obj.propagate_mul_div(
+                    other._uncertainty_obj,
                     self.magnitude,
                     other.magnitude,
                     new_magnitude,
-                    jac_self=self._backend.truediv(1.0, other.magnitude),
-                    jac_other=self._backend.truediv(
-                        self._backend.mul(new_magnitude, -1.0),
-                        other.magnitude,
-                    ),
+                    jac_self=j_self,
+                    jac_other=j_other,
                 )
-            res_q = self._fast_new(
+                res_unc = new_u_obj.std_dev
+            else:
+                # GUM Fallback: u_z = sqrt((u_x/y)^2 + (x*u_y/y^2)^2)
+                var_self = self._backend.pow(
+                    self.uncertainty / other.magnitude, 2
+                )
+                var_other = self._backend.pow(
+                    self.magnitude * other.uncertainty / (other.magnitude**2),
+                    2,
+                )
+                res_unc = self._backend.pow(
+                    self._backend.add(var_self, var_other), 0.5
+                )
+
+            res = self._fast_new(
                 new_magnitude,
                 new_unit,
-                new_uncertainty_obj,
+                res_unc,
                 self.system,
                 new_dimension,
                 self._backend,
             )
+            if new_u_obj is not None:
+                res._uncertainty_obj = new_u_obj
+
             from measurekit.application.tracing.context import (
                 get_active_tracer,
             )
 
             if (tracer := get_active_tracer()) is not None:
                 tracer.record_operation(
-                    "truediv", operands=(self, other), result=res_q
+                    "truediv", operands=(self, other), result=res
                 )
-            return res_q
+            return res
 
-        if isinstance(other, CompoundUnit):
-            new_unit = self.unit / other
-            return Quantity.from_input(
-                value=self.magnitude,
-                unit=new_unit,
-                system=self.system,
-                uncertainty=self.uncertainty_obj,
-            )
+        return NotImplemented
         return NotImplemented
 
     def __pow__(self, exponent: float) -> Quantity[Any, Any, Any]:
         """Raises quantity to power."""
-        if self.uncertainty_obj is None:
+        u_self = self.uncertainty
+        if u_self is None or (
+            isinstance(u_self, (int, float)) and u_self == 0.0
+        ):
             new_val = self._backend.pow(self.magnitude, exponent)
             new_unit = self.unit**exponent
             return Quantity.from_input(new_val, new_unit, self.system)
 
         new_value = self._backend.pow(self.magnitude, exponent)
         new_unit = self.unit**exponent
-        # Casting to float is tricky if it's array.
-        # But Uncertainty.power expects the BASE value.
-        new_uncertainty_obj = self.uncertainty_obj.power(
-            exponent, self.magnitude
+        new_uncertainty = self._backend.mul(
+            self._backend.abs(
+                self._backend.mul(
+                    exponent,
+                    self._backend.pow(
+                        self.magnitude, self._backend.sub(exponent, 1)
+                    ),
+                )
+            ),
+            self.uncertainty,
         )
         res = Quantity.from_input(
-            new_value, new_unit, self.system, uncertainty=new_uncertainty_obj
+            new_value, new_unit, self.system, uncertainty=new_uncertainty
         )
         from measurekit.application.tracing.context import get_active_tracer
 
@@ -1962,26 +2295,36 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def __rtruediv__(self, other: Any) -> Quantity[Any, Any, Any]:
         """Right division."""
-        # Note: Backend handles div by zero (inf/nan) usage (JAX/Tracer safe).
-
         new_magnitude = self._backend.truediv(other, self.magnitude)
         new_unit = 1 / self.unit
-        other_uncertainty = Uncertainty.from_standard(0.0)
-        new_uncertainty_obj = other_uncertainty.propagate_mul_div(
-            self.uncertainty_obj, other, self.magnitude, new_magnitude
-        )
-        res = Quantity.from_input(
-            new_magnitude,
-            new_unit,
-            self.system,
-            uncertainty=new_uncertainty_obj,
-        )
-        from measurekit.application.tracing.context import get_active_tracer
 
-        if (tracer := get_active_tracer()) is not None:
-            tracer.record_operation(
-                "truediv", operands=(other, self), result=res
+        # GUM Rule for y = k/x: u_y = |-k/x^2| * u_x
+        # jac_self = -other/x^2 = -y/x
+        jac_self = self._backend.mul(
+            self._backend.truediv(new_magnitude, self.magnitude), -1.0
+        )
+
+        new_u_obj = None
+        if self._uncertainty_obj is not None:
+            new_u_obj = self._uncertainty_obj.propagate_mul_div(
+                None,
+                self.magnitude,
+                other,
+                new_magnitude,
+                jac_self=jac_self,
+                jac_other=0.0,
             )
+            new_uncertainty = new_u_obj.std_dev
+        else:
+            new_uncertainty = self._backend.mul(
+                self._backend.abs(jac_self), self.uncertainty
+            )
+
+        res = Quantity.from_input(
+            new_magnitude, new_unit, self.system, uncertainty=new_uncertainty
+        )
+        if new_u_obj is not None:
+            res._uncertainty_obj = new_u_obj
         return res
 
     def __neg__(self) -> Self:
@@ -1992,7 +2335,7 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                 self._backend.mul(self.magnitude, -1),
                 self.unit,
                 self.system,
-                uncertainty=self.uncertainty_obj.scale(-1.0),
+                uncertainty=self.uncertainty,
             ),
         )
 
@@ -2002,14 +2345,13 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def __abs__(self) -> Self:
         """Returns the absolute value of the quantity."""
-        sign = self._backend.sign(self.magnitude)
         return cast(
             "Self",
             Quantity.from_input(
                 self._backend.abs(self.magnitude),
                 self.unit,
                 self.system,
-                self.uncertainty_obj.scale(sign),
+                uncertainty=self.uncertainty,
             ),
         )
 
@@ -2024,18 +2366,11 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         # Handle reductions (e.g. np.sum which calls np.add.reduce)
         if method == "reduce":
             if ufunc == np.add:
-                # Summation
-                # inputs[0] is the quantity to reduce
                 inp = inputs[0]
                 if isinstance(inp, Quantity):
-                    # Delegate to backend sum
-                    # kwargs might contain 'axis', 'dtype', 'out', 'keepdims'
-                    # We need to handle 'out' carefully or ignore?
-                    # Backend sum usually takes axis.
                     res_mag = self._backend.sum(
                         inp.magnitude, axis=kwargs.get("axis")
                     )
-                    # reduce usually lowers dimension.
                     return Quantity.from_input(res_mag, inp.unit, self.system)
             return NotImplemented
 
@@ -2045,9 +2380,15 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         # Standard Dispatch
         if ufunc == np.add:
             val = inputs[1] if inputs[0] is self else inputs[0]
+            if isinstance(val, Quantity) and self.unit != val.unit:
+                if self.dimension != val.dimension:
+                    raise IncompatibleUnitsError(self.unit, val.unit)
             return self.__add__(val)
         if ufunc == np.subtract:
             val = inputs[1] if inputs[0] is self else inputs[0]
+            if isinstance(val, Quantity) and self.unit != val.unit:
+                if self.dimension != val.dimension:
+                    raise IncompatibleUnitsError(self.unit, val.unit)
             if inputs[0] is self:
                 return self.__sub__(val)
             return self.__rsub__(val)
@@ -2055,11 +2396,9 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             val = inputs[1] if inputs[0] is self else inputs[0]
             return self.__mul__(val)
         if ufunc == np.true_divide:
-            return (
-                self.__truediv__(inputs[1])
-                if inputs[0] is self
-                else self.__rtruediv__(inputs[0])
-            )
+            if inputs[0] is self:
+                return self.__truediv__(inputs[1])
+            return self.__rtruediv__(inputs[0])
         if ufunc == np.power and inputs[0] is self:
             return self.__pow__(inputs[1])
 
@@ -2074,41 +2413,48 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
             return abs(self)
 
         # Trig functions (Require dimensionless)
-        trig_funcs = (
-            np.sin,
-            np.cos,
-            np.tan,
-            np.exp,
-            np.log,
-            np.log10,
-            np.arcsin,
-            np.arccos,
-            np.arctan,
+        trig_names = (
+            "sin",
+            "cos",
+            "tan",
+            "exp",
+            "log",
+            "log10",
+            "arcsin",
+            "arccos",
+            "arctan",
+            "tanh",
+            "sinh",
+            "cosh",
         )
-        if ufunc in trig_funcs:
-            # Assume unary
+        if ufunc.__name__ in trig_names:
             inp = inputs[0]
             if isinstance(inp, Quantity):
                 if not inp.dimension.is_dimensionless:
-                    # Check if it's strictly stateless or effectively dimensionless?
-                    # The test registers 'rad' as dimensionless.
-                    pass
+                    raise IncompatibleUnitsError(inp.unit, CompoundUnit({}))
 
-                # If dimensionless, units are dropped/cleared
-                # Verify dimensionless; result is pure number.
-                if inp.dimension.is_dimensionless:
-                    has_uncertainty = False
-                    if inp.uncertainty_obj is not None:
-                        std_dev = inp.uncertainty_obj.std_dev
-                        if hasattr(std_dev, "any"):
-                            has_uncertainty = std_dev.any()
-                        else:
-                            has_uncertainty = std_dev != 0
+                # Use numeric value if dimensionless
+                # Convert to float/array to strip Quantity wrapper which causes infinite recursion in ufunc
+                mag = inp.magnitude
+                res_mag = ufunc(mag, **kwargs)
+                u_inp = inp._numeric_std_dev
+                has_unc = inp._has_uncertainty
 
-                    if has_uncertainty:
-                        # Propagate uncertainty
-                        res_mag, res_unc = Uncertainty.propagate(
-                            ufunc, [inp.magnitude], [inp.uncertainty_obj]
+                if has_unc:
+                    # Propagate uncertainty using numerical derivative
+                    h = 1e-7
+                    # Ensure same backend for perturbation
+                    m_plus = inp._backend.add(inp.magnitude, h)
+                    m_minus = inp._backend.sub(inp.magnitude, h)
+
+                    try:
+                        # Estimate derivative
+                        der = inp._backend.truediv(
+                            inp._backend.sub(ufunc(m_plus), ufunc(m_minus)),
+                            2 * h,
+                        )
+                        res_unc = inp._backend.mul(
+                            inp._backend.abs(der), u_inp
                         )
                         return Quantity.from_input(
                             res_mag,
@@ -2116,13 +2462,18 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
                             self.system,
                             uncertainty=res_unc,
                         )
-                    else:
-                        res_mag = ufunc(inp.magnitude, **kwargs)
+                    except Exception:
+                        # Conservative fallback for complex backends
                         return Quantity.from_input(
-                            res_mag, CompoundUnit({}), self.system
+                            res_mag,
+                            CompoundUnit({}),
+                            self.system,
+                            uncertainty=u_inp,
                         )
-
-                raise IncompatibleUnitsError(inp.unit, CompoundUnit({}))
+                else:
+                    return Quantity.from_input(
+                        res_mag, CompoundUnit({}), self.system
+                    )
 
         return NotImplemented
 
@@ -2283,8 +2634,6 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def __floor__(self) -> Quantity:
         """Returns floor of quantity."""
-        import math
-
         return Quantity.from_input(
             math.floor(self.magnitude),
             self.unit,
@@ -2294,16 +2643,12 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
 
     def __ceil__(self) -> Quantity:
         """Returns ceiling of quantity."""
-        import math
-
         return Quantity.from_input(
             math.ceil(self.magnitude), self.unit, self.system, self.uncertainty
         )
 
     def __trunc__(self) -> Quantity:
         """Truncates quantity."""
-        import math
-
         return Quantity.from_input(
             math.trunc(self.magnitude),
             self.unit,
@@ -2352,6 +2697,17 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         new_unit = self.unit * other.unit
         # Uncertainty ignored for now
         return Quantity.from_input(mag, new_unit, self.system)
+
+    def __bool__(self) -> bool:
+        """Returns the boolean value of the magnitude."""
+        if hasattr(self.magnitude, "ndim") and self.magnitude.ndim > 0:
+            if self.magnitude.size > 1:
+                raise ValueError(
+                    "The truth value of a Quantity with more than one element is ambiguous. "
+                    "Use a.any() or a.all()"
+                )
+            return bool(self.magnitude.item())
+        return bool(self.magnitude)
 
     def __len__(self) -> int:
         """Returns length (if array)."""
@@ -2425,6 +2781,30 @@ class Quantity(CoreQuantity, Generic[ValueType, UncType, UnitType]):
         else:
             # Assume value is magnitude in same unit
             self.magnitude[key] = value
+
+    @property
+    def uncertainty_obj(self) -> Any:
+        """Returns the rich uncertainty object (legacy support)."""
+        if self._uncertainty_obj is not None:
+            return self._uncertainty_obj
+        # Fallback to VarianceModel if it was numeric
+        from measurekit.domain.measurement.uncertainty import VarianceModel
+
+        return VarianceModel(self.uncertainty)
+
+    @property
+    def vector_slice(self) -> slice | None:
+        """Returns the vector slice if using vectorized uncertainty."""
+        if hasattr(self._uncertainty_obj, "vector_slice"):
+            return self._uncertainty_obj.vector_slice
+        return None
+
+    @property
+    def lineage(self) -> dict[str, Any]:
+        """Returns the lineage dictionary if using correlated uncertainty."""
+        if hasattr(self._uncertainty_obj, "lineage"):
+            return self._uncertainty_obj.lineage
+        return {}
 
     # --- Comparison Methods ---
     def _compare(self, other: Any, op: Any) -> Any:
@@ -2543,13 +2923,10 @@ def _create_core_quantity_from_dims(magnitude, unit_dims, uncertainty):
     return CoreQuantity.__new__(Quantity, magnitude, unit, uncertainty)
 
 
-def _create_full_quantity(
-    magnitude, unit_dims, uncertainty_obj, system, fraction, symbol
-):
+def _create_full_quantity(magnitude, unit_dims, uncertainty, system, symbol):
     """Creates and fully initializes a Quantity in one opaque step."""
     # Always use Python-based RationalUnit for full Dynamo traceablity (Zero-Overhead)
     from measurekit._jit.tracer import RationalUnit
-    from measurekit.domain.measurement.uncertainty import Uncertainty
 
     # Re-derive dependencies inside the opaque op to avoid passing complex objects through the graph
     backend = BackendManager.get_backend(magnitude)
@@ -2570,20 +2947,18 @@ def _create_full_quantity(
     dimension = unit_obj.dimension(system)
 
     # Extract raw std_dev for CoreQuantity.__new__
-    raw_uncertainty = uncertainty_obj
-    if isinstance(uncertainty_obj, Uncertainty):
-        raw_uncertainty = uncertainty_obj.std_dev
+    raw_uncertainty = uncertainty
+    if hasattr(uncertainty, "std_dev"):
+        raw_uncertainty = uncertainty.std_dev
 
     # Use the global Quantity class
     obj = CoreQuantity.__new__(Quantity, magnitude, r_unit, raw_uncertainty)
 
     # Init attributes
-    object.__setattr__(obj, "uncertainty_obj", uncertainty_obj)
     object.__setattr__(obj, "system", system)
     object.__setattr__(obj, "dimension", dimension)
     object.__setattr__(obj, "_unit", unit_obj)
     object.__setattr__(obj, "_backend", backend)
-    object.__setattr__(obj, "fraction", fraction)
     object.__setattr__(obj, "symbol", symbol)
 
     return obj

@@ -95,10 +95,30 @@ class Uncertainty(ABC, Generic[UncType]):
 
         # Auto-detect requirement for CovarianceModel
         backend = BackendManager.get_backend(std_dev)
+
+        # DEBUG LOGGING
+        with open("debug_unc.txt", "a") as f:
+            f.write(
+                f"DEBUG: from_standard type={type(std_dev)} is_array={backend.is_array(std_dev)}\n"
+            )
+            if backend.is_array(std_dev):
+                f.write(f"DEBUG: size={backend.size(std_dev)}\n")
+
         if backend.is_array(std_dev) and backend.size(std_dev) > 1:
             # Check if all elements are zero to avoid unnecessary store registration
-            if not backend.any(backend.not_equal(std_dev, 0)):
-                return VarianceModel.from_standard(std_dev)
+            mask = backend.not_equal(std_dev, 0)
+            with open("debug_unc.txt", "a") as f:
+                f.write(
+                    f"DEBUG: Entering array > 1 block. any(mask)={backend.any(mask)}\n"
+                )
+
+            if not backend.any(mask):
+                with open("debug_unc.txt", "a") as f:
+                    f.write("DEBUG: Returning VarianceModel (zeros)\n")
+                return VarianceModel(variance=std_dev)
+
+            with open("debug_unc.txt", "a") as f:
+                f.write("DEBUG: Returning CovarianceModel\n")
             return CovarianceModel.from_standard(std_dev, measurement_id)
 
         # Scalar Context-aware dispatch
@@ -109,8 +129,12 @@ class Uncertainty(ABC, Generic[UncType]):
         if get_current_store() is not None:
             return CovarianceModel.from_standard(std_dev, measurement_id)
 
-        # Default to VarianceModel for scalars or simple cases
-        return VarianceModel.from_standard(std_dev)
+        # For simple scalars with no active store, return None to keep Quantity "simple"
+        if backend.is_array(std_dev) or backend.any(
+            backend.not_equal(std_dev, 0)
+        ):
+            return VarianceModel.from_standard(std_dev)
+        return None
 
     @classmethod
     def propagate(
@@ -160,6 +184,7 @@ class VarianceModel(Uncertainty[UncType]):
     """
 
     variance: UncType
+    vector_slice: slice | None = None
 
     @property
     def std_dev(self) -> UncType:
@@ -256,8 +281,8 @@ class VarianceModel(Uncertainty[UncType]):
             var_flat = backend.reshape(backend.asarray(var), (1, 1))
             original_shape = ()
 
-        if not backend.is_array(jac):
-            # Scalar jacobian, vector variance
+        if not backend.is_array(jac) or backend.size(jac) == 1:
+            # Scalar or scalar-like array jacobian, vector variance
             return backend.mul(jac_sq, var)
 
         # Matrix jacobian, vector variance
@@ -300,13 +325,19 @@ class VarianceModel(Uncertainty[UncType]):
         """Adds two uncertainty models."""
         backend = BackendManager.get_backend(self.variance)
 
+        v_self = self._apply_jacobian(self.variance, jac_self, backend)
+
+        if other is None:
+            return VarianceModel(v_self)
+
         # Ensure other has variance
         if isinstance(other, VarianceModel):
             other_var = other.variance
         else:
-            other_var = backend.pow(other.std_dev, 2)
+            # Handle numeric or Uncertainty other
+            std = getattr(other, "std_dev", other)
+            other_var = backend.pow(std, 2)
 
-        v_self = self._apply_jacobian(self.variance, jac_self, backend)
         v_other = self._apply_jacobian(other_var, jac_other, backend)
 
         new_var = backend.add(v_self, v_other)
@@ -444,6 +475,8 @@ class CovarianceModel(Uncertainty[UncType]):
             final_jacs = []
 
             for u, jac in zip(uncertainties, jacs, strict=False):
+                if u is None:
+                    continue
                 if isinstance(u, CovarianceModel):
                     in_slices.append(u.ensure_vector_slice(backend))
                 else:
@@ -470,6 +503,9 @@ class CovarianceModel(Uncertainty[UncType]):
 
         # We process each input k
         for u, jac in zip(uncertainties, jacs, strict=False):
+            if u is None:
+                continue
+
             # Ensure u has lineage
             if isinstance(u, CovarianceModel):
                 src_lineage = u.lineage
@@ -563,11 +599,7 @@ class CovarianceModel(Uncertainty[UncType]):
         backend = BackendManager.get_backend(self.std_dev_internal)
 
         # Vector Path
-        if (
-            out_magnitude is not None
-            and backend.is_array(out_magnitude)
-            and backend.size(out_magnitude) > 1
-        ):
+        if out_magnitude is not None and backend.is_array(out_magnitude):
             from measurekit.domain.measurement.vectorized_uncertainty import (
                 ensure_store,
             )
@@ -582,14 +614,16 @@ class CovarianceModel(Uncertainty[UncType]):
             jacobians.append(jac_self)
 
             # Handle Other
-            if isinstance(other, CovarianceModel):
-                in_slices.append(other.ensure_vector_slice(backend))
-                jacobians.append(jac_other)
-            else:
-                # Independent source for cross-model or simple inputs
-                slc = store.register_independent_array(other.std_dev)
-                in_slices.append(slc)
-                jacobians.append(jac_other)
+            if other is not None:
+                if isinstance(other, CovarianceModel):
+                    in_slices.append(other.ensure_vector_slice(backend))
+                    jacobians.append(jac_other)
+                else:
+                    # Independent source for cross-model or simple inputs
+                    std = getattr(other, "std_dev", other)
+                    slc = store.register_independent_array(std)
+                    in_slices.append(slc)
+                    jacobians.append(jac_other)
 
             out_size = backend.size(out_magnitude)
             out_slice = store.allocate(out_size)
@@ -606,11 +640,13 @@ class CovarianceModel(Uncertainty[UncType]):
             )
 
         # Scalar Path (Lineage)
-        other_lineage = (
-            other.lineage
-            if isinstance(other, CovarianceModel)
-            else {str(uuid.uuid4()): other.std_dev}
-        )
+        other_lineage = {}
+        if other is not None:
+            if isinstance(other, CovarianceModel):
+                other_lineage = other.lineage
+            else:
+                std = getattr(other, "std_dev", other)
+                other_lineage = {str(uuid.uuid4()): std}
 
         new_lineage = {}
         for uid, coeff in self.lineage.items():
