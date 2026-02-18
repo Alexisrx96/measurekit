@@ -56,6 +56,8 @@ class TorchBackend(BackendOps):
         """Converts input to a torch Tensor."""
         if isinstance(obj, torch.Tensor):
             return obj
+        if isinstance(obj, (float, complex)):
+            return torch.as_tensor(obj, dtype=torch.float64)
         return torch.as_tensor(obj)
 
     def to_device(self, obj: Any, device: str) -> Any:
@@ -254,7 +256,7 @@ class TorchBackend(BackendOps):
         if is_sparse:
             return obj.to_dense().reshape(shape)
 
-        return torch.reshape(obj, shape)
+        return torch.reshape(self.asarray(obj), shape)
 
     def concatenate(self, arrays: Sequence[Array], axis: int = 0) -> Array:
         """Concatenates tensors."""
@@ -263,7 +265,9 @@ class TorchBackend(BackendOps):
     def eye(self, n: int, format: str = "csr", reference: Any = None) -> Any:
         """Returns an identity matrix."""
         device = getattr(reference, "device", None)
-        dtype = getattr(reference, "dtype", None)
+        dtype = getattr(reference, "dtype", torch.float64)
+        if dtype is None:
+            dtype = torch.float64
         return torch.eye(n, device=device, dtype=dtype)
 
     def sparse_eye(self, n: int, reference: Any = None) -> Any:
@@ -272,8 +276,12 @@ class TorchBackend(BackendOps):
         dtype = getattr(reference, "dtype", None)
         # Manual construction for broader compatibility
         indices = torch.stack([torch.arange(n, device=device)] * 2)
+        if dtype is None:
+            dtype = torch.float64
         values = torch.ones(n, device=device, dtype=dtype)
-        return torch.sparse_coo_tensor(indices, values, (n, n)).coalesce()
+        return torch.sparse_coo_tensor(
+            indices, values, (n, n), device=device, dtype=dtype
+        ).coalesce()
 
     def diags(
         self,
@@ -295,8 +303,20 @@ class TorchBackend(BackendOps):
     ) -> Float[Array, ...]:
         """Returns a tensor of ones."""
         device = getattr(reference, "device", None)
-        dtype = getattr(reference, "dtype", None)
+        dtype = getattr(reference, "dtype", torch.float64)
+        if dtype is None:
+            dtype = torch.float64
         return torch.ones(shape, device=device, dtype=dtype)
+
+    def zeros(
+        self, shape: tuple[int, ...], reference: Any = None
+    ) -> Float[Array, ...]:
+        """Returns a tensor of zeros."""
+        device = getattr(reference, "device", None)
+        dtype = getattr(reference, "dtype", torch.float64)
+        if dtype is None:
+            dtype = torch.float64
+        return torch.zeros(shape, device=device, dtype=dtype)
 
     def size(self, obj: Any) -> int:
         """Returns the total number of elements in the object."""
@@ -338,7 +358,9 @@ class TorchBackend(BackendOps):
         """Constructs a sparse matrix from COO data."""
         i = torch.stack([self.asarray(indices[0]), self.asarray(indices[1])])
         v = self.asarray(data)
-        return torch.sparse_coo_tensor(i, v, shape).coalesce()
+        return torch.sparse_coo_tensor(
+            i, v, shape, dtype=torch.float64
+        ).coalesce()
 
     def sparse_diags(
         self,
@@ -383,8 +405,8 @@ class TorchBackend(BackendOps):
         if not all_indices:
             # Empty sparse tensor
             return torch.sparse_coo_tensor(
-                torch.empty((2, 0), device=device),
-                torch.empty(0, device=device),
+                torch.empty((2, 0), device=device, dtype=torch.long),
+                torch.empty(0, device=device, dtype=torch.float64),
                 size=shape,
             ).coalesce()
 
@@ -392,7 +414,7 @@ class TorchBackend(BackendOps):
         final_values = torch.cat(all_values)
 
         return torch.sparse_coo_tensor(
-            final_indices, final_values, size=shape
+            final_indices, final_values, size=shape, dtype=torch.float64
         ).coalesce()
 
     def sparse_bmat(
@@ -454,11 +476,12 @@ class TorchBackend(BackendOps):
         final_shape = (row_offsets[-1], col_offsets[-1])
 
         return torch.sparse_coo_tensor(
-            final_indices, final_values, final_shape
+            final_indices, final_values, final_shape, dtype=torch.float64
         ).coalesce()
 
     def sparse_matmul(self, a: Any, b: Any) -> Any:
         """Matmul where at least one operand may be sparse."""
+        print(f"DEBUG: sparse_matmul a={type(a)}, b={type(b)}")
         # Torch matmul does not support sparse @ sparse
         a_sparse = getattr(a, "is_sparse", False)
         b_sparse = getattr(b, "is_sparse", False)
@@ -476,7 +499,11 @@ class TorchBackend(BackendOps):
             # Convert a to sparse? Or b to dense?
             # b.to_dense() is safer for now.
             b_dense = b.to_dense()
-            if a.dtype != b_dense.dtype:
+            if not isinstance(a, torch.Tensor):
+                a = torch.as_tensor(
+                    a, device=b_dense.device, dtype=b_dense.dtype
+                )
+            elif a.dtype != b_dense.dtype:
                 a = a.to(b_dense.dtype)
             return torch.matmul(a, b_dense)
 
@@ -532,35 +559,40 @@ class TorchBackend(BackendOps):
         # Convert slices to indices
         # CAUTION: Realizes indices, large if slice is huge.
         # But typically we slice to get relatively small blocks.
+        """Slices a sparse matrix (or dense fallback)."""
+        if matrix is None:
+            return None
 
-        # Optimize for full slice
-        if row_slice == slice(None) and col_slice == slice(None):
-            return matrix
-
-        rows = torch.arange(
-            row_slice.start or 0,
-            row_slice.stop if row_slice.stop is not None else matrix.shape[0],
-            row_slice.step or 1,
-            device=matrix.device,
+        # Determine indices
+        # row_slice might be slice(start, stop)
+        r_start = row_slice.start if row_slice.start is not None else 0
+        r_stop = (
+            row_slice.stop if row_slice.stop is not None else matrix.shape[0]
         )
-        cols = torch.arange(
-            col_slice.start or 0,
-            col_slice.stop if col_slice.stop is not None else matrix.shape[1],
-            col_slice.step or 1,
-            device=matrix.device,
+        rows = torch.arange(r_start, r_stop, device=matrix.device)
+
+        c_start = col_slice.start if col_slice.start is not None else 0
+        c_stop = (
+            col_slice.stop if col_slice.stop is not None else matrix.shape[1]
         )
+        cols = torch.arange(c_start, c_stop, device=matrix.device)
 
-        # Select rows then cols
-        # index_select(dim, index) -> sparse
-        m = torch.index_select(matrix, 0, rows)
-        m = torch.index_select(m, 1, cols)
+        # For autograd stability, if we have gradients, densifying is often safer
+        # as many sparse ops lack backward kernels (like index_add_ on SparseCPU)
+        m = matrix
+        if m.is_sparse:
+            if m.requires_grad or m.grad_fn is not None:
+                # Densify BEFORE slicing to ensure dense backward pass
+                m = m.to_dense()
+                return m[row_slice, col_slice]
 
-        # index_select preserves absolute values but shifts dimensions?
-        # No, it works like numpy indexing?
-        # Actually, for sparse, it keeps the indices?
-        # Let's verify if we need to coalesce.
-        return m.coalesce()
-        return m.coalesce()
+            # For sparse, use index_select
+            m = torch.index_select(m, 0, rows)
+            m = torch.index_select(m, 1, cols)
+            return m.coalesce()
+
+        # Dense slicing
+        return m[row_slice, col_slice]
 
     def quadratic_form(self, sigma: Any, jac: Any) -> Any:
         """Computes J @ Sigma @ J.T efficiently.

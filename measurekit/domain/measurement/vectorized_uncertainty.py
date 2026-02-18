@@ -31,19 +31,47 @@ except ImportError:
 
         def __init__(self, config: PruningConfig = None):
             self.config = config or PruningConfig()
-            self.matrix = {}
+            self.matrix = None
 
         def register_variable(self, var_id, variance):
-            pass
+            if self.matrix is None:
+                self.matrix = scipy.sparse.csr_matrix(variance)
+            else:
+                self.matrix = scipy.sparse.bmat(
+                    [[self.matrix, None], [None, variance]], format="csr"
+                )
 
         def register_diagonal(self, var_id, variance_diag):
-            pass
+            size = len(variance_diag)
+            sp = scipy.sparse.diags([variance_diag], [0], format="csr")
+            self.register_variable(var_id, sp)
 
         def propagate(self, out_id, input_ids, jacobians):
-            pass
+            # Compute sizes from jacobians
+            out_size = jacobians[0].shape[0]
+            out_slice = slice(out_id, out_id + out_size)
 
-        def get_block_csr(self, id1, id2):
-            return None
+            in_slices = []
+            curr_idx = 0
+            for i, i_id in enumerate(input_ids):
+                in_size = jacobians[i].shape[1]
+                in_slices.append(slice(i_id, i_id + in_size))
+
+            # Need a backend for propagate_affine
+            from measurekit.backends.numpy_backend import NumpyBackend
+
+            backend = NumpyBackend()
+
+            self.matrix = propagate_affine(
+                self.matrix, out_slice, in_slices, jacobians, backend
+            )
+
+        def get_covariance_block(
+            self, row_slice: slice, col_slice: slice
+        ) -> Any:
+            if self.matrix is None:
+                return None
+            return self.matrix[row_slice, col_slice]
 
 
 if TYPE_CHECKING:
@@ -69,12 +97,26 @@ class CovarianceStore:
 
     def allocate(self, size: int) -> slice:
         """Allocates a block of indices/ID for a new array quantity."""
+        if hasattr(self._core, "allocate"):
+            return self._core.allocate(size)
+
         start = self._next_idx
         self._next_idx += size
         return slice(start, start + size)
 
     def get_covariance_block(self, row_slice: slice, col_slice: slice) -> Any:
         """Retrieves a block from the global covariance matrix."""
+        if hasattr(self._core, "get_covariance_block"):
+            return self._core.get_covariance_block(row_slice, col_slice)
+
+        if row_slice is None or col_slice is None:
+            # Return zero block if no slice info (e.g. independent variables)
+            # We don't have enough shape info here to return a specific size
+            # but usually this is called when slices are expected to exist.
+            # Returning None or raising a clearer error might be better,
+            # but let's try to infer if we can.
+            return None
+
         id1 = row_slice.start
         id2 = col_slice.start
 
@@ -98,7 +140,9 @@ class CovarianceStore:
                     np.vstack((coo.row, coo.col)), dtype=torch.long
                 )
                 values = torch.tensor(coo.data, dtype=torch.float64)
-                return torch.sparse_coo_tensor(indices, values, size=shape)
+                return torch.sparse_coo_tensor(
+                    indices, values, size=shape, dtype=torch.float64
+                )
 
             elif hasattr(self.backend, "from_scipy_sparse"):
                 return self.backend.from_scipy_sparse(csr)
@@ -112,7 +156,7 @@ class CovarianceStore:
         if self.backend.__class__.__name__ == "TorchBackend":
             import torch
 
-            return torch.sparse_coo_tensor(size=shape)
+            return torch.sparse_coo_tensor(size=shape, dtype=torch.float64)
 
         if scipy:
             return scipy.sparse.csr_matrix(shape)
@@ -143,56 +187,84 @@ class CovarianceStore:
             elif hasattr(val, "todense"):
                 val = val.todense()
 
-            if hasattr(val, "detach"):
-                val = val.detach()
-            if hasattr(val, "cpu"):
-                val = val.cpu()
-            if hasattr(val, "numpy"):
-                val = val.numpy()
-            elif hasattr(val, "__array__"):
-                val = np.array(val)
+            if self.backend.__class__.__name__ == "TorchBackend":
+                # For Torch, we want to keep the tensor (and its gradient)
+                val = self.backend.asarray(val)
+            else:
+                if hasattr(val, "detach"):
+                    val = val.detach()
+                if hasattr(val, "cpu"):
+                    val = val.cpu()
+                if hasattr(val, "numpy"):
+                    val = val.numpy()
+                elif hasattr(val, "__array__"):
+                    val = np.array(val)
 
-            if not isinstance(val, (np.ndarray, np.generic)):
-                val = np.array(val)
+                if not isinstance(val, (np.ndarray, np.generic)):
+                    val = np.array(val)
 
             # Scalar/Vector Broadcasting logic
-            if val.ndim == 0 or (val.ndim == 1 and val.size == 1):
-                scalar = float(val)
+            if val.ndim == 0 or (
+                val.ndim == 1 and self.backend.size(val) == 1
+            ):
+                scalar = float(val) if not self.backend.is_array(val) else val
                 if out_size == in_size:
                     # Identity * scalar
-                    val = np.eye(out_size, dtype=np.float64) * scalar
+                    val = self.backend.identity_operator(out_size)
+                    val = self.backend.mul(val, scalar)
                 else:
                     if in_size == 1:
                         # Column vector (out, 1) filled with scalar
-                        val = np.full((out_size, 1), scalar, dtype=np.float64)
+                        val = self.backend.mul(
+                            self.backend.ones((out_size, 1)), scalar
+                        )
                     elif out_size == 1:
                         # Row vector (1, in) filled with scalar
-                        val = np.full((1, in_size), scalar, dtype=np.float64)
+                        val = self.backend.mul(
+                            self.backend.ones((1, in_size)), scalar
+                        )
                     else:
-                        # Ambiguous scalar
-                        # For element-wise ops, usually means Identity-like logic if broadcasting works?
-                        # Assume strictly prohibited for now to find bugs unless diagonal.
-                        # Try Diagonal embedding?
-                        # If out > in, maybe (out, in) with diagonal?
-                        # For now, create zeros + diagonal.
-                        val = np.zeros((out_size, in_size), dtype=np.float64)
-                        np.fill_diagonal(val, scalar)
+                        # Ambiguous scalar - use identity-like diagonal
+                        val = self.backend.zeros((out_size, in_size))
+                        # We don't have a direct 'fill_diagonal' in Protocol yet
+                        # but we can use diagonal_operator if it's square
+                        if out_size == in_size:
+                            diag_vals = self.backend.mul(
+                                self.backend.ones((out_size,)), scalar
+                            )
+                            val = self.backend.diagonal_operator(diag_vals)
+                        else:
+                            # Fallback to numpy for complex broadcasting if mismatch
+                            if not self.backend.is_array(val):
+                                val = np.zeros(
+                                    (out_size, in_size), dtype=np.float64
+                                )
+                                np.fill_diagonal(val, scalar)
+                                val = self.backend.asarray(val)
 
             elif val.ndim == 1:
                 # Vector. If Input Size matches, treat as Diagonal Matrix (Element-wise mul Jacobian)
-                if val.size == in_size and out_size == in_size:
-                    val = np.diag(val)
-                elif val.size == out_size and in_size == 1:
+                if self.backend.size(val) == in_size and out_size == in_size:
+                    val = self.backend.diagonal_operator(val)
+                elif self.backend.size(val) == out_size and in_size == 1:
                     # Column vector
-                    val = val.reshape(-1, 1)
+                    val = self.backend.reshape(val, (-1, 1))
                 else:
                     # Maybe it is a flattened matrix?
-                    # Unsafe to guess.
                     pass
 
             # Ensure float64
-            if str(val.dtype) != "float64":
-                val = val.astype(np.float64, copy=False)
+            if self.backend.__class__.__name__ == "TorchBackend":
+                import torch
+
+                if val.dtype != torch.float64:
+                    val = val.to(torch.float64)
+            else:
+                if hasattr(val, "dtype") and str(val.dtype) != "float64":
+                    if hasattr(val, "astype"):
+                        val = val.astype(np.float64, copy=False)
+                    else:
+                        val = np.asarray(val, dtype=np.float64)
 
             final_jacs.append(val)
 
@@ -205,18 +277,29 @@ class CovarianceStore:
 
         variance = self.backend.pow(std_dev, 2)
         val = variance
-        if hasattr(val, "detach"):
-            val = val.detach()
-        if hasattr(val, "cpu"):
-            val = val.cpu()
-        if hasattr(val, "numpy"):
-            val = val.numpy()
-        else:
-            val = np.array(val)
+        if self.backend.__class__.__name__ == "TorchBackend":
+            # For Torch, we want to keep the tensor (and its gradient)
+            val = self.backend.reshape(val, (-1,))
+            import torch
 
-        val = val.reshape(-1)
-        if str(val.dtype) != "float64":
-            val = val.astype(np.float64, copy=False)
+            if val.dtype != torch.float64:
+                val = val.to(torch.float64)
+        else:
+            if hasattr(val, "detach"):
+                val = val.detach()
+            if hasattr(val, "cpu"):
+                val = val.cpu()
+            if hasattr(val, "numpy"):
+                val = val.numpy()
+            else:
+                val = np.array(val)
+
+            val = val.reshape(-1)
+            if hasattr(val, "dtype") and str(val.dtype) != "float64":
+                if hasattr(val, "astype"):
+                    val = val.astype(np.float64, copy=False)
+                else:
+                    val = np.asarray(val, dtype=np.float64)
 
         try:
             self._core.register_diagonal(slc.start, val)
@@ -321,12 +404,15 @@ def propagate_affine(
     m_size = out_slice.stop - out_slice.start
     c_accum = None
 
-    for in_slc, jac in zip(in_slices, jacobians):
+    for in_slc, jac in zip(in_slices, jacobians, strict=False):
         # Sigma subset: rows corresponding to input
-        sigma_part = matrix[in_slc]  # Select rows
+        sigma_part = backend.sparse_slice(matrix, in_slc, slice(None))
 
         # term = jac @ sigma_part
         term = backend.sparse_matmul(jac, sigma_part)
+        print(
+            f"DEBUG: term shape={backend.shape(term)}, sum={backend.sum(term)}"
+        )
 
         if c_accum is None:
             c_accum = term
@@ -340,9 +426,9 @@ def propagate_affine(
 
     v_accum = None
     if c_accum is not None:
-        for in_slc, jac in zip(in_slices, jacobians):
+        for in_slc, jac in zip(in_slices, jacobians, strict=False):
             # c_part = C[:, in_slc]
-            c_part = c_accum[:, in_slc]  # Slicing columns
+            c_part = backend.sparse_slice(c_accum, slice(None), in_slc)
 
             # term = c_part @ jac.T
             term = backend.sparse_matmul(c_part, backend.transpose(jac))

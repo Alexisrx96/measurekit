@@ -50,7 +50,9 @@ def test_autograd_propagation():
         # 3. Create Quantities
         # Note: Quantity constructor registers the uncertainty in the store
         q_x = Quantity.from_input(val_x, meter, system, uncertainty=unc_x)
+        print(f"DEBUG: q_x.uncertainty dtype={q_x.uncertainty.dtype}")
         q_y = Quantity.from_input(val_y, meter, system, uncertainty=unc_y)
+        print(f"DEBUG: q_y.uncertainty dtype={q_y.uncertainty.dtype}")
 
         # 4. Perform Operation
         # z = 2*x + y
@@ -63,6 +65,7 @@ def test_autograd_propagation():
         # Check values (Sanity)
         # Var(z) = 4*Var(x) + Var(y) = 4*(0.01) + 0.04 = 0.08
         # Std(z) = sqrt(0.08) ~ 0.2828
+        print(f"DEBUG: unc_z value={unc_z.item()}")
         assert isinstance(unc_z, torch.Tensor)
         assert torch.isclose(
             unc_z, torch.tensor([0.2828427], dtype=torch.float64), atol=1e-5
