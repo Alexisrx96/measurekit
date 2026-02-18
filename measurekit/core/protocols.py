@@ -239,6 +239,12 @@ class BackendOps(Protocol):
         """Returns the transpose of an array or matrix."""
         ...
 
+    def sparse_slice(
+        self, matrix: Any, row_slice: slice, col_slice: slice
+    ) -> Any:
+        """Slices a sparse matrix."""
+        ...
+
     def ones(self, shape: tuple[int, ...], reference: Any = None) -> Any:
         """Returns an array (or matrix) of ones with the given shape."""
         ...

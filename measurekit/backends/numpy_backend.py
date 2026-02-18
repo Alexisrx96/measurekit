@@ -68,21 +68,36 @@ class NumpyBackend(BackendOps):
     @enforce_tensor_contract
     def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise addition."""
+        if sparse is not None and (sparse.issparse(x) or sparse.issparse(y)):
+            return x + y
         return np.add(x, y)
 
     @enforce_tensor_contract
     def sub(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise subtraction."""
+        if sparse is not None and (sparse.issparse(x) or sparse.issparse(y)):
+            return x - y
         return np.subtract(x, y)
 
     @enforce_tensor_contract
     def mul(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise multiplication."""
+        if sparse is not None and (sparse.issparse(x) or sparse.issparse(y)):
+            # Scipy sparse multiplication (*) is element-wise for some, but @ is matmul.
+            # Scipy 1.x * is element-wise for some types, matmul for others.
+            # Better use .multiply() for explicit element-wise.
+            if hasattr(x, "multiply"):
+                return x.multiply(y)
+            if hasattr(y, "multiply"):
+                return y.multiply(x)
+            return x * y
         return np.multiply(x, y)
 
     @enforce_tensor_contract
     def truediv(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise true division."""
+        if sparse is not None and sparse.issparse(x):
+            return x / y
         return np.true_divide(x, y)
 
     @enforce_tensor_contract
@@ -159,6 +174,8 @@ class NumpyBackend(BackendOps):
     @enforce_tensor_contract
     def any(self, obj: Boolean) -> bool:
         """Returns True if any element is True."""
+        if sparse is not None and sparse.issparse(obj):
+            return obj.nnz > 0
         return bool(np.any(obj))
 
     @enforce_tensor_contract
@@ -259,7 +276,9 @@ class NumpyBackend(BackendOps):
 
     def size(self, obj: Any) -> int:
         """Returns the total number of elements in the object."""
-        return np.size(obj)
+        if hasattr(obj, "shape"):
+            return int(np.prod(obj.shape))
+        return int(np.size(obj))
 
     @enforce_tensor_contract
     def broadcast_and_flatten(self, inputs: Sequence[Any]) -> Sequence[Any]:
@@ -325,6 +344,12 @@ class NumpyBackend(BackendOps):
             # Scipy sparse and numpy arrays support this
             return a.transpose()
         return np.transpose(a)
+
+    def sparse_slice(
+        self, matrix: Any, row_slice: slice, col_slice: slice
+    ) -> Any:
+        """Slices a sparse matrix."""
+        return matrix[row_slice, col_slice]
 
     @enforce_tensor_contract
     def ones(self, shape: tuple[int, ...], reference: Any = None) -> Numeric:

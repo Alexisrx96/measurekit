@@ -87,23 +87,20 @@ class FunctionalState:
         # Checks if quantity already has a vector_slice
         # If not, allocates and updates matrix (diagonal variance)
 
-        key = id(q.uncertainty_obj)
+        key = id(q)
         if key in self.registry:
             return self.registry[key], self.matrix
 
         # Access internal Uncertainty
-        unc = q.uncertainty_obj
+        # We check if it's a CovarianceModel. It might be stored in Rust's value.uncertainty (TensorBackend)
+        # or it might be the result of a property access.
+        unc = q.uncertainty
         from measurekit.domain.measurement.uncertainty import CovarianceModel
 
         backend = self.store.backend
 
-        # If already has slice (and we assume it matches this state's timeline)
-        # We can't easily verify if the slice belongs to *this* state
-        # without unique IDs.
-        # But if user is consistent, it should be fine.
+        # If it's a CovarianceModel, it might already have a slice
         if isinstance(unc, CovarianceModel) and unc.vector_slice is not None:
-            # Check if slice is within current allocated range?
-            # For now assume yes.
             return unc.vector_slice, self.matrix
 
         # Need to register
@@ -211,25 +208,25 @@ def _apply_affine(
 
     diag = backend.sparse_diagonal(new_matrix)
     res_diag = diag[out_slice]
-    res_std = backend.sqrt(res_diag)
-
-    # print(f"DEBUG: new_matrix diag={diag}")
-    # print(f"DEBUG: res_diag={res_diag}")
-    # print(f"DEBUG: res_std={res_std}")
-
-    res_std = backend.reshape(res_std, backend.shape(res_mag))
+    res_std = backend.reshape(backend.sqrt(res_diag), backend.shape(res_mag))
 
     res_unc = CovarianceModel(
         std_dev_internal=res_std,
         vector_slice=out_slice,
     )
 
-    return Quantity.from_input(
+    res_q = Quantity.from_input(
         value=res_mag,
         unit=a.unit,
         system=a.system,
         uncertainty=res_unc,
-    ), FunctionalState(state.store, new_matrix, state.registry)
+    )
+
+    # Register the result in the new state to avoid re-registration
+    new_registry = dict(state.registry)
+    new_registry[id(res_q)] = out_slice
+
+    return res_q, FunctionalState(state.store, new_matrix, new_registry)
 
 
 def register_functional_pytree():

@@ -15,6 +15,7 @@ pub trait UncertaintyBackend: DynClone + Send + Sync {
     fn propagate_div(&self, py: Python<'_>, other: &dyn UncertaintyBackend) -> PyResult<Box<dyn UncertaintyBackend>>;
     fn propagate_pow(&self, py: Python<'_>, exponent: f64) -> PyResult<Box<dyn UncertaintyBackend>>;
     fn propagate_function(&self, py: Python<'_>, func: &str) -> PyResult<Box<dyn UncertaintyBackend>>;
+    fn get_model_name(&self) -> &str;
 }
 
 dyn_clone::clone_trait_object!(UncertaintyBackend);
@@ -97,6 +98,8 @@ impl UncertaintyBackend for GaussianBackend {
         };
         Ok(Box::new(GaussianBackend { mean: new_mean, std_dev: new_std }))
     }
+
+    fn get_model_name(&self) -> &str { "gaussian" }
 }
 
 #[derive(Clone)]
@@ -165,6 +168,8 @@ impl UncertaintyBackend for MonteCarloBackend {
         };
         Ok(Box::new(MonteCarloBackend { samples: new_samples }))
     }
+
+    fn get_model_name(&self) -> &str { "monte_carlo" }
 }
 
 #[derive(Clone)]
@@ -259,6 +264,8 @@ impl UncertaintyBackend for UnscentedBackend {
         };
         Ok(Box::new(UnscentedBackend { sigma_points: new_points, weights: self.weights.clone() }))
     }
+
+    fn get_model_name(&self) -> &str { "unscented" }
 }
 
 // --- Tensor Backend Implementation ---
@@ -317,4 +324,6 @@ impl UncertaintyBackend for TensorBackend {
          let new_val = self.value.bind(py).call_method0(func)?.unbind(); 
          Ok(Box::new(TensorBackend { value: new_val, uncertainty: self.uncertainty.clone_ref(py) }))
     }
+
+    fn get_model_name(&self) -> &str { "tensor" }
 }

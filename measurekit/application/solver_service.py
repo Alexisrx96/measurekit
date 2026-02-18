@@ -45,8 +45,8 @@ class ODESolution:
         # Create scalar Quantity objects for the start and end times
         # This allows us to use Quantity's own formatting, which includes
         # units.
-        t_start = Quantity(self.t.magnitude[0], self.t.unit)
-        t_end = Quantity(self.t.magnitude[-1], self.t.unit)
+        t_start = self.t[0]
+        t_end = self.t[-1]
 
         return (
             f"ODESolution(t=[{t_start:.2f}...{t_end:.2f}],"
@@ -79,7 +79,10 @@ def solve_unit_aware_ivp(
     def fun_wrapper(t_val: float, y_vals: np.ndarray) -> np.ndarray:
         # a. Repackage into Quantities (context-aware)
         t_q = Quantity(t_val, t_unit)
-        y_q = [Quantity(val, unit) for val, unit in zip(y_vals, y0_units)]
+        y_q = [
+            Quantity(val, unit)
+            for val, unit in zip(y_vals, y0_units, strict=False)
+        ]
 
         # b. Call the user's original function
         dy_dt_q = fun(t_q, y_q)
@@ -88,7 +91,9 @@ def solve_unit_aware_ivp(
         dy_dt_magnitudes = np.array(
             [
                 res.to(expected_unit).magnitude
-                for res, expected_unit in zip(dy_dt_q, dydt_units)
+                for res, expected_unit in zip(
+                    dy_dt_q, dydt_units, strict=False
+                )
             ]
         )
         return dy_dt_magnitudes
@@ -99,9 +104,10 @@ def solve_unit_aware_ivp(
     )
 
     # --- 4. Repackaging the Final Solution (ONCE) ---
-    solution_t = Quantity(sol.t, t_unit)
+    sys = t_span[0].system
+    solution_t = Quantity(sol.t, t_unit, system=sys)
     solution_y = [
-        Quantity(state_values, y0_units[i])
+        Quantity(state_values, y0_units[i], system=sys)
         for i, state_values in enumerate(sol.y)
     ]
 

@@ -391,24 +391,26 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
 
     def __pow__(self, exponent: float | tuple[int, int]) -> CompoundUnit:
         """Power support with float-to-rational conversion."""
-        if isinstance(exponent, float):
-            # Check for integer float
-            if exponent.is_integer():
+        if isinstance(exponent, (int, float)):
+            # Use Python-side BaseExponentEntity logic for pure exponents
+            # to avoid Rust RationalUnit issues with fractional powers.
+            # Convert float to int if integral
+            if isinstance(exponent, float) and exponent.is_integer():
                 exponent = int(exponent)
-            else:
-                # Convert float to decent rational
-                from fractions import Fraction
 
-                frac = Fraction(exponent).limit_denominator(100)
-                exponent = (frac.numerator, frac.denominator)
+            new_exponents = {
+                k: v * exponent for k, v in self.exponents.items()
+            }
+            return _CompoundUnit(new_exponents)
 
-        # Call Rust implementation
-        res = super().__pow__(exponent)
+        # For rational tuples, we use Rust core if available
+        if isinstance(exponent, tuple):
+            res = super().__pow__(exponent)
+            if hasattr(res, "dimensions"):
+                return _CompoundUnit(res.dimensions)
+            return res
 
-        # Ensure we return CompoundUnit (wrapping result)
-        if hasattr(res, "dimensions"):  # Check if it's RationalUnit-like
-            return _CompoundUnit(res.dimensions)
-        return res
+        return super().__pow__(exponent)
 
     def __rtruediv__(self, other: Any) -> CompoundUnit:
         """Right division (1 / unit)."""
@@ -531,6 +533,8 @@ if IS_CORE_AVAILABLE:
         if orig_op:
 
             def wrapped(self, other):
+                if isinstance(other, (int, float, complex)):
+                    return self
                 res = orig_op(self, other)
                 if isinstance(res, RationalUnit):
                     # Wrap in CompoundUnit to use Flyweight cache

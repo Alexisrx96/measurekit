@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import torch
+
 if TYPE_CHECKING:
     from measurekit.backends.torch_backend import TorchBackend
 
@@ -85,6 +87,9 @@ class AutogradCovarianceStore:
                 raise ValueError(f"Input ID {i_id} not allocated.")
             in_slices.append(slice(i_id, i_id + size))
 
+        print(
+            f"DEBUG: AutogradCovarianceStore.propagate called for out_id={out_id}"
+        )
         from measurekit.domain.measurement.vectorized_uncertainty import (
             propagate_affine,
         )
@@ -96,11 +101,14 @@ class AutogradCovarianceStore:
     def get_covariance_block(self, row_slice: slice, col_slice: slice) -> Any:
         """Retrieves a block (differentiable)."""
         if self._matrix is None:
-            return self.backend.zeros(
+            res = self.backend.zeros(
                 (
                     row_slice.stop - row_slice.start,
                     col_slice.stop - col_slice.start,
                 )
             )
+            if hasattr(res, "to"):
+                res = res.to(torch.float64)
+            return res
 
         return self.backend.sparse_slice(self._matrix, row_slice, col_slice)

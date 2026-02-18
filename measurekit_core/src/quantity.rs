@@ -166,6 +166,9 @@ impl Quantity {
     pub fn uncertainty(&self, py: Python<'_>) -> PyResult<PyObject> { self.value.std_dev(py) }
 
     #[getter]
+    pub fn uncertainty_model(&self) -> &str { self.value.get_model_name() }
+
+    #[getter]
     pub fn unit(&self, py: Python<'_>) -> PyResult<PyObject> {
         Ok(crate::units::get_cached_unit(py, self.unit.clone())?.into_py(py))
     }

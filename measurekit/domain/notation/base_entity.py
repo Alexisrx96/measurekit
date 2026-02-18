@@ -35,15 +35,25 @@ class BaseExponentEntity:
         """Initializes the entity with a dictionary of exponents."""
         pass
 
-    def __mul__(self: Self, other: Self) -> Self:
+    def __mul__(self, other: Any) -> Self:
         """Multiplies two exponent entities together."""
+        if isinstance(other, (int, float, complex)):
+            return self
+        if not hasattr(other, "exponents"):
+            return NotImplemented
+
         new_exponents = self.exponents.copy()
         for key, exp in other.exponents.items():
             new_exponents[key] = new_exponents.get(key, 0) + exp
         return type(self)(new_exponents)
 
-    def __truediv__(self: Self, other: Self) -> Self:
+    def __truediv__(self, other: Any) -> Self:
         """Divides one exponent entity by another."""
+        if isinstance(other, (int, float, complex)):
+            return self
+        if not hasattr(other, "exponents"):
+            return NotImplemented
+
         new_exponents = self.exponents.copy()
         for key, exp in other.exponents.items():
             new_exponents[key] = new_exponents.get(key, 0) - exp

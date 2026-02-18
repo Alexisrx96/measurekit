@@ -516,7 +516,7 @@ class BackendManager:
             try:
                 import scipy.sparse  # noqa: F401
 
-                return cls._get_or_load_backend("scipy")
+                return cls._get_or_load_backend("numpy")
             except ImportError:
                 # If scipy is not installed, fallback to python
                 pass
