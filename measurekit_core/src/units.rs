@@ -290,3 +290,81 @@ impl UnitRegistry {
         self.base_units.contains_key(&resolved) || self.derived_units.contains_key(&resolved)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use num_rational::Rational64;
+
+    fn length() -> RationalUnit {
+        RationalUnit::new_from_dimensions([("L".into(), (1, 1))].into())
+    }
+
+    fn time() -> RationalUnit {
+        RationalUnit::new_from_dimensions([("T".into(), (1, 1))].into())
+    }
+
+    #[test]
+    fn dimensionless_is_empty() {
+        let u = RationalUnit::new_from_dimensions(HashMap::new());
+        assert!(u.dimensions.is_empty());
+        assert!(u.dimensions.is_empty());
+    }
+
+    #[test]
+    fn mul_accumulates_exponents() {
+        let l2 = length().mul(&length());
+        assert_eq!(l2.dimensions["L"], (2, 1));
+        assert!(!l2.dimensions.is_empty());
+    }
+
+    #[test]
+    fn div_cancels_same_dimension() {
+        assert!(length().div(&length()).dimensions.is_empty());
+    }
+
+    #[test]
+    fn div_mixed_dimensions() {
+        let speed = length().div(&time()); // L/T
+        assert_eq!(speed.dimensions["L"], (1, 1));
+        assert_eq!(speed.dimensions["T"], (-1, 1));
+    }
+
+    #[test]
+    fn pow_scales_exponent() {
+        let l3 = length().pow(Rational64::new(3, 1));
+        assert_eq!(l3.dimensions["L"], (3, 1));
+    }
+
+    #[test]
+    fn pow_fractional_exponent() {
+        let sqrt_l = length().pow(Rational64::new(1, 2));
+        assert_eq!(sqrt_l.dimensions["L"], (1, 2));
+    }
+
+    #[test]
+    fn pow_zero_removes_dimension() {
+        let u = length().pow(Rational64::new(0, 1));
+        assert!(u.dimensions.is_empty());
+    }
+
+    #[test]
+    fn calculate_id_is_stable() {
+        let a = RationalUnit::calculate_id(&[("L".into(), (1, 1))].into());
+        let b = RationalUnit::calculate_id(&[("L".into(), (1, 1))].into());
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn calculate_id_differs_for_distinct_dims() {
+        let l_id = RationalUnit::calculate_id(&[("L".into(), (1, 1))].into());
+        let t_id = RationalUnit::calculate_id(&[("T".into(), (1, 1))].into());
+        assert_ne!(l_id, t_id);
+    }
+
+    #[test]
+    fn mul_then_div_is_identity() {
+        let result = length().mul(&time()).div(&time());
+        assert_eq!(result, length());
+    }
+}

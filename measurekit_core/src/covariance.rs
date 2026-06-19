@@ -428,3 +428,164 @@ impl CovarianceStore {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sprs::TriMat;
+
+    fn make_store() -> CovarianceStore {
+        CovarianceStore {
+            blocks: HashMap::new(),
+            config: PruningConfig { enabled: false, max_age: 100, corr_threshold: 0.0 },
+            current_step: 0,
+            access_ledger: HashMap::new(),
+        }
+    }
+
+    fn diag(vals: &[f64]) -> CsMat<f64> {
+        let n = vals.len();
+        let mut t = TriMat::new((n, n));
+        for (i, &v) in vals.iter().enumerate() {
+            if v != 0.0 { t.add_triplet(i, i, v); }
+        }
+        t.to_csr()
+    }
+
+    fn mat_to_vec(m: &CsMat<f64>) -> Vec<f64> {
+        let mut out = vec![0.0; m.rows() * m.cols()];
+        for (v, (r, c)) in m.iter() {
+            out[r * m.cols() + c] = *v;
+        }
+        out
+    }
+
+    #[test]
+    fn compute_variance_identity_jacobian() {
+        let mut store = make_store();
+        store.blocks.insert((0, 0), diag(&[1.0, 1.0]));
+        let j = diag(&[1.0, 1.0]);
+        let result = store.compute_output_variance(&[0], &[j]).unwrap();
+        // J=I, Sigma=I → I*I*I^T = I
+        assert_eq!(mat_to_vec(&result), vec![1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn compute_variance_scalar_jacobian() {
+        let mut store = make_store();
+        store.blocks.insert((0, 0), diag(&[4.0, 4.0]));
+        let j = diag(&[2.0, 2.0]);
+        let result = store.compute_output_variance(&[0], &[j]).unwrap();
+        // J=2I, Sigma=4I → 2I*4I*2I^T = 16I
+        assert_eq!(mat_to_vec(&result), vec![16.0, 0.0, 0.0, 16.0]);
+    }
+
+    #[test]
+    fn compute_variance_returns_none_when_no_block() {
+        let store = make_store();
+        assert!(store.compute_output_variance(&[0], &[diag(&[1.0])]).is_none());
+    }
+
+    #[test]
+    fn commit_cross_covs_ordered() {
+        let mut store = make_store();
+        let mat = diag(&[1.0, 1.0]);
+        let mut cross = HashMap::new();
+        cross.insert(5u64, mat.clone());
+        store.commit_cross_covs(10, cross); // out_id=10 > k=5 → stored as (5,10)
+        assert!(store.blocks.contains_key(&(5, 10)));
+        assert!(!store.blocks.contains_key(&(10, 5)));
+    }
+
+    #[test]
+    fn commit_cross_covs_reversed_key() {
+        let mut store = make_store();
+        let mat = diag(&[1.0, 1.0]);
+        let mut cross = HashMap::new();
+        cross.insert(20u64, mat.clone());
+        store.commit_cross_covs(10, cross); // out_id=10 < k=20 → stored as (10,20)
+        assert!(store.blocks.contains_key(&(10, 20)));
+    }
+
+    #[test]
+    fn collect_variance_norms_diagonal_only() {
+        let mut store = make_store();
+        store.blocks.insert((0, 0), diag(&[3.0, 4.0])); // Frobenius = sqrt(9+16) = 5
+        store.blocks.insert((0, 1), diag(&[1.0, 1.0])); // off-diag, should be ignored
+        let norms = store.collect_variance_norms();
+        assert_eq!(norms.len(), 1);
+        assert!((norms[&0] - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn prune_by_age_removes_stale_blocks() {
+        let mut store = CovarianceStore {
+            blocks: HashMap::new(),
+            config: PruningConfig { enabled: true, max_age: 2, corr_threshold: 0.0 },
+            current_step: 10,
+            access_ledger: [(0u64, 1u64), (1u64, 9u64)].into(), // 0=stale, 1=fresh
+        };
+        store.blocks.insert((0, 0), diag(&[1.0]));
+        store.blocks.insert((1, 1), diag(&[1.0]));
+        store.prune_by_age();
+        assert!(!store.blocks.contains_key(&(0, 0)));
+        assert!(store.blocks.contains_key(&(1, 1)));
+    }
+
+    #[test]
+    fn prune_weak_correlations_removes_below_threshold() {
+        let mut store = CovarianceStore {
+            blocks: HashMap::new(),
+            config: PruningConfig { enabled: true, max_age: 1000, corr_threshold: 0.5 },
+            current_step: 0,
+            access_ledger: HashMap::new(),
+        };
+        // var(0)=1, var(1)=1, cov(0,1)=0.1 → corr=0.1 < 0.5 → pruned
+        store.blocks.insert((0, 0), diag(&[1.0]));
+        store.blocks.insert((1, 1), diag(&[1.0]));
+        store.blocks.insert((0, 1), diag(&[0.1]));
+        store.prune_weak_correlations();
+        assert!(!store.blocks.contains_key(&(0, 1)));
+        assert!(store.blocks.contains_key(&(0, 0)));
+        assert!(store.blocks.contains_key(&(1, 1)));
+    }
+
+    #[test]
+    fn prune_strong_correlations_kept() {
+        let mut store = CovarianceStore {
+            blocks: HashMap::new(),
+            config: PruningConfig { enabled: true, max_age: 1000, corr_threshold: 0.05 },
+            current_step: 0,
+            access_ledger: HashMap::new(),
+        };
+        store.blocks.insert((0, 0), diag(&[1.0]));
+        store.blocks.insert((1, 1), diag(&[1.0]));
+        store.blocks.insert((0, 1), diag(&[0.9])); // corr=0.9 > 0.05 → kept
+        store.prune_weak_correlations();
+        assert!(store.blocks.contains_key(&(0, 1)));
+    }
+
+    #[test]
+    fn accumulate_cross_covs_one_shared_input() {
+        let mut store = make_store();
+        // input 0 has variance 1x1=[1], and cross-cov with var 2: sigma(0,2)=[0.5]
+        store.blocks.insert((0, 0), diag(&[1.0]));
+        store.blocks.insert((0, 2), diag(&[0.5]));
+        let j = diag(&[2.0]); // J_0 = 2
+        // C_{new,2} = J_0 * sigma(0,2) = 2 * 0.5 = 1
+        let cross = store.accumulate_cross_covs(99, &[0], &[j]);
+        assert!(cross.contains_key(&2));
+        let v: Vec<f64> = cross[&2].iter().map(|(&x, _)| x).collect();
+        assert!((v[0] - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn accumulate_cross_covs_excludes_output_id() {
+        let mut store = make_store();
+        store.blocks.insert((0, 0), diag(&[1.0]));
+        store.blocks.insert((0, 99), diag(&[1.0])); // 99 = out_id, should be excluded
+        let j = diag(&[1.0]);
+        let cross = store.accumulate_cross_covs(99, &[0], &[j]);
+        assert!(!cross.contains_key(&99));
+    }
+}
+
