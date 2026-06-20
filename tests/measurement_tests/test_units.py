@@ -64,10 +64,27 @@ def test_dimension(unit_system):
     assert velocity.dimension(unit_system) == length / time
 
     # Test with an unknown unit
-    with pytest.raises(
-        ValueError, match=r"Unknown dimension for unit 'unknown_unit'"
-    ):
+    with pytest.raises(UnknownUnitError, match="unknown_unit"):
         CompoundUnit({"unknown_unit": 1}).dimension(unit_system)
+
+
+def test_dimension_unknown_unit_raises_with_suggestion(unit_system):
+    """CompoundUnit.dimension() raises UnknownUnitError with a suggestion."""
+    # Register 'meter' so get_close_matches can suggest it
+    length = Dimension({"L": 1})
+    unit_system.register_unit("meter", length, LinearConverter(1.0), "meter")
+
+    bad_unit = CompoundUnit({"meterr": 1})  # typo — no dimension registered
+    with pytest.raises(UnknownUnitError, match="meterr"):
+        bad_unit.dimension(unit_system)
+
+
+def test_dimension_unknown_unit_no_suggestion(unit_system):
+    """UnknownUnitError message has no 'Did you mean' when nothing is close."""
+    bad_unit = CompoundUnit({"xyzqqqq": 1})
+    with pytest.raises(UnknownUnitError) as exc_info:
+        bad_unit.dimension(unit_system)
+    assert "Did you mean" not in str(exc_info.value)
 
 
 def test_conversion_methods(unit_system):

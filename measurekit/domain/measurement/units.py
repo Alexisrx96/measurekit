@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 # sympy imported lazily in to_latex()
 from measurekit.core.dispatcher import BackendManager
 from measurekit.core.registry import UnitRegistry
-from measurekit.domain.exceptions import IncompatibleUnitsError
+from measurekit.domain.exceptions import (
+    IncompatibleUnitsError,
+    UnknownUnitError,
+)
 from measurekit.domain.measurement.converters import (
     LinearConverter,
     UnitConverter,
@@ -162,9 +165,12 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
                         is_identity = True
 
                 if is_identity:
-                    raise ValueError(
-                        f"Unknown dimension for unit '{unit_name}'"
+                    import difflib
+                    known = list(system.UNIT_DIMENSIONS.keys())
+                    suggestions = difflib.get_close_matches(
+                        unit_name, known, n=3, cutoff=0.6
                     )
+                    raise UnknownUnitError(unit_name, suggestions or None)
 
                 if hasattr(base_unit, "dimension"):
                     unit_dim = base_unit.dimension(system)
