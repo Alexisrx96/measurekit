@@ -505,6 +505,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_exponent_unrecognized_type_returns_none() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            // A list is not a tuple/int/float — all three extractions fail → None
+            let s = pyo3::types::PyList::new(py, [1, 2]).unwrap();
+            assert_eq!(RationalUnit::parse_exponent(s.as_any()), None);
+        });
+    }
+
+    #[test]
+    fn parse_dimensions_dict_non_dict_input() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            // Passing a non-dict skips the dict block entirely → empty result
+            let n = 1i64.into_pyobject(py).unwrap();
+            let result = RationalUnit::parse_dimensions_dict(n.as_any()).unwrap();
+            assert!(result.is_empty());
+        });
+    }
+
+    #[test]
     fn parse_dimensions_dict_mixed() {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
