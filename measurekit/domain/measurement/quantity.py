@@ -780,13 +780,20 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
             f'</span>'
         )
 
-    def _repr_mimebundle_(self, **kwargs) -> dict:
+    def _repr_mimebundle_(
+        self, include=None, exclude=None, **kwargs
+    ) -> dict:
         """MIME bundle for Jupyter — lets the frontend pick the best format."""
-        return {
+        bundle = {
             "text/plain": repr(self),
             "text/latex": self._repr_latex_(),
             "text/html": self._repr_html_(),
         }
+        if include:
+            bundle = {k: v for k, v in bundle.items() if k in include}
+        if exclude:
+            bundle = {k: v for k, v in bundle.items() if k not in exclude}
+        return bundle
 
     def to_hdf5(self, group: Any, dataset_name: str) -> Any:
         """Saves the quantity to an HDF5 group.
@@ -1081,6 +1088,11 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
             n = len(self.magnitude)
         except TypeError:
             # Scalar case: magnitude has no len()
+            yield self.magnitude
+            yield self.unit
+            return
+        if n == 0:
+            # numpy 0-d scalar-like: defines len() but returns 0
             yield self.magnitude
             yield self.unit
             return

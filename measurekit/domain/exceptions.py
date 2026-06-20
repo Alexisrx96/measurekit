@@ -76,6 +76,7 @@ class UnknownUnitError(MeasureKitError, ValueError):
         :param suggestions: Optional list of suggested unit names.
         """
         self.unit_name = unit_name
+        self.suggestions = suggestions
         hint = (
             f" Did you mean: {', '.join(suggestions)}?"
             if suggestions

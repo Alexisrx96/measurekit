@@ -430,10 +430,22 @@ def test_scalar_unpack(quantity_system, units):
     assert unit is q.unit
 
 
+def test_scalar_unpack_numpy_scalar(quantity_system, units):
+    """numpy 0-d arrays should unpack as (magnitude, unit) not return []."""
+    import numpy as np
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(np.float64(42.0), units["meter"], system=quantity_system)
+    mag, unit = q
+    assert float(mag) == pytest.approx(42.0)
+    assert unit is q.unit
+
+
 def test_array_iter_unchanged(quantity_system, units):
     """Array __iter__ must still yield individual Quantity elements."""
     from measurekit.domain.measurement.quantity import Quantity
-    arr = Quantity(np.array([1.0, 2.0, 3.0]), units["meter"], system=quantity_system)
+    arr = Quantity(
+        np.array([1.0, 2.0, 3.0]), units["meter"], system=quantity_system
+    )
     elements = list(arr)
     assert len(elements) == 3
     assert elements[0].magnitude == pytest.approx(1.0)
