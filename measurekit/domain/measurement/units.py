@@ -102,6 +102,41 @@ def reconstruct_compound_unit(exponents: ExponentsDict) -> CompoundUnit:
     return cls(exponents)
 
 
+def _is_identity_unit(base_unit: Any, unit_name: str) -> bool:
+    """Returns True if base_unit is a trivial identity wrapper for unit_name."""
+    if not (hasattr(base_unit, "exponents") or hasattr(base_unit, "dimensions")):
+        return False
+    deps = (
+        base_unit.exponents
+        if hasattr(base_unit, "exponents")
+        else base_unit.dimensions
+    )
+    return len(deps) == 1 and deps.get(unit_name) == 1
+
+
+def _raise_unknown_unit(unit_name: str, system: Any) -> None:
+    """Raises UnknownUnitError with difflib suggestions."""
+    import difflib
+
+    known = list(system.UNIT_DIMENSIONS.keys())
+    suggestions = difflib.get_close_matches(unit_name, known, n=3, cutoff=0.6)
+    raise UnknownUnitError(unit_name, suggestions or None)
+
+
+def _resolve_unit_dim(unit_name: str, system: Any, Dimension: type) -> Any:
+    """Returns the Dimension for unit_name within the given system."""
+    if unit_name in system.UNIT_DIMENSIONS:
+        return system.UNIT_DIMENSIONS[unit_name]
+
+    base_unit = system.get_unit(unit_name)
+    if _is_identity_unit(base_unit, unit_name):
+        _raise_unknown_unit(unit_name, system)
+
+    if hasattr(base_unit, "dimension"):
+        return base_unit.dimension(system)
+    return Dimension({unit_name: 1})
+
+
 try:
     from measurekit_core import RationalUnit
 
@@ -131,9 +166,7 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
 
             system = get_default_system()
 
-        # Dimension calculation
         dims = Dimension({})
-        # Use .dimensions (Rust HashMap) if available for speed
         it = (
             self.dimensions.items()
             if hasattr(self, "dimensions")
@@ -145,37 +178,7 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
                 if isinstance(exp_val, tuple)
                 else exp_val
             )
-            if unit_name in system.UNIT_DIMENSIONS:
-                unit_dim = system.UNIT_DIMENSIONS[unit_name]
-            else:
-                base_unit = system.get_unit(unit_name)
-
-                # Loop detection: If base_unit is effectively self (identity wrapper)
-                # and we haven't found a dimension yet, it's an unknown base unit.
-                is_identity = False
-                if isinstance(
-                    base_unit, CompoundUnit
-                ):  # Check strictly or duck-type
-                    deps = (
-                        base_unit.exponents
-                        if hasattr(base_unit, "exponents")
-                        else base_unit.dimensions
-                    )
-                    if len(deps) == 1 and deps.get(unit_name) == 1:
-                        is_identity = True
-
-                if is_identity:
-                    import difflib
-                    known = list(system.UNIT_DIMENSIONS.keys())
-                    suggestions = difflib.get_close_matches(
-                        unit_name, known, n=3, cutoff=0.6
-                    )
-                    raise UnknownUnitError(unit_name, suggestions or None)
-
-                if hasattr(base_unit, "dimension"):
-                    unit_dim = base_unit.dimension(system)
-                else:
-                    unit_dim = Dimension({unit_name: 1})
+            unit_dim = _resolve_unit_dim(unit_name, system, Dimension)
             dims = dims * (unit_dim**exp)
         return dims
 

@@ -192,6 +192,48 @@ _JIT_CACHE: dict[
 ] = {}
 
 
+def _build_unit_sig(args: tuple) -> list[int | None]:
+    """Builds the unit signature list from a tuple of arguments."""
+    unit_sig = []
+    for arg in args:
+        unit = getattr(arg, "unit", None)
+        if unit is not None:
+            unit_sig.append(hash(_ensure_rational(unit)))
+        else:
+            unit_sig.append(None)
+    return unit_sig
+
+
+def _trace_and_bake(
+    func: Callable, args: tuple, unit_sig: list, kwargs: dict
+) -> tuple[Callable, RationalUnit] | None:
+    """Traces func and bakes a kernel. Returns (kernel, out_unit) or None."""
+    tracer_args = []
+    arg_names = []
+    for i, (arg, u_hash) in enumerate(zip(args, unit_sig)):
+        name = f"a{i}"
+        arg_names.append(name)
+        if u_hash is not None:
+            tracer_args.append(TracerQuantity(name, _ensure_rational(arg.unit)))
+        else:
+            tracer_args.append(arg)
+
+    trace_result = func(*tracer_args, **kwargs)
+    if not isinstance(trace_result, TracerQuantity):
+        return None
+
+    kernel = bake_kernel(trace_result.node, arg_names)
+    return kernel, trace_result.unit
+
+
+def _rational_unit_to_exponents(r_unit: RationalUnit) -> dict[str, int | float]:
+    """Converts a RationalUnit's dimensions to a CompoundUnit exponents dict."""
+    exponents: dict[str, int | float] = {}
+    for base, (num, den) in r_unit.dimensions.items():
+        exponents[base] = num if den == 1 else num / den
+    return exponents
+
+
 def jit(func: Callable):
     """JIT compiler for unit-aware functions.
 
@@ -200,82 +242,36 @@ def jit(func: Callable):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        from measurekit.application.context import get_uncertainty_mode
         from measurekit.domain.measurement.quantity import Quantity
 
-        # 1. Signature identification
-        unit_sig = []
-        for arg in args:
-            unit = getattr(arg, "unit", None)
-            if unit is not None:
-                r_unit = _ensure_rational(unit)
-                unit_sig.append(hash(r_unit))
-            else:
-                unit_sig.append(None)
-
+        unit_sig = _build_unit_sig(args)
         sig = (func, tuple(unit_sig))
-
-        # If an uncertainty mode other than the default "python" is active, bypass JIT to preserve proper uncertainty handling
-        from measurekit.application.context import get_uncertainty_mode
 
         mode, _ = get_uncertainty_mode()
         if mode != "python":
             return func(*args, **kwargs)
 
         if sig not in _JIT_CACHE:
-            # 2. Trace
-            tracer_args = []
-            arg_names = []
-            for i, (arg, u_hash) in enumerate(zip(args, unit_sig)):
-                name = f"a{i}"
-                arg_names.append(name)
-                if u_hash is not None:
-                    tracer_args.append(
-                        TracerQuantity(name, _ensure_rational(arg.unit))
-                    )
-                else:
-                    tracer_args.append(arg)
-
-            trace_result = func(*tracer_args, **kwargs)
-
-            if not isinstance(trace_result, TracerQuantity):
+            result = _trace_and_bake(func, args, unit_sig, kwargs)
+            if result is None:
                 return func(*args, **kwargs)
+            _JIT_CACHE[sig] = result
 
-            # 3. Bake
-            kernel = bake_kernel(trace_result.node, arg_names)
-            _JIT_CACHE[sig] = (kernel, trace_result.unit)
-
-        # 4. Execute
         kernel, out_r_unit = _JIT_CACHE[sig]
         magnitudes = [getattr(a, "magnitude", a) for a in args]
         raw_res = kernel(*magnitudes)
-
-        # If an uncertainty mode other than the default "python" is active, bypass JIT to preserve proper uncertainty handling
-        from measurekit.application.context import get_uncertainty_mode
 
         mode, _ = get_uncertainty_mode()
         if mode != "python":
             return func(*args, **kwargs)
 
-        # 5. Re-wrap in Quantity
-        # We need to convert RationalUnit back to CompoundUnit
         from measurekit.domain.measurement.units import (
             CompoundUnit,
             get_default_system,
         )
 
-        # RationalUnit.dimensions is HashMap<String, (i64, i64)>
-        # CompoundUnit expects exponents as Dict[str, int]
-        # This is a simplification; if we have fractions, we might need a more complex unit.
-        # But for JIT usually we have integer exponents.
-        exponents = {}
-        for base, (num, den) in out_r_unit.dimensions.items():
-            if den == 1:
-                exponents[base] = num
-            else:
-                # If we have fractional units, we might need to support them in CompoundUnit
-                # or simplified them. For now, assume integer or warn.
-                exponents[base] = num / den
-
+        exponents = _rational_unit_to_exponents(out_r_unit)
         out_unit = CompoundUnit(exponents)
         return Quantity.from_input(raw_res, out_unit, get_default_system())
 

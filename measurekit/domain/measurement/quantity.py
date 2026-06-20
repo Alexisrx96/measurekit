@@ -379,26 +379,15 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         from measurekit.domain.measurement.uncertainty import Uncertainty
 
         # Ensure uncertainty matches backend type if array
-        if (
+        needs_broadcast = (
             backend.is_array(value)
             and not isinstance(uncertainty, Uncertainty)
             and not backend.is_array(uncertainty)
-        ):
-            try:
-                shape = backend.shape(value)
-                # Create array of ones with same shape, inheriting device/dtype
-                ones = backend.ones(shape, reference=value)
-                # Multiply by scalar uncertainty to broadcast
-                uncertainty = backend.mul(ones, uncertainty)
-            except (AttributeError, NotImplementedError):
-                # Fallback if backend implementation is incomplete
-                pass
-
-        _ = (
-            uncertainty
-            if isinstance(uncertainty, (int, float, complex))
-            else getattr(uncertainty, "std_dev", uncertainty)
         )
+        if needs_broadcast:
+            uncertainty = cls._broadcast_uncertainty_to_array(
+                backend, value, uncertainty
+            )
 
         # Cast scalar int to float for consistency with test expectations
         if isinstance(value, int):
@@ -410,15 +399,7 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
                 Fraction(str(value))
 
         # Core Mode Integration
-        try:
-            import torch as _torch
-
-            if _torch.compiler.is_compiling():
-                mode, mode_args = ("python", None)  # Default safe mode
-            else:
-                mode, mode_args = _UNCERTAINTY_MODE.get()
-        except (ImportError, AttributeError):
-            mode, mode_args = _UNCERTAINTY_MODE.get()
+        mode, mode_args = cls._resolve_uncertainty_mode()
 
         if IS_CORE_AVAILABLE and (
             ("CoreQuantity" in str(type(value)))
@@ -459,6 +440,33 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
             symbol=symbol,
             _uncertainty_obj=u_obj,
         )
+
+    @classmethod
+    def _broadcast_uncertainty_to_array(
+        cls,
+        backend: Any,
+        value: Any,
+        uncertainty: Any,
+    ) -> Any:
+        """Broadcasts a scalar uncertainty to match the shape of an array value."""
+        try:
+            shape = backend.shape(value)
+            ones = backend.ones(shape, reference=value)
+            return backend.mul(ones, uncertainty)
+        except (AttributeError, NotImplementedError):
+            return uncertainty
+
+    @classmethod
+    def _resolve_uncertainty_mode(cls) -> tuple:
+        """Returns (mode, mode_args) from torch compiler state or context var."""
+        try:
+            import torch as _torch
+
+            if _torch.compiler.is_compiling():
+                return ("python", None)
+            return _UNCERTAINTY_MODE.get()
+        except (ImportError, AttributeError):
+            return _UNCERTAINTY_MODE.get()
 
     @classmethod
     def _fast_new(
@@ -692,6 +700,29 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
 
         return text
 
+    def _format_as_fraction(self, unit_str: str) -> str | None:
+        """Returns a fraction-formatted string, or None if not representable."""
+        from fractions import Fraction
+
+        try:
+            f = Fraction(str(self.magnitude))
+            return f"{f.numerator}/{f.denominator} {unit_str}"
+        except (ValueError, TypeError):
+            return None
+
+    def _format_with_magnitude_format(
+        self, mag_fmt: str, unit_str: str
+    ) -> str:
+        """Formats magnitude (and uncertainty) using a Python format spec."""
+        formatted_mag = format(self.magnitude, mag_fmt)
+        if not self._has_uncertainty:
+            return f"{formatted_mag} {unit_str}"
+        try:
+            formatted_unc = format(self._numeric_std_dev, mag_fmt)
+        except (TypeError, ValueError):
+            formatted_unc = str(self._numeric_std_dev)
+        return f"({formatted_mag} ± {formatted_unc}) {unit_str}"
+
     def __format__(self, format_spec: str) -> str:
         """Formats the quantity according to the specification."""
         parts = format_spec.split("|")
@@ -707,26 +738,12 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         unit_str = self.unit.to_string(self.system, use_alias=use_alias)
 
         if "frac" in parts:
-            from fractions import Fraction
-
-            try:
-                f = Fraction(str(self.magnitude))
-                mag_str = f"{f.numerator}/{f.denominator}"
-                if use_alias:
-                    return f"{mag_str} {unit_str}"
-                return f"{mag_str} {unit_str}"
-            except (ValueError, TypeError):
-                pass
+            frac_result = self._format_as_fraction(unit_str)
+            if frac_result is not None:
+                return frac_result
 
         if mag_fmt:
-            formatted_mag = format(self.magnitude, mag_fmt)
-            if self._has_uncertainty:
-                try:
-                    formatted_unc = format(self._numeric_std_dev, mag_fmt)
-                except (TypeError, ValueError):
-                    formatted_unc = str(self._numeric_std_dev)
-                return f"({formatted_mag} ± {formatted_unc}) {unit_str}"
-            return f"{formatted_mag} {unit_str}"
+            return self._format_with_magnitude_format(mag_fmt, unit_str)
 
         # Default behavior (handles alias if present)
         if use_alias:
@@ -880,6 +897,60 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
             object.__setattr__(self, "_unit", compound)
             return compound
 
+    @staticmethod
+    def _is_device_string(s: str) -> bool:
+        """Returns True if the string looks like a PyTorch device specifier."""
+        devices = {"cuda", "cpu", "mps"}
+        return s.lower() in devices or (
+            ":" in s and s.split(":")[0].lower() in devices
+        )
+
+    def _convert_via_converters(
+        self,
+        target_unit: CompoundUnit,
+    ) -> "Quantity[ValueType, UncType] | None":
+        """Converts using unit-specific converters when both units are simple.
+
+        Returns a converted Quantity, or None if this path does not apply.
+        """
+        is_simple_unit = (
+            len(self.unit.exponents) == 1
+            and next(iter(self.unit.exponents.values())) == 1
+            and len(target_unit.exponents) == 1
+            and next(iter(target_unit.exponents.values())) == 1
+        )
+        if not is_simple_unit:
+            return None
+
+        source_name = next(iter(self.unit.exponents))
+        target_name = next(iter(target_unit.exponents))
+        source_def = self.system.get_definition(source_name)
+        target_def = self.system.get_definition(target_name)
+
+        if not (source_def and target_def):
+            return None
+
+        base_val = source_def.converter.to_base(self.magnitude)
+        new_magnitude = target_def.converter.from_base(base_val)
+
+        s_scale = getattr(source_def.converter, "scale", 1.0)
+        t_scale = getattr(target_def.converter, "scale", 1.0)
+        is_numeric_scales = isinstance(s_scale, (int, float)) and isinstance(
+            t_scale, (int, float)
+        )
+        scale_ratio = s_scale / t_scale if is_numeric_scales else 1.0
+
+        new_uncertainty = self._backend.mul(self.uncertainty, scale_ratio)
+        return cast(
+            "Quantity[ValueType, UncType]",
+            Quantity.from_input(
+                new_magnitude,
+                target_unit,
+                self.system,
+                uncertainty=new_uncertainty,
+            ),
+        )
+
     def to(
         self, target_unit: CompoundUnit | UnitName
     ) -> Quantity[ValueType, UncType]:
@@ -896,14 +967,8 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         """
         if isinstance(target_unit, str):
             # Check if target_unit is a device string (e.g. "cuda", "cpu")
-            # If target_unit is not in system and looks like a device:
-            devices = {"cuda", "cpu", "mps"}
-            if target_unit.lower() in devices or (
-                ":" in target_unit
-                and target_unit.split(":")[0].lower() in devices
-            ):
+            if self._is_device_string(target_unit):
                 return self.to_device(target_unit)
-
             target_unit = self.system.get_unit(target_unit)
 
         # Fast path for same unit
@@ -916,54 +981,9 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         # --- Polymorphic Conversion (Generic) ---
         # Handle cases where units are simple single-component units
         # (e.g. Celsius -> Kelvin) using specific converters.
-        if (
-            len(self.unit.exponents) == 1
-            and next(iter(self.unit.exponents.values())) == 1
-            and len(target_unit.exponents) == 1
-            and next(iter(target_unit.exponents.values())) == 1
-        ):
-            source_name = next(iter(self.unit.exponents))
-            target_name = next(iter(target_unit.exponents))
-
-            source_def = self.system.get_definition(source_name)
-            target_def = self.system.get_definition(target_name)
-
-            if source_def and target_def:
-                # Delegate to converters: to_base -> from_base
-                # We assume converters handle backend types.
-                base_val = source_def.converter.to_base(self.magnitude)
-                new_magnitude = target_def.converter.from_base(base_val)
-
-                # Uncertainty propagation:
-                # We need the scale factor (derivative).
-                # For Affine/Linear, access .scale.
-                # For Logarithmic, assumes usage where we can approximate.
-                s_scale = getattr(source_def.converter, "scale", 1.0)
-                t_scale = getattr(target_def.converter, "scale", 1.0)
-
-                # Use backend for division if needed?
-                # Assuming scales are floats.
-                if isinstance(s_scale, (int, float)) and isinstance(
-                    t_scale, (int, float)
-                ):
-                    scale_ratio = s_scale / t_scale
-                else:
-                    # Fallback if scales are weird
-                    scale_ratio = 1.0
-
-                new_uncertainty = self._backend.mul(
-                    self.uncertainty, scale_ratio
-                )
-
-                return cast(
-                    "Quantity[ValueType, UncType]",
-                    Quantity.from_input(
-                        new_magnitude,
-                        target_unit,
-                        self.system,
-                        uncertainty=new_uncertainty,
-                    ),
-                )
+        converter_result = self._convert_via_converters(target_unit)
+        if converter_result is not None:
+            return converter_result
 
         conversion_factor = self.unit.conversion_factor_to(
             target_unit, self.system
@@ -1239,20 +1259,19 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
 
 # --- PyTorch Integration ---
 try:
-    if torch is not None:
-        from torch.utils import _pytree
+    from torch.utils import _pytree
 
-        def _torch_flatten_quantity(q):
-            children, context = q.tree_flatten()
-            return [children[0], children[1]], context
+    def _torch_flatten_quantity(q):
+        children, context = q.tree_flatten()
+        return [children[0], children[1]], context
 
-        def _torch_unflatten_quantity(children, context):
-            return Quantity.tree_unflatten(context, (children[0], children[1]))
+    def _torch_unflatten_quantity(children, context):
+        return Quantity.tree_unflatten(context, (children[0], children[1]))
 
-        _pytree.register_pytree_node(
-            Quantity,
-            _torch_flatten_quantity,
-            _torch_unflatten_quantity,
-        )
+    _pytree.register_pytree_node(
+        Quantity,
+        _torch_flatten_quantity,
+        _torch_unflatten_quantity,
+    )
 except (ImportError, AttributeError):
     pass

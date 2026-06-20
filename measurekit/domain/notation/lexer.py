@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 # Superscript and Subscript Mapping
-_SUPERSCRIPT_MAP = str.maketrans("0123456789.-", "⁰¹²³⁴⁵⁶⁷⁸⁹⋅⁻")
-_SUPERSCRIPT_REVERSE_MAP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⋅⁻", "0123456789.-")
+_SUPERSCRIPT_CHARS = "⁰¹²³⁴⁵⁶⁷⁸⁹⋅⁻"
+_SUPERSCRIPT_MAP = str.maketrans("0123456789.-", _SUPERSCRIPT_CHARS)
+_SUPERSCRIPT_REVERSE_MAP = str.maketrans(_SUPERSCRIPT_CHARS, "0123456789.-")
 _SUBSCRIPT_MAP = str.maketrans("0123456789-", "₀₁₂₃₄₅₆₇₈₉₋")
 
 
@@ -20,7 +21,7 @@ def to_superscript(n: str | float) -> str:
     """Convert an integer to its superscript representation."""
     result = str(n).translate(_SUPERSCRIPT_MAP)
     # Remove characters that weren't translated
-    return "".join(c for c in result if c in "⁰¹²³⁴⁵⁶⁷⁸⁹⋅⁻")
+    return "".join(c for c in result if c in _SUPERSCRIPT_CHARS)
 
 
 def to_subscript(n: str | float) -> str:

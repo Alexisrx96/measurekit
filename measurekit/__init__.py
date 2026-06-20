@@ -6,33 +6,88 @@ from typing import Any
 # Version
 __version__ = "0.1.8"
 
+_IO_ATTRS = {"save_state", "load_state"}
+_UNITS_ATTRS = {"units", "CompoundUnit"}
+_STARTUP_ATTRS = {"create_system", "create_default_system"}
+_CONTEXT_ATTRS = {
+    "get_current_system",
+    "get_active_system",
+    "get_propagation_mode",
+    "propagation_mode",
+    "uncertainty_mode",
+    "system_context",
+}
+_EXCEPTION_ATTRS = {
+    "ConversionError",
+    "MeasureKitError",
+    "UnitNotFoundError",
+    "UnknownUnitError",
+}
+_VECTORIZED_ATTRS = {"MeasureKitContext", "PruningConfig"}
+
+
+def _load_io_attr(name: str) -> Any:
+    from measurekit.application.io import load_state, save_state
+
+    return save_state if name == "save_state" else load_state
+
+
+def _load_units_attr(name: str) -> Any:
+    from measurekit.domain.measurement.units import CompoundUnit, units
+
+    return units if name == "units" else CompoundUnit
+
+
+def _load_startup_attr(name: str) -> Any:
+    from measurekit.application.startup import (
+        create_default_system,
+        create_system,
+    )
+
+    return create_system if name == "create_system" else create_default_system
+
+
+def _load_context_attr(name: str) -> Any:
+    from measurekit.application.context import (
+        get_current_system,
+        get_propagation_mode,
+        propagation_mode,
+        uncertainty_mode,
+        use_system,
+    )
+
+    _context_map = {
+        "get_current_system": get_current_system,
+        "get_active_system": get_current_system,
+        "get_propagation_mode": get_propagation_mode,
+        "propagation_mode": propagation_mode,
+        "uncertainty_mode": uncertainty_mode,
+        "system_context": use_system,
+    }
+    return _context_map[name]
+
+
+def _load_vectorized_attr(name: str) -> Any:
+    from measurekit.domain.measurement.vectorized_uncertainty import (
+        MeasureKitContext,
+        PruningConfig,
+    )
+
+    return MeasureKitContext if name == "MeasureKitContext" else PruningConfig
+
 
 def __getattr__(name: str) -> Any:
     """Implement lazy loading for all public API members."""
-    if name == "save_state":
-        from measurekit.application.io import save_state
-
-        return save_state
-
-    if name == "load_state":
-        from measurekit.application.io import load_state
-
-        return load_state
+    if name in _IO_ATTRS:
+        return _load_io_attr(name)
 
     if name == "Q_":
         from measurekit.application.factories import QuantityFactory
 
         return QuantityFactory()
 
-    if name == "units":
-        from measurekit.domain.measurement.units import units
-
-        return units
-
-    if name == "CompoundUnit":
-        from measurekit.domain.measurement.units import CompoundUnit
-
-        return CompoundUnit
+    if name in _UNITS_ATTRS:
+        return _load_units_attr(name)
 
     if name == "Quantity":
         from measurekit.domain.measurement.quantity import Quantity
@@ -44,15 +99,8 @@ def __getattr__(name: str) -> Any:
 
         return Uncertainty
 
-    if name == "create_system":
-        from measurekit.application.startup import create_system
-
-        return create_system
-
-    if name == "create_default_system":
-        from measurekit.application.startup import create_default_system
-
-        return create_default_system
+    if name in _STARTUP_ATTRS:
+        return _load_startup_attr(name)
 
     if name == "default_system":
         from measurekit.domain.measurement.units import get_default_system
@@ -64,34 +112,8 @@ def __getattr__(name: str) -> Any:
 
         return jit
 
-    if name in (
-        "get_current_system",
-        "get_active_system",
-        "get_propagation_mode",
-        "propagation_mode",
-        "uncertainty_mode",
-        "system_context",
-    ):
-        from measurekit.application.context import (
-            get_current_system,
-            get_propagation_mode,
-            propagation_mode,
-            uncertainty_mode,
-            use_system,
-        )
-
-        if name == "get_current_system":
-            return get_current_system
-        if name == "get_active_system":
-            return get_current_system
-        if name == "get_propagation_mode":
-            return get_propagation_mode
-        if name == "propagation_mode":
-            return propagation_mode
-        if name == "uncertainty_mode":
-            return uncertainty_mode
-        if name == "system_context":
-            return use_system
+    if name in _CONTEXT_ATTRS:
+        return _load_context_attr(name)
 
     if name == "get_unit":
 
@@ -102,12 +124,7 @@ def __getattr__(name: str) -> Any:
 
         return get_unit
 
-    if name in (
-        "ConversionError",
-        "MeasureKitError",
-        "UnitNotFoundError",
-        "UnknownUnitError",
-    ):
+    if name in _EXCEPTION_ATTRS:
         import measurekit.domain.exceptions as exc
 
         return getattr(exc, name)
@@ -128,15 +145,8 @@ def __getattr__(name: str) -> Any:
 
         return ConfigProxy()
 
-    if name in ("MeasureKitContext", "PruningConfig"):
-        from measurekit.domain.measurement.vectorized_uncertainty import (
-            MeasureKitContext,
-            PruningConfig,
-        )
-
-        if name == "MeasureKitContext":
-            return MeasureKitContext
-        return PruningConfig
+    if name in _VECTORIZED_ATTRS:
+        return _load_vectorized_attr(name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

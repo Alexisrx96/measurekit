@@ -3,6 +3,8 @@
 
 import os
 
+_STUB_ELLIPSIS = "        ...\n"
+
 from measurekit.domain.measurement.units import units
 
 
@@ -49,17 +51,17 @@ def generate():
         for name in names:
             f.write(f"    {name}: Unit\n")
         f.write("    def register(self, name: str, unit: Any) -> None:\n")
-        f.write("        ...\n")
+        f.write(_STUB_ELLIPSIS)
         f.write(
             "    def register_lazy("
             "self, name: str, loader_func: Any) -> None:\n"
         )
-        f.write("        ...\n")
+        f.write(_STUB_ELLIPSIS)
         f.write("    def discover_plugins(self) -> None:\n")
-        f.write("        ...\n")
+        f.write(_STUB_ELLIPSIS)
         f.write("    @property\n")
         f.write("    def available_units(self) -> list[str]:\n")
-        f.write("        ...\n")
+        f.write(_STUB_ELLIPSIS)
 
 
 if __name__ == "__main__":
