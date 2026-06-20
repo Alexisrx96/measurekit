@@ -230,6 +230,20 @@ class VarianceModel(Uncertainty[UncType]):
 
         return cls(variance=total_var)
 
+    def _matmul_jac_sq_var(
+        self, jac_sq: Any, var_flat: Any, var: Any, backend: BackendOps
+    ) -> Any:
+        """Multiplies squared Jacobian by variance, with a scalar fallback."""
+        try:
+            return backend.sparse_matmul(jac_sq, var_flat)
+        except (ValueError, TypeError):
+            res = backend.mul(jac_sq, var)
+            if hasattr(res, "diagonal"):
+                res = res.diagonal()
+            if hasattr(res, "todense"):
+                res = res.todense()
+            return res
+
     def _apply_jacobian(self, var: Any, jac: Any, backend: BackendOps) -> Any:
         """Applies a Jacobian to a variance vector: var_out = (J^2) @ var_in.
 
@@ -239,58 +253,32 @@ class VarianceModel(Uncertainty[UncType]):
         if jac is None:
             return var
 
-        # Elements of Jacobian squared
         jac_sq = backend.pow(jac, 2)
 
-        if not backend.is_array(var) and not backend.is_array(jac):
-            # Scalar case
+        both_scalar = not backend.is_array(var) and not backend.is_array(jac)
+        if both_scalar:
             return backend.mul(jac_sq, var)
 
-        # Vector case
-        # Ensure var is a flat vector for math if it's an array
         if backend.is_array(var):
             original_shape = backend.shape(var)
-            size = backend.size(var)
-            var_flat = backend.reshape(var, (size, 1))
+            var_flat = backend.reshape(var, (backend.size(var), 1))
         else:
-            # Broadcast scalar to match Jacobian column count if possible
-            # But sparse_matmul usually wants a vector.
-            # If jac is (M, N), var should be (N, 1).
-            # We don't know N easily from jac here without backend.shape.
-            # Most cases where jac is matrix, var is already vector.
-            # If not, let's try to convert to array first.
             var_flat = backend.reshape(backend.asarray(var), (1, 1))
             original_shape = ()
 
-        if not backend.is_array(jac) or backend.size(jac) == 1:
-            # Scalar or scalar-like array jacobian, vector variance
+        jac_is_scalar = not backend.is_array(jac) or backend.size(jac) == 1
+        if jac_is_scalar:
             return backend.mul(jac_sq, var)
 
-        # Matrix jacobian, vector variance
-        # result = J_sq @ var_flat
-        try:
-            res = backend.sparse_matmul(jac_sq, var_flat)
-        except (ValueError, TypeError):
-            # Fallback for scalar/matrix mismatch
-            res = backend.mul(jac_sq, var)
-            if hasattr(res, "diagonal"):
-                res = res.diagonal()
-            if hasattr(res, "todense"):
-                res = res.todense()
+        res = self._matmul_jac_sq_var(jac_sq, var_flat, var, backend)
 
-        # Reshape back to match input or broadcasted output
-        # If result size differs from original size (e.g. broadcasting), don't force original shape
-        res_size = backend.size(res)
-
-        orig_size = 1
-        for dim in original_shape:
-            orig_size *= dim
-
-        if res_size != orig_size:
-            # Shape changed.
-            # If (N, 1), flatten to (N,)
+        import math
+        orig_size = math.prod(original_shape) if original_shape else 1
+        shape_changed = backend.size(res) != orig_size
+        if shape_changed:
             res_shape = backend.shape(res)
-            if len(res_shape) == 2 and res_shape[1] == 1:
+            is_col_vector = len(res_shape) == 2 and res_shape[1] == 1
+            if is_col_vector:
                 return backend.reshape(res, (res_shape[0],))
             return res
 
@@ -433,6 +421,48 @@ class CovarianceModel(Uncertainty[UncType]):
         return cls(std_dev_internal=std_dev, lineage=lineage)
 
     @classmethod
+    @classmethod
+    def _vector_propagation_path(
+        cls,
+        jacs: tuple[Any, ...],
+        uncertainties: Sequence[Uncertainty],
+        result: Any,
+        backend: Any,
+    ) -> CovarianceModel:
+        """Propagates via covariance store (vector/array path)."""
+        from measurekit.domain.measurement.vectorized_uncertainty import ensure_store
+
+        store = ensure_store(backend)
+        in_slices = []
+        final_jacs = []
+
+        for u, jac in zip(uncertainties, jacs, strict=False):
+            if u is None:
+                continue
+            if isinstance(u, CovarianceModel):
+                in_slices.append(u.ensure_vector_slice(backend))
+            else:
+                slc = store.register_independent_array(u.std_dev)
+                in_slices.append(slc)
+            final_jacs.append(jac)
+
+        out_slice = store.allocate(backend.size(result))
+        store.update_from_propagation(out_slice, in_slices, final_jacs)
+
+        out_cov = store.get_covariance_block(out_slice, out_slice)
+        diag = backend.sparse_diagonal(out_cov)
+        std_dev = backend.reshape(backend.sqrt(diag), backend.shape(result))
+        return cls(std_dev_internal=std_dev, vector_slice=out_slice)
+
+    @staticmethod
+    def _scalar_lineage_from_uncertainty(u: Uncertainty) -> dict:
+        """Returns the lineage dict for a single uncertainty input."""
+        if isinstance(u, CovarianceModel):
+            return u.lineage
+        # Treat non-CovarianceModel as an independent noise source.
+        return {str(uuid.uuid4()): u.std_dev}
+
+    @classmethod
     def _propagate_from_jacobians(
         cls,
         jacs: tuple[Any, ...],
@@ -443,66 +473,16 @@ class CovarianceModel(Uncertainty[UncType]):
         """Internal propagation for CovarianceModel."""
         backend = BackendManager.get_backend(values[0])
 
-        # Check Vector Path
-        # If result is large array, use Store
-        if backend.is_array(result) and backend.size(result) > 1:
-            from measurekit.domain.measurement.vectorized_uncertainty import (
-                ensure_store,
-            )
+        is_vector_result = backend.is_array(result) and backend.size(result) > 1
+        if is_vector_result:
+            return cls._vector_propagation_path(jacs, uncertainties, result, backend)
 
-            store = ensure_store(backend)
-
-            in_slices = []
-            final_jacs = []
-
-            for u, jac in zip(uncertainties, jacs, strict=False):
-                if u is None:
-                    continue
-                if isinstance(u, CovarianceModel):
-                    in_slices.append(u.ensure_vector_slice(backend))
-                else:
-                    slc = store.register_independent_array(u.std_dev)
-                    in_slices.append(slc)
-                final_jacs.append(jac)
-
-            out_size = backend.size(result)
-            out_slice = store.allocate(out_size)
-            store.update_from_propagation(out_slice, in_slices, final_jacs)
-
-            out_cov = store.get_covariance_block(out_slice, out_slice)
-            diag = backend.sparse_diagonal(out_cov)
-            std_dev = backend.reshape(
-                backend.sqrt(diag), backend.shape(result)
-            )
-            return cls(std_dev_internal=std_dev, vector_slice=out_slice)
-
-        # Scalar Path (Lineage)
-        new_lineage = {}
-
-        # Merge all lineages
-        # coeff_new(uid) = sum( J_k * coeff_k(uid) )
-
-        # We process each input k
+        # Scalar Path (Lineage): merge coeff_new(uid) = sum(J_k * coeff_k(uid))
+        new_lineage: dict = {}
         for u, jac in zip(uncertainties, jacs, strict=False):
             if u is None:
                 continue
-
-            # Ensure u has lineage
-            if isinstance(u, CovarianceModel):
-                src_lineage = u.lineage
-            else:
-                # treat as independent
-                # generate a random UID?
-                # If we re-use uncorrelated UIDs, we shouldn't mix them up accidentally.
-                # Actually, U = independent -> coeff = std_dev, uid = random
-                # But we don't have persistent UID for VarianceModel.
-                # So we assume it's a new independent noise source per operation instance?
-                # No, that's wrong. If A (var) and A (var) are added, are they correlated?
-                # VarianceModel assumes NO correlation.
-                # So we can treat it as: new noise component.
-                uid = str(uuid.uuid4())
-                src_lineage = {uid: u.std_dev}
-
+            src_lineage = cls._scalar_lineage_from_uncertainty(u)
             for uid, coeff in src_lineage.items():
                 term = backend.mul(coeff, jac)
                 if uid in new_lineage:
@@ -510,20 +490,17 @@ class CovarianceModel(Uncertainty[UncType]):
                 else:
                     new_lineage[uid] = term
 
-        # Filter zero coeffs
         filtered_lineage = {
             k: v
             for k, v in new_lineage.items()
             if backend.any(backend.not_equal(v, 0))
         }
 
-        # Compute new std_dev_internal from lineage
-        # This is a bit circular, usually we compute from lineage.
-        # reuse helper
-        dummy_inst = cls(std_dev_internal=0.0)  # Helper access
+        dummy_inst = cls(std_dev_internal=0.0)
         new_std = dummy_inst._compute_std_dev(filtered_lineage, backend)
 
-        if backend.is_array(result) and backend.shape(result) != ():
+        needs_reshape = backend.is_array(result) and backend.shape(result) != ()
+        if needs_reshape:
             new_std = backend.reshape(new_std, backend.shape(result))
 
         return cls(std_dev_internal=new_std, lineage=filtered_lineage)
@@ -568,6 +545,77 @@ class CovarianceModel(Uncertainty[UncType]):
             sum_sq = backend.add(sum_sq, s)
         return cast("UncType", backend.sqrt(sum_sq))
 
+    def _add_other_to_store(
+        self,
+        other: Uncertainty,
+        jac_other: Any,
+        store: Any,
+        backend: Any,
+        in_slices: list,
+        jacobians: list,
+    ) -> None:
+        """Appends the 'other' uncertainty's slice and jacobian to the store lists."""
+        if other is None:
+            return
+        if isinstance(other, CovarianceModel):
+            in_slices.append(other.ensure_vector_slice(backend))
+        else:
+            std = getattr(other, "std_dev", other)
+            in_slices.append(store.register_independent_array(std))
+        jacobians.append(jac_other)
+
+    def _add_vector_path(
+        self,
+        other: Uncertainty,
+        jac_self: Any,
+        jac_other: Any,
+        out_magnitude: Any,
+        backend: Any,
+    ) -> CovarianceModel:
+        """Vector-path implementation of add() — uses the covariance store."""
+        from measurekit.domain.measurement.vectorized_uncertainty import ensure_store
+
+        store = ensure_store(backend)
+        in_slices = [self.ensure_vector_slice(backend)]
+        jacobians = [jac_self]
+        self._add_other_to_store(other, jac_other, store, backend, in_slices, jacobians)
+
+        out_slice = store.allocate(backend.size(out_magnitude))
+        store.update_from_propagation(out_slice, in_slices, jacobians)
+
+        out_cov = store.get_covariance_block(out_slice, out_slice)
+        diag = backend.sparse_diagonal(out_cov)
+        std_dev = backend.reshape(backend.sqrt(diag), backend.shape(out_magnitude))
+        return CovarianceModel(std_dev_internal=std_dev, vector_slice=out_slice)
+
+    def _merge_lineage_with_jac(
+        self, other: Uncertainty, jac_self: Any, jac_other: Any, backend: Any
+    ) -> dict:
+        """Merges self.lineage and other's lineage scaled by their jacobians."""
+        other_lineage: dict = {}
+        if other is not None:
+            if isinstance(other, CovarianceModel):
+                other_lineage = other.lineage
+            else:
+                std = getattr(other, "std_dev", other)
+                other_lineage = {str(uuid.uuid4()): std}
+
+        new_lineage: dict = {
+            uid: backend.mul(coeff, jac_self)
+            for uid, coeff in self.lineage.items()
+        }
+        for uid, coeff in other_lineage.items():
+            val = backend.mul(coeff, jac_other)
+            if uid in new_lineage:
+                new_lineage[uid] = backend.add(new_lineage[uid], val)
+            else:
+                new_lineage[uid] = val
+        return {
+            k: v
+            for k, v in new_lineage.items()
+            if backend.any(backend.not_equal(v, 0))
+        }
+
     def add(
         self,
         other: Uncertainty[UncType],
@@ -578,78 +626,19 @@ class CovarianceModel(Uncertainty[UncType]):
         """Adds two uncertainty models (correlated)."""
         backend = BackendManager.get_backend(self.std_dev_internal)
 
-        # Vector Path
-        if out_magnitude is not None and backend.is_array(out_magnitude):
-            from measurekit.domain.measurement.vectorized_uncertainty import (
-                ensure_store,
-            )
-
-            store = ensure_store(backend)
-
-            in_slices = []
-            jacobians = []
-
-            # Handle Self
-            in_slices.append(self.ensure_vector_slice(backend))
-            jacobians.append(jac_self)
-
-            # Handle Other
-            if other is not None:
-                if isinstance(other, CovarianceModel):
-                    in_slices.append(other.ensure_vector_slice(backend))
-                    jacobians.append(jac_other)
-                else:
-                    # Independent source for cross-model or simple inputs
-                    std = getattr(other, "std_dev", other)
-                    slc = store.register_independent_array(std)
-                    in_slices.append(slc)
-                    jacobians.append(jac_other)
-
-            out_size = backend.size(out_magnitude)
-            out_slice = store.allocate(out_size)
-            store.update_from_propagation(out_slice, in_slices, jacobians)
-
-            out_cov = store.get_covariance_block(out_slice, out_slice)
-            diag = backend.sparse_diagonal(out_cov)
-            std_dev = backend.reshape(
-                backend.sqrt(diag), backend.shape(out_magnitude)
-            )
-
-            return CovarianceModel(
-                std_dev_internal=std_dev, vector_slice=out_slice
-            )
+        is_vector_path = out_magnitude is not None and backend.is_array(out_magnitude)
+        if is_vector_path:
+            return self._add_vector_path(other, jac_self, jac_other, out_magnitude, backend)
 
         # Scalar Path (Lineage)
-        other_lineage = {}
-        if other is not None:
-            if isinstance(other, CovarianceModel):
-                other_lineage = other.lineage
-            else:
-                std = getattr(other, "std_dev", other)
-                other_lineage = {str(uuid.uuid4()): std}
-
-        new_lineage = {}
-        for uid, coeff in self.lineage.items():
-            new_lineage[uid] = backend.mul(coeff, jac_self)
-
-        for uid, coeff in other_lineage.items():
-            val = backend.mul(coeff, jac_other)
-            if uid in new_lineage:
-                new_lineage[uid] = backend.add(new_lineage[uid], val)
-            else:
-                new_lineage[uid] = val
-
-        filtered_lineage = {
-            k: v
-            for k, v in new_lineage.items()
-            if backend.any(backend.not_equal(v, 0))
-        }
+        filtered_lineage = self._merge_lineage_with_jac(other, jac_self, jac_other, backend)
         new_std = self._compute_std_dev(filtered_lineage, backend)
 
-        if (
+        needs_reshape = (
             backend.is_array(out_magnitude)
             and backend.shape(out_magnitude) != ()
-        ):
+        )
+        if needs_reshape:
             new_std = backend.reshape(new_std, backend.shape(out_magnitude))
 
         return CovarianceModel(

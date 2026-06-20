@@ -33,6 +33,79 @@ from measurekit.core.protocols import BackendOps, Boolean, Numeric
 log = logging.getLogger(__name__)
 
 
+def _jax_block_offsets(
+    blocks: "Sequence[Sequence[Any | None]]",
+) -> tuple[list[int], list[int]]:
+    """Computes row and column offsets for a JAX block matrix."""
+    row_offsets = [0]
+    for row in blocks:
+        h = next((b.shape[0] for b in row if b is not None), 0)
+        row_offsets.append(row_offsets[-1] + h)
+
+    col_offsets = [0]
+    for j in range(len(blocks[0])):
+        w = next((row[j].shape[1] for row in blocks if row[j] is not None), 0)
+        col_offsets.append(col_offsets[-1] + w)
+
+    return row_offsets, col_offsets
+
+
+def _jax_bcoo_coo(b: Any, sparse: Any) -> tuple[Any, Any]:
+    """Extracts (data, indices) from a BCOO or dense JAX block."""
+    if isinstance(b, sparse.BCOO):
+        return b.data, b.indices
+    v_b = jnp.asarray(b)
+    mask = v_b != 0
+    return v_b[mask], jnp.argwhere(mask)
+
+
+def _jax_sparse_bmat(
+    blocks: "Sequence[Sequence[Any | None]]", sparse: Any
+) -> Any:
+    """Assembles a JAX BCOO sparse block matrix."""
+    row_offsets, col_offsets = _jax_block_offsets(blocks)
+    final_shape = (row_offsets[-1], col_offsets[-1])
+
+    all_data: list = []
+    all_indices: list = []
+    for i, row in enumerate(blocks):
+        for j, b in enumerate(row):
+            if b is None:
+                continue
+            data, indices = _jax_bcoo_coo(b, sparse)
+            offset = jnp.array([row_offsets[i], col_offsets[j]])
+            all_data.append(data)
+            all_indices.append(indices + offset)
+
+    if not all_data:
+        return sparse.BCOO(
+            (jnp.zeros(0), jnp.zeros((0, 2), dtype=int)),
+            shape=final_shape,
+        )
+    return sparse.BCOO(
+        (jnp.concatenate(all_data), jnp.concatenate(all_indices)),
+        shape=final_shape,
+    )
+
+
+def _jax_dense_bmat(blocks: "Sequence[Sequence[Any | None]]") -> Any:
+    """Assembles a dense block matrix, filling None slots with zeros."""
+    processed_blocks = []
+    for row in blocks:
+        processed_row = []
+        for j, b in enumerate(row):
+            if b is None:
+                height = next((x.shape[0] for x in row if x is not None), 0)
+                width = next(
+                    (r[j].shape[1] for r in blocks if r[j] is not None), 0
+                )
+                processed_row.append(jnp.zeros((height, width)))
+            else:
+                processed_row.append(b)
+        processed_blocks.append(processed_row)
+    return jnp.block(processed_blocks)
+
+
 class JaxBackend(BackendOps):
     """JAX-based implementation of BackendOps."""
 
@@ -404,86 +477,9 @@ class JaxBackend(BackendOps):
         if self._has_sparse():
             from jax.experimental import sparse
 
-            all_data = []
-            all_indices = []
-            row_offsets = [0]
-            col_offsets = [0]
+            return _jax_sparse_bmat(blocks, sparse)
 
-            # Calculate offsets
-            for row in blocks:
-                h = 0
-                for b in row:
-                    if b is not None:
-                        h = b.shape[0]
-                        break
-                row_offsets.append(row_offsets[-1] + h)
-
-            for j in range(len(blocks[0])):
-                w = 0
-                for row in blocks:
-                    if row[j] is not None:
-                        w = row[j].shape[1]
-                        break
-                col_offsets.append(col_offsets[-1] + w)
-
-            final_shape = (row_offsets[-1], col_offsets[-1])
-
-            for i, row in enumerate(blocks):
-                for j, b in enumerate(row):
-                    if b is not None:
-                        # Extract COO data from b
-                        if isinstance(b, sparse.BCOO):
-                            all_data.append(b.data)
-                            indices = b.indices
-                            offset = jnp.array(
-                                [row_offsets[i], col_offsets[j]]
-                            )
-                            all_indices.append(indices + offset)
-                        else:
-                            # Dense block
-                            v_b = jnp.asarray(b)
-                            mask = v_b != 0
-                            indices = jnp.argwhere(mask)
-                            all_data.append(v_b[mask])
-                            offset = jnp.array(
-                                [row_offsets[i], col_offsets[j]]
-                            )
-                            all_indices.append(indices + offset)
-
-            if not all_data:
-                return sparse.BCOO(
-                    (jnp.zeros(0), jnp.zeros((0, 2), dtype=int)),
-                    shape=final_shape,
-                )
-
-            return sparse.BCOO(
-                (jnp.concatenate(all_data), jnp.concatenate(all_indices)),
-                shape=final_shape,
-            )
-
-        # Convert None to zero matrices for dense fallback
-        processed_blocks = []
-        for _, row in enumerate(blocks):
-            processed_row = []
-            for j, b in enumerate(row):
-                if b is None:
-                    # Determine shape of the zero block
-                    height = 0
-                    for other_b in row:
-                        if other_b is not None:
-                            height = other_b.shape[0]
-                            break
-                    width = 0
-                    for other_row in blocks:
-                        if other_row[j] is not None:
-                            width = other_row[j].shape[1]
-                            break
-                    processed_row.append(jnp.zeros((height, width)))
-                else:
-                    processed_row.append(b)
-            processed_blocks.append(processed_row)
-
-        return jnp.block(processed_blocks)
+        return _jax_dense_bmat(blocks)
 
     def sparse_matmul(self, a: Any, b: Any) -> Any:
         """Matrix multiplication where at least one operand is sparse."""

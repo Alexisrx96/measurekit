@@ -36,6 +36,35 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+def _torch_block_offsets(
+    blocks: "Sequence[Sequence[Any | None]]",
+) -> tuple[list[int], list[int]]:
+    """Computes row and column offsets for a block matrix."""
+    row_offsets = [0]
+    for row in blocks:
+        height = next((b.shape[0] for b in row if b is not None), 0)
+        row_offsets.append(row_offsets[-1] + height)
+
+    col_offsets = [0]
+    for j in range(len(blocks[0])):
+        width = next(
+            (blocks[i][j].shape[1] for i in range(len(blocks)) if blocks[i][j] is not None),
+            0,
+        )
+        col_offsets.append(col_offsets[-1] + width)
+
+    return row_offsets, col_offsets
+
+
+def _torch_block_to_coo(block: Any) -> tuple[Any, Any]:
+    """Extracts COO (indices, values) from a dense or sparse torch block."""
+    if block.is_sparse:
+        block = block.coalesce()
+        return block.indices().clone(), block.values()
+    sp_block = block.to_sparse().coalesce()
+    return sp_block.indices().clone(), sp_block.values()
+
+
 class TorchBackend(BackendOps):
     """PyTorch-based implementation of BackendOps."""
 
@@ -422,52 +451,17 @@ class TorchBackend(BackendOps):
         blocks: Sequence[Sequence[Any | None]],
     ) -> Any:
         """Constructs a sparse matrix from a block matrix of other matrices."""
-        # PyTorch doesn't have a direct bmat for sparse tensors.
-        # We manually accumulate COO indices and values.
+        row_offsets, col_offsets = _torch_block_offsets(blocks)
+
         all_indices = []
         all_values = []
-
-        row_offsets = [0]
-        col_offsets = [0]
-
-        # Calculate offsets
-        for row in blocks:
-            # Find first non-None block in row to get its height
-            height = 0
-            for b in row:
-                if b is not None:
-                    height = b.shape[0]
-                    break
-            row_offsets.append(row_offsets[-1] + height)
-
-        for j in range(len(blocks[0])):
-            width = 0
-            for i in range(len(blocks)):
-                if blocks[i][j] is not None:
-                    width = blocks[i][j].shape[1]
-                    break
-            col_offsets.append(col_offsets[-1] + width)
-
         for i, row in enumerate(blocks):
             for j, block in enumerate(row):
                 if block is None:
                     continue
-
-                # Ensure block is coalesced if it's sparse
-                if block.is_sparse:
-                    block = block.coalesce()
-                    indices = block.indices().clone()
-                    values = block.values()
-                else:
-                    # Convert dense to sparse for consistent processing
-                    sp_block = block.to_sparse().coalesce()
-                    indices = sp_block.indices().clone()
-                    values = sp_block.values()
-
-                # Offset indices
+                indices, values = _torch_block_to_coo(block)
                 indices[0] += row_offsets[i]
                 indices[1] += col_offsets[j]
-
                 all_indices.append(indices)
                 all_values.append(values)
 

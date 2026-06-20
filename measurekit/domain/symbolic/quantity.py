@@ -1,5 +1,6 @@
 """Provides classes for atomic symbolic quantities and equations."""
 
+from typing import Any
 
 import sympy as sp
 
@@ -81,37 +82,40 @@ class Equation:
 
         return f"${latex(self.sympy_eq)}$"
 
+    def _find_target_symbol(self, target: str | SymbolicQuantity) -> Any:
+        """Resolves a target name or SymbolicQuantity to a SymPy symbol."""
+        if isinstance(target, SymbolicQuantity):
+            return target.expr
+
+        for sym in self.variable_map:
+            if sym.name == target:
+                return sym
+
+        for sym in self.sympy_eq.free_symbols:
+            if str(sym) == str(target):
+                return sym
+
+        raise ValueError(f"Symbol '{target}' not found in equation.")
+
+    @staticmethod
+    def _pick_positive_solution(solutions: list) -> Any:
+        """Returns the first positive solution, or the first solution."""
+        for sol in solutions:
+            if hasattr(sol, "is_positive") and sol.is_positive:
+                return sol
+        return solutions[0]
+
     def solve_for(
         self, target: str | SymbolicQuantity
     ) -> SymbolicExpression | None:
         """Solves the equation for a specific target variable."""
-        target_symbol = None
-
-        if isinstance(target, SymbolicQuantity):
-            target_symbol = target.expr
-        else:
-            for sym in self.variable_map:
-                if sym.name == target:
-                    target_symbol = sym
-                    break
-
-        if target_symbol is None:
-            for sym in self.sympy_eq.free_symbols:
-                if str(sym) == str(target):
-                    target_symbol = sym
-                    break
-            if target_symbol is None:
-                raise ValueError(f"Symbol '{target}' not found in equation.")
+        target_symbol = self._find_target_symbol(target)
 
         solutions = sp.solve(self.sympy_eq, target_symbol)
         if not solutions:
             return None
 
-        chosen_sol = solutions[0]
-        for sol in solutions:
-            if hasattr(sol, "is_positive") and sol.is_positive:
-                chosen_sol = sol
-                break
+        chosen_sol = self._pick_positive_solution(solutions)
 
         result_unit = CompoundUnit({})
         if target_symbol in self.variable_map:

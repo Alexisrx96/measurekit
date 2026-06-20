@@ -129,6 +129,54 @@ class NotationParser:
         """
         return self.factor()
 
+    def _split_embedded_exponent(
+        self, original_value: str
+    ) -> tuple[str, str | None]:
+        """Splits a raw unit token into its name and any embedded exponent.
+
+        For example, ``"m2"`` -> ``("m", "2")`` and ``"s-1"`` -> ``("s", "-1")``.
+        Returns the original value unchanged when no embedded exponent is found.
+        """
+        for i, char in enumerate(original_value):
+            if i > 0 and (char.isdigit() or char == "-"):
+                return original_value[:i], original_value[i:]
+        return original_value, None
+
+    def _parse_unit_token(self, token: UnitToken) -> ExponentEntityProtocol:
+        """Handles a UNIT token: splits embedded exponents, applies suffix."""
+        self.eat(TokenType.UNIT)
+        original_value = token.value
+        unit_value, exponent_value = self._split_embedded_exponent(
+            original_value
+        )
+        base_unit = self.entity_cls({unit_value: 1})
+
+        if exponent_value is not None:
+            try:
+                return base_unit ** int(exponent_value)
+            except ValueError:
+                # e.g. "m-s": treat the whole token as a single unit name.
+                return self.entity_cls({original_value: 1})
+
+        exponent = self._parse_exponent()
+        return base_unit**exponent if exponent is not None else base_unit
+
+    def _parse_paren_expr(self) -> ExponentEntityProtocol:
+        """Handles a parenthesised sub-expression with optional exponent."""
+        self.eat(TokenType.LPAREN)
+        result = self.expr()
+        self.eat(TokenType.RPAREN)
+        exponent = self._parse_exponent()
+        return result**exponent if exponent is not None else result
+
+    def _parse_dimensionless_one(self) -> ExponentEntityProtocol:
+        """Handles the literal ``1`` token (dimensionless or ``1/unit``)."""
+        self.eat(TokenType.NUMBER)
+        if self.current.type == TokenType.DIV:
+            self.eat(TokenType.DIV)
+            return self.entity_cls({}) / self.factor()
+        return self.entity_cls({})
+
     def factor(self) -> ExponentEntityProtocol:
         """Parses a factor, the highest precedence element in the grammar.
 
@@ -138,60 +186,14 @@ class NotationParser:
         token = self.current
 
         if token.type == TokenType.UNIT:
-            self.eat(TokenType.UNIT)
-            original_value = token.value
-            unit_value = original_value
-            exponent_value = None
-
-            # Attempt to split the token into a unit name and an embedded
-            # exponent
-            # (e.g., "m2" -> "m", "2" or "s-1" -> "s", "-1").
-            split_index = -1
-            for i, char in enumerate(original_value):
-                # An exponent starts with a digit or a hyphen
-                # (but not at the beginning).
-                if i > 0 and (char.isdigit() or char == "-"):
-                    split_index = i
-                    break
-
-            if split_index != -1:
-                exponent_value = original_value[split_index:]
-                unit_value = original_value[:split_index]
-
-            # Create an entity for the base unit part.
-            base_unit = self.entity_cls({unit_value: 1})
-
-            # If an embedded exponent was found, try to apply it.
-            if exponent_value is not None:
-                try:
-                    return base_unit ** int(exponent_value)
-                except ValueError:
-                    # If parsing the exponent fails (e.g., "m-s"), fall back to
-                    # treating the entire original token ("m-s") as a single
-                    # unit name.
-                    return self.entity_cls({original_value: 1})
-
-            # If no embedded exponent, check for a standard exponent
-            # (e.g., "^2" or "²").
-            exponent = self._parse_exponent()
-            return base_unit**exponent if exponent is not None else base_unit
+            return self._parse_unit_token(token)
 
         if token.type == TokenType.LPAREN:
-            self.eat(TokenType.LPAREN)
-            result = self.expr()  # Recursively parse the nested expression.
-            self.eat(TokenType.RPAREN)
-            # Check for an exponent attached to the closing parenthesis.
-            exponent = self._parse_exponent()
-            return result**exponent if exponent is not None else result
+            return self._parse_paren_expr()
 
         # Handle dimensionless quantities represented by the number '1'.
         if token.type == TokenType.NUMBER and token.value == "1":
-            self.eat(TokenType.NUMBER)
-            # Handle cases like "1/s".
-            if self.current.type == TokenType.DIV:
-                self.eat(TokenType.DIV)
-                return self.entity_cls({}) / self.factor()
-            return self.entity_cls({})
+            return self._parse_dimensionless_one()
 
         # If the token is not a unit, parenthesis, or '1', it's an error.
         raise ValueError(f"Unexpected token: {token.type} ({token.value})")

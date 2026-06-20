@@ -162,6 +162,98 @@ class CovarianceStore:
 
         return self.backend.zeros(shape)
 
+    def _densify_sparse(self, val: Any) -> Any:
+        """Converts sparse matrix representations to a dense array."""
+        if hasattr(val, "toarray"):
+            return val.toarray()
+        if hasattr(val, "to_dense"):
+            return val.to_dense()
+        if hasattr(val, "todense"):
+            return val.todense()
+        return val
+
+    def _to_numpy_or_tensor(self, val: Any) -> Any:
+        """Converts val to numpy, or keeps it as a Torch tensor."""
+        if self.backend.__class__.__name__ == "TorchBackend":
+            return self.backend.asarray(val)
+        if hasattr(val, "detach"):
+            val = val.detach()
+        if hasattr(val, "cpu"):
+            val = val.cpu()
+        if hasattr(val, "numpy"):
+            return val.numpy()
+        if hasattr(val, "__array__"):
+            return np.array(val)
+        if not isinstance(val, (np.ndarray, np.generic)):
+            return np.array(val)
+        return val
+
+    def _broadcast_scalar_jacobian(
+        self, scalar: Any, out_size: int, in_size: int
+    ) -> Any:
+        """Expands a scalar jacobian to matrix form given out/in sizes."""
+        if out_size == in_size:
+            mat = self.backend.identity_operator(out_size)
+            return self.backend.mul(mat, scalar)
+        if in_size == 1:
+            # Column vector (out, 1) filled with scalar
+            return self.backend.mul(self.backend.ones((out_size, 1)), scalar)
+        if out_size == 1:
+            # Row vector (1, in) filled with scalar
+            return self.backend.mul(self.backend.ones((1, in_size)), scalar)
+        # Ambiguous scalar — fall back to numpy fill_diagonal
+        arr = np.zeros((out_size, in_size), dtype=np.float64)
+        np.fill_diagonal(arr, scalar)
+        return self.backend.asarray(arr)
+
+    def _broadcast_jacobian(self, val: Any, out_size: int, in_size: int) -> Any:
+        """Expands scalar or 1-D jacobian values to matrix form."""
+        is_scalar = val.ndim == 0 or (
+            val.ndim == 1 and self.backend.size(val) == 1
+        )
+        if is_scalar:
+            scalar = float(val) if not self.backend.is_array(val) else val
+            return self._broadcast_scalar_jacobian(scalar, out_size, in_size)
+        if val.ndim == 1:
+            size_matches = (
+                self.backend.size(val) == in_size and out_size == in_size
+            )
+            is_col_vec = self.backend.size(val) == out_size and in_size == 1
+            if size_matches:
+                return self.backend.diagonal_operator(val)
+            if is_col_vec:
+                return self.backend.reshape(val, (-1, 1))
+        return val
+
+    def _ensure_float64_jac(self, val: Any) -> Any:
+        """Casts val to float64; also re-densifies any sparse result."""
+        if self.backend.__class__.__name__ == "TorchBackend":
+            import torch
+            if val.dtype != torch.float64:
+                val = val.to(torch.float64)
+            return val
+        has_non_float64 = hasattr(val, "dtype") and str(val.dtype) != "float64"
+        if has_non_float64:
+            if hasattr(val, "astype"):
+                val = val.astype(np.float64, copy=False)
+            else:
+                val = np.asarray(val, dtype=np.float64)
+        # Rust core requires dense arrays; broadcasting may produce sparse.
+        if hasattr(val, "toarray"):
+            val = val.toarray()
+        elif hasattr(val, "todense"):
+            val = np.asarray(val.todense())
+        return val
+
+    def _prepare_jacobian(self, jac: Any, out_size: int, in_size: int) -> Any:
+        """Full pipeline: densify → to numpy/tensor → broadcast → float64."""
+        val = self._densify_sparse(jac)
+        val = self._to_numpy_or_tensor(val)
+        if not isinstance(val, (np.ndarray, np.generic)):
+            val = np.array(val)
+        val = self._broadcast_jacobian(val, out_size, in_size)
+        return self._ensure_float64_jac(val)
+
     def update_from_propagation(
         self,
         out_slice: slice,
@@ -173,148 +265,54 @@ class CovarianceStore:
         input_ids = [s.start for s in in_slices]
         out_size = out_slice.stop - out_slice.start
 
-        final_jacs = []
-        for i, jac in enumerate(jacobians):
-            val = jac
-            in_size = in_slices[i].stop - in_slices[i].start
-
-            # Densify sparse matrices if needed
-            if hasattr(val, "toarray"):
-                val = val.toarray()
-            elif hasattr(val, "to_dense"):
-                val = val.to_dense()
-            elif hasattr(val, "todense"):
-                val = val.todense()
-
-            if self.backend.__class__.__name__ == "TorchBackend":
-                # For Torch, we want to keep the tensor (and its gradient)
-                val = self.backend.asarray(val)
-            else:
-                if hasattr(val, "detach"):
-                    val = val.detach()
-                if hasattr(val, "cpu"):
-                    val = val.cpu()
-                if hasattr(val, "numpy"):
-                    val = val.numpy()
-                elif hasattr(val, "__array__"):
-                    val = np.array(val)
-
-                if not isinstance(val, (np.ndarray, np.generic)):
-                    val = np.array(val)
-
-            # Scalar/Vector Broadcasting logic
-            if val.ndim == 0 or (
-                val.ndim == 1 and self.backend.size(val) == 1
-            ):
-                scalar = float(val) if not self.backend.is_array(val) else val
-                if out_size == in_size:
-                    # Identity * scalar
-                    val = self.backend.identity_operator(out_size)
-                    val = self.backend.mul(val, scalar)
-                else:
-                    if in_size == 1:
-                        # Column vector (out, 1) filled with scalar
-                        val = self.backend.mul(
-                            self.backend.ones((out_size, 1)), scalar
-                        )
-                    elif out_size == 1:
-                        # Row vector (1, in) filled with scalar
-                        val = self.backend.mul(
-                            self.backend.ones((1, in_size)), scalar
-                        )
-                    else:
-                        # Ambiguous scalar - use identity-like diagonal
-                        val = self.backend.zeros((out_size, in_size))
-                        # We don't have a direct 'fill_diagonal' in Protocol yet
-                        # but we can use diagonal_operator if it's square
-                        if out_size == in_size:
-                            diag_vals = self.backend.mul(
-                                self.backend.ones((out_size,)), scalar
-                            )
-                            val = self.backend.diagonal_operator(diag_vals)
-                        else:
-                            # Fallback to numpy for complex broadcasting if mismatch
-                            if not self.backend.is_array(val):
-                                val = np.zeros(
-                                    (out_size, in_size), dtype=np.float64
-                                )
-                                np.fill_diagonal(val, scalar)
-                                val = self.backend.asarray(val)
-
-            elif val.ndim == 1:
-                # Vector. If Input Size matches, treat as Diagonal Matrix (Element-wise mul Jacobian)
-                if self.backend.size(val) == in_size and out_size == in_size:
-                    val = self.backend.diagonal_operator(val)
-                elif self.backend.size(val) == out_size and in_size == 1:
-                    # Column vector
-                    val = self.backend.reshape(val, (-1, 1))
-                else:
-                    # Maybe it is a flattened matrix?
-                    pass
-
-            # Ensure float64
-            if self.backend.__class__.__name__ == "TorchBackend":
-                import torch
-
-                if val.dtype != torch.float64:
-                    val = val.to(torch.float64)
-            else:
-                if hasattr(val, "dtype") and str(val.dtype) != "float64":
-                    if hasattr(val, "astype"):
-                        val = val.astype(np.float64, copy=False)
-                    else:
-                        val = np.asarray(val, dtype=np.float64)
-
-                # Broadcasting logic above may produce sparse matrices (e.g. identity_operator).
-                # Rust core requires dense numpy arrays.
-                if hasattr(val, "toarray"):
-                    val = val.toarray()
-                elif hasattr(val, "todense"):
-                    val = np.asarray(val.todense())
-
-            final_jacs.append(val)
+        final_jacs = [
+            self._prepare_jacobian(
+                jac,
+                out_size,
+                in_slices[i].stop - in_slices[i].start,
+            )
+            for i, jac in enumerate(jacobians)
+        ]
 
         self._core.propagate(out_id, input_ids, final_jacs)
+
+    def _prepare_variance_diagonal(self, variance: Any) -> Any:
+        """Converts a variance array to a flat float64 diagonal ready for the core."""
+        if self.backend.__class__.__name__ == "TorchBackend":
+            import torch
+            val = self.backend.reshape(variance, (-1,))
+            if val.dtype != torch.float64:
+                val = val.to(torch.float64)
+            return val
+        val = variance
+        if hasattr(val, "detach"):
+            val = val.detach()
+        if hasattr(val, "cpu"):
+            val = val.cpu()
+        val = val.numpy() if hasattr(val, "numpy") else np.array(val)
+        val = val.reshape(-1)
+        has_non_float64 = hasattr(val, "dtype") and str(val.dtype) != "float64"
+        if has_non_float64:
+            val = val.astype(np.float64, copy=False) if hasattr(val, "astype") else np.asarray(val, dtype=np.float64)
+        return val
+
+    def _register_diagonal_with_fallback(self, idx: int, diag: Any, size: int) -> None:
+        """Calls register_diagonal on the core store, falling back to register_variable."""
+        try:
+            self._core.register_diagonal(idx, diag)
+        except AttributeError:
+            if size < 1000:
+                self._core.register_variable(idx, np.diag(diag))
+            else:
+                raise RuntimeError("Rust CoreStore.register_diagonal missing.")
 
     def register_independent_array(self, std_dev: Any) -> slice:
         """Registers a new independent array and returns its slice."""
         size = self.backend.size(std_dev)
         slc = self.allocate(size)
-
         variance = self.backend.pow(std_dev, 2)
-        val = variance
-        if self.backend.__class__.__name__ == "TorchBackend":
-            # For Torch, we want to keep the tensor (and its gradient)
-            val = self.backend.reshape(val, (-1,))
-            import torch
-
-            if val.dtype != torch.float64:
-                val = val.to(torch.float64)
-        else:
-            if hasattr(val, "detach"):
-                val = val.detach()
-            if hasattr(val, "cpu"):
-                val = val.cpu()
-            if hasattr(val, "numpy"):
-                val = val.numpy()
-            else:
-                val = np.array(val)
-
-            val = val.reshape(-1)
-            if hasattr(val, "dtype") and str(val.dtype) != "float64":
-                if hasattr(val, "astype"):
-                    val = val.astype(np.float64, copy=False)
-                else:
-                    val = np.asarray(val, dtype=np.float64)
-
-        try:
-            self._core.register_diagonal(slc.start, val)
-        except AttributeError:
-            if size < 1000:
-                self._core.register_variable(slc.start, np.diag(val))
-            else:
-                raise RuntimeError("Rust CoreStore.register_diagonal missing.")
-
+        diag = self._prepare_variance_diagonal(variance)
+        self._register_diagonal_with_fallback(slc.start, diag, size)
         return slc
 
 

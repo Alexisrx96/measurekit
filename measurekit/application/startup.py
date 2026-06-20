@@ -142,6 +142,129 @@ class UnitSystemBuilder:
             self._system.register_dimension(dim_instance, name.capitalize())
         return self
 
+    @staticmethod
+    def _split_aliases(value_str: str) -> tuple[str, list[str]]:
+        """Splits a unit value string into its main part and alias list."""
+        if "[" not in value_str:
+            return value_str, []
+        main_part, alias_part = value_str.split("[", 1)
+        aliases = [a.strip() for a in alias_part.strip()[:-1].split(",")]
+        return main_part, aliases
+
+    @staticmethod
+    def _parse_log_unit(
+        parts: list[str],
+    ) -> tuple[Dimension, LogarithmicConverter, str]:
+        """Parses the components of a logarithmic unit definition."""
+        factor = float(parts[1])
+        reference = float(parts[2])
+        dim_str = parts[3]
+        dimension = (
+            Dimension({}) if dim_str == "1" else Dimension.from_string(dim_str)
+        )
+        return dimension, LogarithmicConverter(factor, reference), "delta"
+
+    @staticmethod
+    def _parse_linear_unit(
+        parts: list[str],
+    ) -> tuple[Dimension, LinearConverter | OffsetConverter, str]:
+        """Parses the components of a linear or offset unit definition."""
+        factor = float(parts[0])
+        offset = 0.0
+        dim_index = 1
+
+        if len(parts) > 2:
+            try:
+                offset = float(parts[1])
+                dim_index = 2
+            except ValueError:
+                pass
+
+        dimension = Dimension.from_string(parts[dim_index])
+
+        if offset != 0:
+            return dimension, OffsetConverter(factor, offset), "absolute"
+        return dimension, LinearConverter(factor), "delta"
+
+    def _register_unit_pass1(self, key: str, value_str: str) -> None:
+        """Registers a single unit (pass 1: base registration)."""
+        main_part, aliases = self._split_aliases(value_str)
+        parts = [p.strip() for p in main_part.split(",") if p.strip()]
+
+        allow_prefixes = True
+        if "noprefix" in parts:
+            allow_prefixes = False
+            parts.remove("noprefix")
+
+        if parts[0].lower() == "log":
+            dimension, converter, kind = self._parse_log_unit(parts)
+        else:
+            dimension, converter, kind = self._parse_linear_unit(parts)
+
+        symbol = aliases[0] if aliases else key
+        all_aliases = {key, *aliases}
+
+        self._system.register_unit(
+            symbol,
+            dimension,
+            converter,
+            key,
+            *all_aliases,
+            allow_prefixes=allow_prefixes,
+            kind=kind,
+        )
+
+    def _register_unit_pass2(self, key: str, value_str: str) -> None:
+        """Registers the recipe for a derived unit (pass 2)."""
+        main_part, aliases = self._split_aliases(value_str)
+        parts = [
+            p.strip()
+            for p in main_part.split(",")
+            if p.strip() and p.strip() != "noprefix"
+        ]
+
+        is_log = parts[0].lower() == "log"
+        if is_log:
+            return
+
+        has_offset = False
+        if len(parts) > 2:
+            try:
+                float(parts[1])
+                has_offset = True
+            except ValueError:
+                pass
+
+        if has_offset:
+            return
+
+        recipe_str = parts[2] if len(parts) > 2 else None
+        if not recipe_str:
+            return
+
+        unit_def = cast("UnitDefinition", self._system.get_definition(key))
+        if not unit_def or unit_def.recipe:
+            return
+
+        all_aliases = [key, *aliases]
+        symbol = aliases[0] if aliases else key  # noqa: F841
+
+        # Obtain the CompoundUnit object from the recipe.
+        recipe_unit = self._system.get_unit(recipe_str)
+
+        # Simplify the recipe to its base unit components.
+        # This is crucial for conversion.
+        simplified_recipe = recipe_unit.simplify(self._system)
+
+        # Assign the simplified recipe to the unit definition object.
+        unit_def.recipe = simplified_recipe
+        self._system._UNIT_RECIPES[unit_def.symbol] = simplified_recipe
+        # Register the alias for the simplified recipe so that
+        # to_string(use_alias=True) works for base-unit quantities.
+        self._system.register_alias(
+            simplified_recipe.exponents, *reversed(all_aliases)
+        )
+
     def add_units(self, units_data: dict[str, str]) -> UnitSystemBuilder:
         """Adds units from a dictionary of unit definitions."""
         if self._verbose:
@@ -151,130 +274,12 @@ class UnitSystemBuilder:
 
         # Pass 1: Register all units
         for key, value_str in units_data.items():
-            aliases = []
-            main_part = value_str
-            if "[" in value_str:
-                main_part, alias_part = value_str.split("[", 1)
-                aliases = [
-                    a.strip() for a in alias_part.strip()[:-1].split(",")
-                ]
-
-            parts = [p.strip() for p in main_part.split(",") if p.strip()]
-
-            allow_prefixes = True
-            if "noprefix" in parts:
-                allow_prefixes = False
-                parts.remove("noprefix")
-
-            kind = "delta"
-            if parts[0].lower() == "log":
-                factor = float(parts[1])
-                reference = float(parts[2])
-                dim_str = parts[3]
-                if dim_str == "1":
-                    dimension = Dimension({})
-                else:
-                    dimension = Dimension.from_string(dim_str)
-                converter = LogarithmicConverter(factor, reference)
-            else:
-                factor = float(parts[0])
-                offset = 0.0
-                dim_index = 1
-
-                # Check if there is an offset (for OffsetConverter)
-                if len(parts) > 2:
-                    try:
-                        # If parts[1] is a float, it's an offset
-                        offset = float(parts[1])
-                        dim_index = 2
-                    except ValueError:
-                        # parts[1] is likely the dimension
-                        pass
-
-                dimension = Dimension.from_string(parts[dim_index])
-
-                if offset != 0:
-                    converter = OffsetConverter(factor, offset)
-                    kind = "absolute"
-                else:
-                    converter = LinearConverter(factor)
-                    kind = "delta"
-
-            symbol = aliases[0] if aliases else key
-            all_aliases = set([key] + aliases)
-
-            self._system.register_unit(
-                symbol,
-                dimension,
-                converter,
-                key,
-                *all_aliases,
-                allow_prefixes=allow_prefixes,
-                kind=kind,
-            )
+            self._register_unit_pass1(key, value_str)
 
         # Pass 2: Register recipes for derived units after all base
         # units are available
         for key, value_str in units_data.items():
-            # Extract aliases for registration
-            aliases = []
-            if "[" in value_str:
-                main_part, alias_part = value_str.split("[", 1)
-                aliases = [
-                    a.strip() for a in alias_part.strip()[:-1].split(",")
-                ]
-            else:
-                main_part = value_str
-
-            parts = [
-                p.strip()
-                for p in main_part.split(",")
-                if p.strip() and p.strip() != "noprefix"
-            ]
-
-            symbol = aliases[0] if aliases else key
-            all_aliases = [key, *aliases]
-
-            if parts[0].lower() == "log":
-                continue
-
-            # Check if there was an offset for this key
-            has_offset = False
-            if len(parts) > 2:
-                try:
-                    float(parts[1])
-                    has_offset = True
-                except ValueError:
-                    pass
-
-            if has_offset:
-                continue
-
-            recipe_str = parts[2] if len(parts) > 2 else None
-
-            if recipe_str:
-                unit_def = cast(
-                    "UnitDefinition", self._system.get_definition(key)
-                )
-                if unit_def and not unit_def.recipe:
-                    # Obtain the CompoundUnit object from the recipe.
-                    recipe_unit = self._system.get_unit(recipe_str)
-
-                    # Simplify the recipe to its base unit components.
-                    # This is crucial for conversion.
-                    simplified_recipe = recipe_unit.simplify(self._system)
-
-                    # Assign the simplified recipe to the unit definition
-                    # object.
-                    unit_def.recipe = simplified_recipe
-                    self._system._UNIT_RECIPES[unit_def.symbol] = (
-                        simplified_recipe
-                    )
-                    # Register the alias for the simplified recipe so that
-                    # to_string(use_alias=True) works for base-unit quantities.
-                    self._system.register_alias(
-                        simplified_recipe.exponents, *reversed(all_aliases)
-                    )
+            self._register_unit_pass2(key, value_str)
 
         return self
 
@@ -319,14 +324,10 @@ class UnitSystemBuilder:
         return self._system
 
 
-def _get_config_parser(
-    extra_config_files: list[str] | None = None, verbose: bool = False
-) -> configparser.ConfigParser:
-    """Creates a ConfigParser with base configs and optional extra files."""
-    parser = configparser.ConfigParser()
-    parser.optionxform = str
-
-    # 1. Always load the base measurekit.conf
+def _load_base_config(
+    parser: configparser.ConfigParser, verbose: bool
+) -> None:
+    """Loads the base measurekit.conf packaged with the library."""
     try:
         base_config_path = resources.files(
             "measurekit.infrastructure.config"
@@ -338,26 +339,45 @@ def _get_config_parser(
     except Exception as e:
         print(f"[WARNING] Could not load base configuration: {e}")
 
+
+def _load_extra_config_file(
+    parser: configparser.ConfigParser, file_name: str, verbose: bool
+) -> None:
+    """Loads one extra config file, falling back to a direct path lookup."""
+    try:
+        sys_config_path = resources.files(
+            "measurekit.infrastructure.config.systems"
+        ).joinpath(file_name)
+        with resources.as_file(sys_config_path) as sys_config:
+            parser.read(str(sys_config), encoding="utf-8")
+            if verbose:
+                print(f"  -> Loaded system config: {sys_config}")
+        return
+    except Exception:
+        pass
+
+    # Fallback: try as a direct path or user file
+    if Path(file_name).is_file():
+        parser.read(file_name, encoding="utf-8")
+        if verbose:
+            print(f"  -> Loaded external config: {file_name}")
+    elif verbose:
+        print(f"  -> Config file not found: {file_name}")
+
+
+def _get_config_parser(
+    extra_config_files: list[str] | None = None, verbose: bool = False
+) -> configparser.ConfigParser:
+    """Creates a ConfigParser with base configs and optional extra files."""
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+
+    # 1. Always load the base measurekit.conf
+    _load_base_config(parser, verbose)
+
     # 2. Load extra configuration files (e.g., specific system configs)
-    if extra_config_files:
-        for file_name in extra_config_files:
-            try:
-                # Try finding it in the systems subpackage first
-                sys_config_path = resources.files(
-                    "measurekit.infrastructure.config.systems"
-                ).joinpath(file_name)
-                with resources.as_file(sys_config_path) as sys_config:
-                    parser.read(str(sys_config), encoding="utf-8")
-                    if verbose:
-                        print(f"  -> Loaded system config: {sys_config}")
-            except Exception:
-                # Fallback: try as a direct path or user file
-                if Path(file_name).is_file():
-                    parser.read(file_name, encoding="utf-8")
-                    if verbose:
-                        print(f"  -> Loaded external config: {file_name}")
-                elif verbose:
-                    print(f"  -> Config file not found: {file_name}")
+    for file_name in extra_config_files or []:
+        _load_extra_config_file(parser, file_name, verbose)
 
     # 3. Load user override (measurekit.conf in CWD)
     user_config_path = Path.cwd() / _CONF_FILE

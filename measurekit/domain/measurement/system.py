@@ -186,34 +186,43 @@ class UnitSystem(IUnitRepository):
             self.UNIT_DIMENSIONS[unit_name] = dimension
             self.UNIT_REGISTRY[dimension][unit_name] = unit_def
 
-        if recipe:
-            self._UNIT_RECIPES[symbol] = recipe
-            self.register_alias(recipe.exponents, symbol, *aliases)
-
-            # Rust Registry: Derived
-            if self._core_registry:
-                ru = self._to_rational_unit(recipe)
-                if ru:
-                    self._core_registry.add_derived_unit(symbol, ru)
-
-        else:
-            self.register_alias({symbol: 1}, symbol, *aliases)
-
-            # Rust Registry: Base
-            if self._core_registry:
-                self._core_registry.add_base_unit(symbol)
-
-        # Register Aliases in Rust
-        if self._core_registry:
-            for alias in aliases:
-                with contextlib.suppress(Exception):
-                    self._core_registry.register_alias(alias, symbol)
+        self._register_unit_recipe_or_base(symbol, recipe, *aliases)
+        self._register_rust_aliases(symbol, *aliases)
 
         # Automatically register prefixed units
         if allow_prefixes:
             self._register_prefixed_units(
                 sorted_names, symbol, dimension, converter, name
             )
+
+    def _register_unit_recipe_or_base(
+        self,
+        symbol: str,
+        recipe: CompoundUnit | None,
+        *aliases: str,
+    ) -> None:
+        """Registers the recipe (derived) or base-unit alias and Rust entry."""
+        if recipe:
+            self._UNIT_RECIPES[symbol] = recipe
+            self.register_alias(recipe.exponents, symbol, *aliases)
+
+            if self._core_registry:
+                ru = self._to_rational_unit(recipe)
+                if ru:
+                    self._core_registry.add_derived_unit(symbol, ru)
+        else:
+            self.register_alias({symbol: 1}, symbol, *aliases)
+
+            if self._core_registry:
+                self._core_registry.add_base_unit(symbol)
+
+    def _register_rust_aliases(self, symbol: str, *aliases: str) -> None:
+        """Registers all aliases in the Rust core registry."""
+        if not self._core_registry:
+            return
+        for alias in aliases:
+            with contextlib.suppress(Exception):
+                self._core_registry.register_alias(alias, symbol)
 
     def _register_prefixed_units(
         self,
