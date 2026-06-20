@@ -66,10 +66,7 @@ from measurekit.domain.measurement.converters import (
     LogarithmicConverter,
 )
 
-try:
-    from pydantic_core import core_schema
-except ImportError:
-    core_schema = None
+# pydantic_core is imported lazily inside __get_pydantic_core_schema__
 
 # --- Generic Type Variables ---
 ValueType = TypeVar("ValueType")
@@ -535,10 +532,15 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
     @classmethod
     def __get_pydantic_core_schema__(
         cls, source_type: Any, handler: Any
-    ) -> core_schema.CoreSchema:
+    ) -> Any:
         """Defines the Pydantic Core Schema for validation."""
-        if core_schema is None:
-            raise ImportError("pydantic-core is required for validation.")
+        try:
+            from pydantic_core import core_schema
+        except ImportError as e:
+            raise ImportError(
+                "pydantic-core is required for Pydantic validation of Quantity. "
+                "Install it with: pip install measurekit[pydantic]"
+            ) from e
 
         def validate_from_str(value: Any) -> Quantity:
             if isinstance(value, Quantity):
