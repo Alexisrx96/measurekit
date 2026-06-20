@@ -628,6 +628,16 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         except Exception:
             return True
 
+    @property
+    def m(self) -> ValueType:
+        """Alias for .magnitude (pint-compatible shorthand)."""
+        return self.magnitude
+
+    @property
+    def u(self) -> CompoundUnit:
+        """Alias for .unit."""
+        return self.unit
+
     def __repr__(self) -> str:
         """Returns string representation."""
         unit_str = self.unit.to_string(self.system)
@@ -752,6 +762,31 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
     def _repr_latex_(self):
         """Returns LaTeX for Jupyter notebooks."""
         return f"${self.to_latex()}$"
+
+    def _repr_html_(self) -> str:
+        """HTML display for Jupyter notebooks."""
+        unit_str = self.unit.to_latex() or "dimensionless"
+        mag = self.magnitude
+        if self._has_uncertainty:
+            return (
+                f'<span style="font-family:monospace">'
+                f'{mag} &plusmn; {self.uncertainty} '
+                f'<span style="color:#888">{unit_str}</span>'
+                f'</span>'
+            )
+        return (
+            f'<span style="font-family:monospace">'
+            f'{mag} <span style="color:#888">{unit_str}</span>'
+            f'</span>'
+        )
+
+    def _repr_mimebundle_(self, **kwargs) -> dict:
+        """MIME bundle for Jupyter — lets the frontend pick the best format."""
+        return {
+            "text/plain": repr(self),
+            "text/latex": self._repr_latex_(),
+            "text/html": self._repr_html_(),
+        }
 
     def to_hdf5(self, group: Any, dataset_name: str) -> Any:
         """Saves the quantity to an HDF5 group.
@@ -1041,10 +1076,16 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         return len(self.magnitude)
 
     def __iter__(self):
-        """Iterates over elements."""
-        # Yield quantities for each element
-        # This is slow but correct for iteration
-        for i in range(len(self)):
+        """Scalar: yields (magnitude, unit). Array: yields elements."""
+        try:
+            n = len(self.magnitude)
+        except TypeError:
+            # Scalar case: magnitude has no len()
+            yield self.magnitude
+            yield self.unit
+            return
+        # Array case: iterate elements as before
+        for i in range(n):
             yield self[i]
 
     # --- Redundant definitions removed ---

@@ -137,3 +137,12 @@ def test_unknown_unit_error_no_suggestions():
     err = UnknownUnitError("qqqq")
     assert "qqqq" in str(err)
     assert "Did you mean" not in str(err)
+
+
+def test_unknown_unit_error_importable_from_top_level():
+    """Test that UnknownUnitError can be imported from the top-level measurekit package."""
+    from measurekit import UnknownUnitError as TopLevelError
+
+    assert issubclass(TopLevelError, ValueError)
+    err = TopLevelError("test")
+    assert isinstance(err, ValueError)

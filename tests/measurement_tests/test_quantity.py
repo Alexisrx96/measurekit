@@ -367,3 +367,73 @@ def test__rsub__(quantity_system):
     q2 = quantity_system.Q_(3.0, "m")
     result = q2 - q1
     assert np.isclose(result.magnitude, -7.0)
+
+
+def test_repr_html_returns_string(quantity_system, units):
+    """Test that _repr_html_ returns a string."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(10.0, units["meter"], system=quantity_system)
+    html = q._repr_html_()
+    assert isinstance(html, str)
+    assert "10.0" in html
+    assert "<span" in html
+
+
+def test_repr_html_dimensionless(quantity_system):
+    """Test that _repr_html_ handles dimensionless quantities."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(1.0, CompoundUnit({}), system=quantity_system)
+    html = q._repr_html_()
+    assert "dimensionless" in html
+
+
+def test_repr_mimebundle_keys(quantity_system, units):
+    """Test that _repr_mimebundle_ returns correct MIME types."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(10.0, units["meter"], system=quantity_system)
+    bundle = q._repr_mimebundle_()
+    assert "text/plain" in bundle
+    assert "text/latex" in bundle
+    assert "text/html" in bundle
+
+
+def test_repr_html_with_uncertainty(quantity_system, units):
+    """Test that _repr_html_ shows &plusmn; when uncertainty is present."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(10.0, units["meter"], uncertainty=0.5, system=quantity_system)
+    html = q._repr_html_()
+    assert "&plusmn;" in html
+    assert "0.5" in html
+
+
+def test_m_alias(quantity_system, units):
+    """Test .m property alias for magnitude."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(42.0, units["meter"], system=quantity_system)
+    assert q.m == 42.0
+    assert q.m is q.magnitude
+
+
+def test_u_alias(quantity_system, units):
+    """Test .u property alias for unit."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(42.0, units["meter"], system=quantity_system)
+    assert q.u is q.unit
+
+
+def test_scalar_unpack(quantity_system, units):
+    """Test scalar unpacking via __iter__."""
+    from measurekit.domain.measurement.quantity import Quantity
+    q = Quantity(42.0, units["meter"], system=quantity_system)
+    mag, unit = q
+    assert mag == 42.0
+    assert unit is q.unit
+
+
+def test_array_iter_unchanged(quantity_system, units):
+    """Array __iter__ must still yield individual Quantity elements."""
+    from measurekit.domain.measurement.quantity import Quantity
+    arr = Quantity(np.array([1.0, 2.0, 3.0]), units["meter"], system=quantity_system)
+    elements = list(arr)
+    assert len(elements) == 3
+    assert elements[0].magnitude == pytest.approx(1.0)
