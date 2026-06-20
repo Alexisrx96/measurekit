@@ -3,6 +3,7 @@
 import pytest
 
 from measurekit import get_unit
+from measurekit.domain.exceptions import UnknownUnitError
 from measurekit.domain.measurement.converters import LinearConverter
 from measurekit.domain.measurement.dimensions import Dimension
 from measurekit.domain.measurement.units import CompoundUnit
@@ -98,3 +99,24 @@ def test_get_unit_simple():
 def test_get_unit_complex():
     """Test get_unit with complex expressions."""
     assert get_unit("(kg*m)/s^2").exponents == {"kg": 1, "m": 1, "s": -2}
+
+
+def test_unknown_unit_error_is_value_error():
+    """Test that UnknownUnitError is also a ValueError."""
+    err = UnknownUnitError("xyz")
+    assert isinstance(err, ValueError)
+    assert "xyz" in str(err)
+
+
+def test_unknown_unit_error_with_suggestions():
+    """Test UnknownUnitError with suggestions."""
+    err = UnknownUnitError("metter", suggestions=["meter", "m"])
+    assert "meter" in str(err)
+    assert "m" in str(err)
+
+
+def test_unknown_unit_error_no_suggestions():
+    """Test UnknownUnitError without suggestions."""
+    err = UnknownUnitError("qqqq")
+    assert "qqqq" in str(err)
+    assert "Did you mean" not in str(err)
