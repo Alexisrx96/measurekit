@@ -157,3 +157,34 @@ def test_unknown_unit_error_stores_suggestions():
 def test_unknown_unit_error_stores_none_suggestions():
     err = UnknownUnitError("xyz")
     assert err.suggestions is None
+
+
+def test_standard_units_do_not_load_sympy():
+    """Common unit strings must parse without importing sympy."""
+    import sys
+
+    sympy_was_loaded = "sympy" in sys.modules
+
+    from measurekit.application.parsing import parse_unit_string
+    from measurekit.domain.measurement.units import CompoundUnit
+
+    # Clear cache to force a fresh parse
+    parse_unit_string.cache_clear()
+
+    exprs = [
+        "m/s",
+        "kg*m/s**2",
+        "m2",
+        "kg",
+        "m/s^2",
+        "(kg*m)/s^2",
+        "s-1",
+    ]
+    for expr in exprs:
+        result = parse_unit_string(expr, CompoundUnit)
+        assert result is not None, f"Failed to parse: {expr}"
+
+    if not sympy_was_loaded:
+        assert "sympy" not in sys.modules, (
+            "sympy was loaded while parsing standard unit strings"
+        )
