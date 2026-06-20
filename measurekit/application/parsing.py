@@ -1,54 +1,71 @@
 # measurekit/application/parsing.py
-"""Lexical analyzer for scientific notations."""
+"""Unit string parsing — native parser first, SymPy fallback."""
 
 from __future__ import annotations
 
 import functools
+import re
 from typing import TypeVar
 
+from measurekit.domain.notation.lexer import generate_tokens
+from measurekit.domain.notation.parsers import NotationParser
 from measurekit.domain.notation.protocols import ExponentEntityProtocol
 
 T = TypeVar("T", bound=ExponentEntityProtocol)
 
-# Singleton parser instance, loaded lazily
-_PARSER = None
+# Handles implicit multiplication: "m s" -> "m*s"
+_IMPLICIT_MUL = re.compile(r"(?<=[a-zA-Z0-9)])\s+(?=[a-zA-Z0-9(])")
+
+# Singleton SymPy parser, loaded lazily only when native parser fails
+_SYMPY_PARSER = None
 
 
-def _get_parser():
-    global _PARSER
-    if _PARSER is None:
-        from measurekit.core.parsing.sympy_parser import SymPyUnitParser
+def _get_sympy_parser():
+    global _SYMPY_PARSER
+    if _SYMPY_PARSER is None:
+        try:
+            from measurekit.core.parsing.sympy_parser import SymPyUnitParser
 
-        _PARSER = SymPyUnitParser()
-    return _PARSER
+            _SYMPY_PARSER = SymPyUnitParser()
+        except ImportError as e:
+            raise ImportError(
+                "sympy is required to parse this unit expression. "
+                "Install it with: pip install measurekit[symbolic]"
+            ) from e
+    return _SYMPY_PARSER
+
+
+def _native_parse(expression: str, entity_cls: type[T]) -> T:
+    """Parse using the pure-Python NotationParser (no sympy)."""
+    expr = expression.strip()
+    expr = expr.replace("°", "deg")
+    expr = _IMPLICIT_MUL.sub("*", expr)
+    tokens = generate_tokens(expr)
+    parser = NotationParser(tokens, entity_cls)
+    return parser.parse()
 
 
 @functools.lru_cache(maxsize=2048)
 def parse_unit_string(expression: str, entity_cls: type[T]) -> T:
-    """Parses a unit or dimension string into the target entity class.
+    """Parse a unit or dimension string into the target entity class.
 
-    This function uses simple memoization to avoid redundant processing.
-    It delegates to the SymPy-based engine.
-
-    Args:
-        expression: The unit/dimension string to parse.
-        entity_cls: The class to instantiate (e.g., CompoundUnit, Dimension).
-
-    Returns:
-        An instance of entity_cls.
+    Tries the native recursive-descent parser first (no dependencies).
+    Falls back to the SymPy-based parser for complex expressions.
     """
-    # 1. Parse into CompoundUnit using SymPy engine
+    # Fast path: native parser, zero deps
     try:
-        # returns CompoundUnit (which has .exponents)
-        compound_unit = _get_parser().parse(expression)
+        return _native_parse(expression, entity_cls)
+    except Exception:
+        pass
+
+    # Slow path: SymPy parser (requires sympy installed)
+    try:
+        compound_unit = _get_sympy_parser().parse(expression)
+    except ImportError:
+        raise
     except Exception as e:
-        # Wrap as ValueError for API compatibility (legacy)
         raise ValueError(f"Parsing failed: {e}") from e
 
-    # 2. Convert to the requested entity class if necessary
-    # If the caller requested exactly CompoundUnit, we are done.
     if issubclass(entity_cls, type(compound_unit)):
-        return compound_unit  # type: ignore
-
-    # Otherwise, assume entity_cls accepts exponents dict (Protocol check)
+        return compound_unit  # type: ignore[return-value]
     return entity_cls(compound_unit.exponents)

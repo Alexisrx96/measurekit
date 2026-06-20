@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sympy as sp
+from typing import Any
 
 # We need the concrete class to instantiate it
 from measurekit.domain.measurement.units import CompoundUnit
@@ -17,7 +17,7 @@ class UnitParsingError(ValueError):
 class SymPyTransformer:
     """Transforms a SymPy expression into a CompoundUnit."""
 
-    def transform(self, expr: sp.Expr) -> CompoundUnit:
+    def transform(self, expr: Any) -> CompoundUnit:
         """Recursively transforms a SymPy AST into a CompoundUnit.
 
         Args:
@@ -29,6 +29,8 @@ class SymPyTransformer:
         Raises:
             UnitParsingError: If the expression contains unsupported operations.
         """
+        import sympy as sp  # noqa: PLC0415
+
         # 1. Base Case: Symbol -> Unit
         if isinstance(expr, sp.Symbol):
             # sp.Symbol name is the unit string

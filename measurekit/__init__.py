@@ -102,7 +102,12 @@ def __getattr__(name: str) -> Any:
 
         return get_unit
 
-    if name in ("ConversionError", "MeasureKitError", "UnitNotFoundError", "UnknownUnitError"):
+    if name in (
+        "ConversionError",
+        "MeasureKitError",
+        "UnitNotFoundError",
+        "UnknownUnitError",
+    ):
         import measurekit.domain.exceptions as exc
 
         return getattr(exc, name)
