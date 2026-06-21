@@ -401,21 +401,19 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         # Core Mode Integration
         mode, mode_args = cls._resolve_uncertainty_mode()
 
-        if IS_CORE_AVAILABLE and (
-            ("CoreQuantity" in str(type(value)))
-            or (mode != "python" or mode_args)
+        if IS_CORE_AVAILABLE and "CoreQuantity" not in str(type(value)) and (
+            mode != "python" or mode_args
         ):
-            if "CoreQuantity" not in str(type(value)):
-                r_unit = _ensure_rational(unit)
-                std_dev = getattr(uncertainty, "std_dev", uncertainty)
-                # Create core magnitude
-                value = CoreQuantity(
-                    float(value),
-                    r_unit,
-                    float(std_dev or 0.0),
-                    mode,
-                    **mode_args,
-                )
+            r_unit = _ensure_rational(unit)
+            std_dev = getattr(uncertainty, "std_dev", uncertainty)
+            # Create core magnitude
+            value = CoreQuantity(
+                float(value),
+                r_unit,
+                float(std_dev or 0.0),
+                mode,
+                **mode_args,
+            )
 
         # Extract raw standard deviation if it's a rich model
         raw_uncertainty = getattr(uncertainty, "std_dev", uncertainty)
