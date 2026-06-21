@@ -72,7 +72,6 @@ def _load_all_configurations_into(
             "[WARNING] Could not locate built-in library configuration files."
         )
         # Continue to check for user config even if library defaults fail
-        pass
 
     # 3. Add the user's override configuration file (High Priority)
     # Check the Current Working Directory (CWD), which is typically the

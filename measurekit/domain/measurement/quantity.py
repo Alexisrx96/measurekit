@@ -246,7 +246,7 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
                 ):
                     _torch._dynamo.mark_static(self, "unit")
                     _torch._dynamo.mark_static(self, "_unit")
-            except (ImportError, AttributeError, Exception):
+            except Exception:
                 pass
 
     def __post_init__(self):
@@ -508,19 +508,6 @@ class Quantity(ArithmeticMixin, BackendMixin, CoreQuantity, Generic[ValueType, U
         out = func(*args_unwrapped, **kwargs_unwrapped)
 
         def wrap(x):
-            if isinstance(x, torch.Tensor):
-                # We need to decide what unit to wrap with.
-                # This is the hard part of __torch_dispatch__ without Unit Propagation logic here.
-                # Phase 2 solution: The 'Quantity' object evaporates.
-                # But if we must return a Quantity, we risk losing unit info if we don't propagate it.
-                # For this refactor, we assume the operation preserves units or we rely on metadata
-                # side-channel?
-                # Actually, relying on Rust 'CoreQuantity' for arithmetic avoids this
-                # because CoreQuantity DOES propagation.
-                # __torch_dispatch__ is mainly for when we pass Quantities to torch.* functions.
-                # If we do that, we return Raw Tensors (stripping units).
-                # This seems to be the only safe default without reimplementing full logic here.
-                return x
             return x
 
         return torch.utils._pytree.tree_map(wrap, out)
