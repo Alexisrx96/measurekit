@@ -235,6 +235,10 @@ class CovarianceStore:
         """Casts val to float64; also re-densifies any sparse result."""
         if self.backend.__class__.__name__ == "TorchBackend":
             import torch
+
+            if not isinstance(val, torch.Tensor):
+                # Scalar jacobians arrive as numpy arrays
+                val = torch.as_tensor(val)
             if val.dtype != torch.float64:
                 val = val.to(torch.float64)
             return val
@@ -255,7 +259,11 @@ class CovarianceStore:
         """Full pipeline: densify → to numpy/tensor → broadcast → float64."""
         val = self._densify_sparse(jac)
         val = self._to_numpy_or_tensor(val)
-        if not isinstance(val, (np.ndarray, np.generic)):
+        if not isinstance(
+            val, (np.ndarray, np.generic)
+        ) and not self.backend.is_array(val):
+            # Wrap plain scalars; backend arrays (torch tensors) must
+            # pass through untouched or autograd gradients are lost.
             val = np.array(val)
         val = self._broadcast_jacobian(val, out_size, in_size)
         return self._ensure_float64_jac(val)
