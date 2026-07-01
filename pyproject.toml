@@ -79,6 +79,9 @@ docs = [
 [tool.hatch.build.targets.wheel]
 packages = ["measurekit"]
 
+[tool.hatch.build]
+ignore-vcs = true
+
 [tool.uv]
 managed = true
 
