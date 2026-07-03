@@ -5,6 +5,9 @@ description: Cut a PyPI release of measurekit and measurekit-core. Use when aske
 
 # Cutting a release
 
+**Version bumps happen only here.** Feature/fix PRs never change `__version__`
+or the `Cargo.toml` version — the bump is part of the release itself.
+
 Releases are fully automated by `.github/workflows/release.yml`: pushing a tag
 `vX.Y.Z` builds and publishes **both** packages (`measurekit` pure wheel + sdist,
 `measurekit-core` abi3-py310 wheels + sdist) to PyPI via Trusted Publishing
