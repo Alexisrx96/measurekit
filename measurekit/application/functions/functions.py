@@ -57,42 +57,42 @@ class Function:
         # 'torch' requires explicit module usually for older sympy, but modern sympy supports it?
         # Sympy 1.12+ supports 'torch' often via 'numpy' or mapped modules.
         # Let's pass it through.
-        callable_func = None
-        if (
-            HAVE_SYMENGINE
-            and self.backend in ("numpy", "math")
-            and sorted_symbols
-        ):
-            try:
-                import numpy as np
-
-                se_symbols = [se.Symbol(s.name) for s in sorted_symbols]
-                se_expr = se.sympify(self.symbolic_func)
-                se_func = se.lambdify(se_symbols, [se_expr])
-
-                def symengine_wrapped_func(*args):
-                    is_any_array = False
-                    for a in args:
-                        if isinstance(a, np.ndarray):
-                            is_any_array = True
-                            break
-                    if is_any_array:
-                        broadcasted = np.broadcast_arrays(*args)
-                        stacked = np.stack(broadcasted, axis=-1)
-                        return se_func(stacked)
-                    else:
-                        res = se_func(args)
-                        return res.item() if res.ndim == 0 else res
-
-                callable_func = symengine_wrapped_func
-            except Exception:
-                pass
+        callable_func = self._compile_symengine(sorted_symbols)
 
         if callable_func is None:
             callable_func = sp.lambdify(
                 sorted_symbols, self.symbolic_func, self.backend
             )
         object.__setattr__(self, "numeric_func", callable_func)
+
+    def _compile_symengine(self, sorted_symbols) -> Callable[..., Any] | None:
+        """Helper to compile numeric function using SymEngine if available and supported."""
+        if not (
+            HAVE_SYMENGINE
+            and self.backend in ("numpy", "math")
+            and sorted_symbols
+        ):
+            return None
+        try:
+            import numpy as np
+
+            se_symbols = [se.Symbol(s.name) for s in sorted_symbols]
+            se_expr = se.sympify(self.symbolic_func)
+            se_func = se.lambdify(se_symbols, [se_expr])
+
+            def symengine_wrapped_func(*args):
+                is_any_array = any(isinstance(a, np.ndarray) for a in args)
+                if is_any_array:
+                    broadcasted = np.broadcast_arrays(*args)
+                    stacked = np.stack(broadcasted, axis=-1)
+                    return se_func(stacked)
+                else:
+                    res = se_func(args)
+                    return res.item() if res.ndim == 0 else res
+
+            return symengine_wrapped_func
+        except Exception:
+            return None
 
     def __call__(
         self, output_unit: CompoundUnit | str, **kwargs: Quantity

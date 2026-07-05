@@ -4,6 +4,8 @@
 import os
 
 _STUB_ELLIPSIS = "        ...\n"
+_HEADER_EDIT_WARNING = "# AUTO-GENERATED FILE. DO NOT EDIT.\n"
+_HEADER_SYNC_WARNING = "# Run 'measurekit sync-types' to update.\n\n"
 
 from measurekit.domain.measurement.units import units  # noqa: E402
 
@@ -29,8 +31,8 @@ def generate():
     )
 
     with open(generated_types_path, "w", encoding="utf-8") as f:
-        f.write("# AUTO-GENERATED FILE. DO NOT EDIT.\n")
-        f.write("# Run 'measurekit sync-types' to update.\n\n")
+        f.write(_HEADER_EDIT_WARNING)
+        f.write(_HEADER_SYNC_WARNING)
         f.write("from typing import Literal, Union\n\n")
         f.write(f"UnitName = {literal_type}\n")
 
@@ -40,8 +42,8 @@ def generate():
     )
 
     with open(registry_stub_path, "w", encoding="utf-8") as f:
-        f.write("# AUTO-GENERATED FILE. DO NOT EDIT.\n")
-        f.write("# Run 'measurekit sync-types' to update.\n\n")
+        f.write(_HEADER_EDIT_WARNING)
+        f.write(_HEADER_SYNC_WARNING)
         f.write("from typing import Any\n")
         f.write("from measurekit.domain.measurement.units import Unit\n\n")
         f.write("class UnitRegistry:\n")
@@ -69,8 +71,8 @@ def generate():
     )
 
     with open(units_stub_path, "w", encoding="utf-8") as f:
-        f.write("# AUTO-GENERATED FILE. DO NOT EDIT.\n")
-        f.write("# Run 'measurekit sync-types' to update.\n\n")
+        f.write(_HEADER_EDIT_WARNING)
+        f.write(_HEADER_SYNC_WARNING)
         f.write(
             "from measurekit.domain.measurement.units import CompoundUnit\n\n"
         )
