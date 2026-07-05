@@ -63,6 +63,21 @@ def generate():
         f.write("    def available_units(self) -> list[str]:\n")
         f.write(_STUB_ELLIPSIS)
 
+    # 3. Generate Stub for units module (__init__.pyi)
+    units_stub_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "units", "__init__.pyi"
+    )
+
+    with open(units_stub_path, "w", encoding="utf-8") as f:
+        f.write("# AUTO-GENERATED FILE. DO NOT EDIT.\n")
+        f.write("# Run 'measurekit sync-types' to update.\n\n")
+        f.write(
+            "from measurekit.domain.measurement.units import CompoundUnit\n\n"
+        )
+        f.write("UNIT_INDEX: dict[str, str]\n\n")
+        for name in names:
+            f.write(f"{name}: CompoundUnit\n")
+
 
 if __name__ == "__main__":
     generate()
