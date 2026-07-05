@@ -38,6 +38,34 @@ def _q():
 class ArithmeticMixin:
     """Arithmetic operators, uncertainty propagation, and transcendentals."""
 
+    if TYPE_CHECKING:
+        _core_magnitude: Any
+        unit: CompoundUnit
+        dimension: Dimension
+        system: Any
+        magnitude: Any
+        uncertainty: Uncertainty | None
+        _backend: Any
+        _uncertainty_obj: Any
+
+        @classmethod
+        def _fast_new(
+            cls,
+            magnitude: Any,
+            unit: CompoundUnit,
+            uncertainty: Any = None,
+            system: Any = None,
+        ) -> Quantity: ...
+
+        @classmethod
+        def from_input(
+            cls,
+            magnitude: Any,
+            unit: CompoundUnit,
+            uncertainty: Any = None,
+            system: Any = None,
+        ) -> Quantity: ...
+
     # ------------------------------------------------------------------
     # Private helpers shared across arithmetic operators
     # ------------------------------------------------------------------
