@@ -45,9 +45,11 @@ class FunctionalState:
             # We need a backend to init store?
             # We defer until first usage or require a backend.
             # Assuming numpy for default if totally empty
-            from measurekit.backends.numpy_backend import NumpyBackend
+            from measurekit.core.dispatcher import BackendManager
 
-            store = CovarianceStore(backend=NumpyBackend())
+            store = CovarianceStore(
+                backend=BackendManager.get_backend(object())
+            )
 
         self.store = store
         # If matrix is provided, it overrides the store's internal matrix
@@ -169,6 +171,10 @@ def _apply_affine(
 ) -> tuple[Quantity, FunctionalState]:
     """Helper for affine operations."""
     backend = state.store.backend
+    if backend is None:
+        raise ValueError(
+            "FunctionalState's CovarianceStore has no backend set."
+        )
 
     # 1. Register inputs in state
     slc_a, mat_1 = state.ensure_registered(a)

@@ -1,4 +1,7 @@
+from types import ModuleType
 from typing import Any
+
+import sympy as sp
 
 from measurekit.domain.symbolic.graph import (
     LeafNode,
@@ -8,19 +11,23 @@ from measurekit.domain.symbolic.graph import (
 )
 
 
-def _translate_leaf(node: LeafNode, sympy: Any) -> Any:
+def _translate_leaf(node: LeafNode, sympy: ModuleType) -> sp.Symbol:
     """Translates a LeafNode to a SymPy Symbol."""
     return sympy.Symbol(node.symbol)
 
 
-def _translate_literal(node: LiteralNode, sympy: Any) -> Any:
+def _translate_literal(node: LiteralNode, sympy: ModuleType) -> sp.Expr | Any:
     """Translates a LiteralNode to a SymPy number or raw value."""
+    # ponytail: LiteralNode.value is Any by design (the AST accepts
+    # arbitrary literal payloads); passthrough here is genuinely dynamic.
     if isinstance(node.value, (int, float)):
         return sympy.core.numbers.Number(node.value)
     return node.value
 
 
-def _translate_op(node: OpNode, args: list, sympy: Any) -> Any:
+def _translate_op(
+    node: OpNode, args: list[sp.Expr], sympy: ModuleType
+) -> sp.Expr | None:
     """Translates an OpNode to its SymPy equivalent."""
     op = node.op_name
     if op == "add":
@@ -50,7 +57,7 @@ class SympyTranslator:
     """
 
     @classmethod
-    def translate(cls, node: SymbolicNode) -> Any:
+    def translate(cls, node: SymbolicNode) -> sp.Expr:
         """Recursively converts a node tree to a SymPy expression."""
         import sympy
 

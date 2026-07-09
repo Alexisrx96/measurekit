@@ -21,15 +21,16 @@ from typing import (
     Generic,
     TypeVar,
     cast,
-    overload,
 )
 
 from measurekit.core.dispatcher import BackendManager
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
     from typing_extensions import Self
 
-    from measurekit.core.protocols import BackendOps
+    from measurekit.core.protocols import BackendOps, Numeric
     from measurekit.domain.measurement.dimensions import Dimension
 
 from measurekit.domain.exceptions import IncompatibleUnitsError
@@ -70,14 +71,15 @@ if TYPE_CHECKING:
 ValueType = TypeVar("ValueType")
 UncType = TypeVar("UncType")
 UnitType = TypeVar("UnitType")  # Phantom type for units
-Numeric = Any  # Ideally strictly typed via protocols, but simplified for now
 
 
 try:
     # Force Python CoreQuantity for Dynamo compatibility (Zero-Overhead).
     # Rust extension is opaque to Dynamo key-introspections.
     raise ImportError("Force Python Fallback for Dynamo")
-    from measurekit_core import Quantity as CoreQuantity
+    from measurekit_core import (  # pyright: ignore[reportUnreachable]
+        Quantity as CoreQuantity,
+    )
 
     IS_CORE_AVAILABLE = True
 
@@ -89,7 +91,18 @@ except ImportError:
     class CoreQuantity:
         """Pure-Python stand-in when measurekit_core is unavailable."""
 
-        def __new__(cls, magnitude, unit, uncertainty, *args, **kwargs):
+        # ponytail: this class exists only as a drop-in stand-in for the
+        # Rust extension type (measurekit_core, an exempt adapter boundary)
+        # when the compiled core is unavailable, so it mirrors that type's
+        # dynamic constructor exactly.
+        def __new__(
+            cls,
+            magnitude: Numeric,
+            unit: CompoundUnit,
+            uncertainty: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+            *args: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+            **kwargs: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+        ) -> Self:
             """Stores magnitude/unit/uncertainty on the instance."""
             obj = super().__new__(cls)
             object.__setattr__(obj, "_core_magnitude", magnitude)
@@ -98,22 +111,22 @@ except ImportError:
             return obj
 
         @property
-        def magnitude(self):
+        def magnitude(self) -> Numeric:
             """Returns the stored magnitude."""
-            val = self._core_magnitude
+            val: Any = self._core_magnitude  # pyright: ignore[reportAny, reportExplicitAny]
             if _CORE_QUANTITY_TYPE in str(type(val)):
                 return val.magnitude
             return val
 
         @property
-        def unit(self):
+        def unit(self) -> CompoundUnit:
             """Returns the stored unit."""
             return self._core_unit
 
         @property
-        def std_dev(self):
+        def std_dev(self) -> Any:  # pyright: ignore[reportExplicitAny]
             """Returns the stored uncertainty."""
-            val = self._core_magnitude
+            val: Any = self._core_magnitude  # pyright: ignore[reportAny, reportExplicitAny]
             if _CORE_QUANTITY_TYPE in str(type(val)):
                 return val.std_dev
             return self._core_uncertainty
@@ -160,7 +173,17 @@ class Quantity(
 
     __array_priority__ = 1000.0
 
-    def __new__(cls, magnitude, unit, *args, **kwargs):
+    # ponytail: unit/args/kwargs mirror the Rust extension constructor's
+    # flexible signature (unit may arrive as str/CompoundUnit/RationalUnit;
+    # args/kwargs carry optional uncertainty) — same rationale as
+    # CoreQuantity.__new__ above.
+    def __new__(
+        cls,
+        magnitude: Numeric,
+        unit: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+        *args: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+        **kwargs: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+    ) -> Self:
         """Ensures the core object is initialized with a RationalUnit."""
         r_unit = _ensure_rational(unit)
 
@@ -190,7 +213,7 @@ class Quantity(
             cls, magnitude, _CoreRationalUnit(dims), raw_uncertainty
         )
 
-    def __reduce__(self):
+    def __reduce__(self) -> str | tuple[Any, ...]:
         """Custom reduce to ensuring proper subclass reconstruction."""
         # Use Rust's implementation for args and state
         res = super().__reduce__()
@@ -199,9 +222,16 @@ class Quantity(
             return (self.__class__, *res[1:])
         return res
 
-    magnitude: ValueType
-    unit: CompoundUnit
-    uncertainty: Any = 0.0
+    # ponytail: these dataclass field annotations exist for
+    # dataclasses.fields()/repr/eq introspection only. __init__ is
+    # hand-written below and never assigns them directly — reads resolve
+    # through the @property redefinitions further down (or, for
+    # `magnitude`, the CoreQuantity property). basedpyright's override/
+    # redeclaration checks assume plain-attribute semantics, which is a
+    # false positive for this dataclass-field-as-property-facade pattern.
+    magnitude: ValueType  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
+    unit: CompoundUnit  # pyright: ignore[reportRedeclaration]
+    uncertainty: Any = 0.0  # pyright: ignore[reportRedeclaration, reportAssignmentType]
     system: UnitSystem = field(default_factory=get_default_system)
     symbol: str | None = None
     _uncertainty_obj: Any = field(default=None, repr=False, compare=False)
@@ -209,15 +239,19 @@ class Quantity(
     _backend: BackendOps = field(init=False, repr=False)
     __weakref__: Any = field(init=False, repr=False, compare=False)
 
-    def __init__(
+    # ponytail: __new__ takes *args/**kwargs to interoperate with the Rust
+    # CoreQuantity constructor; __init__ has the explicit dataclass-style
+    # signature. Both are intentional, but basedpyright expects the two to
+    # match parameter-for-parameter.
+    def __init__(  # pyright: ignore[reportInconsistentConstructor]
         self,
-        magnitude: Any = None,
+        magnitude: Numeric | None = None,
         unit: Any = None,
         uncertainty: Any = None,
         system: UnitSystem | None = None,
         symbol: str | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+    ) -> None:
         """Initializes the entity, ignoring magnitude and unit if already set by core."""
         # Reconstruct CompoundUnit wrapper ensuring we hit the Python-side Flyweight cache
         import measurekit.domain.measurement.units as units_module
@@ -267,12 +301,22 @@ class Quantity(
                 # torch._dynamo, while hasattr(_torch, "_dynamo") triggers a
                 # ~1s lazy import. If we are compiling, _dynamo is loaded.
                 if _torch.compiler.is_compiling():
-                    _torch._dynamo.mark_static(self, "unit")
-                    _torch._dynamo.mark_static(self, "_unit")
+                    # ponytail: mark_static's attribute-name overload (for
+                    # marking a non-tensor object attribute static) isn't
+                    # reflected in the bundled torch type stubs, which only
+                    # type `index` as int/list/tuple/None.
+                    _torch._dynamo.mark_static(
+                        self,
+                        "unit",  # pyright: ignore[reportArgumentType]
+                    )
+                    _torch._dynamo.mark_static(
+                        self,
+                        "_unit",  # pyright: ignore[reportArgumentType]
+                    )
             except Exception:
                 pass
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Calculates derived fields after the object is initialized."""
         # Ensure we can call unit.dimension()
         unit = self.unit
@@ -297,7 +341,7 @@ class Quantity(
 
     def tree_flatten(
         self,
-    ) -> tuple[tuple[Any, Any], tuple[Any, Any, Any, Any]]:
+    ) -> tuple[tuple[Any, Any], tuple[Any, Any, Any]]:
         """Flattens the Quantity for JAX Pytree registration."""
         mag = self.magnitude
         unc = self.uncertainty
@@ -357,7 +401,7 @@ class Quantity(
         new_unit = system.get_unit(str(self.unit))
 
         return self._fast_new(
-            self.magnitude,
+            cast("Numeric", self.magnitude),
             new_unit,
             self.std_dev,
             system,
@@ -371,17 +415,6 @@ class Quantity(
         new_unit = self.unit.simplify(self.system)
         return self.to(new_unit)
 
-    @overload
-    @classmethod
-    def from_input(
-        cls,
-        value: Any,
-        unit: CompoundUnit,
-        system: UnitSystem,
-        uncertainty: Any = 0.0,
-        symbol: str | None = None,
-    ) -> Quantity[Any, Any, Any]: ...
-
     @classmethod
     def from_input(
         cls,
@@ -392,9 +425,7 @@ class Quantity(
         symbol: str | None = None,
     ) -> Self:
         """Creates a Quantity from raw input values."""
-        resolved_system = (
-            system if system is not None else get_default_system()
-        )
+        resolved_system = system
 
         backend = BackendManager.get_backend(value)
 
@@ -437,7 +468,7 @@ class Quantity(
             u_obj = Uncertainty.from_standard(uncertainty)
 
         return cls(
-            magnitude=cast("ValueType", value),
+            magnitude=cast("Numeric", value),
             unit=unit,
             uncertainty=raw_uncertainty,
             system=resolved_system,
@@ -516,7 +547,7 @@ class Quantity(
     @classmethod
     def _fast_new(
         cls,
-        value: ValueType,
+        value: Numeric,
         unit: CompoundUnit,
         uncertainty: Any,
         system: UnitSystem,
@@ -536,13 +567,22 @@ class Quantity(
             symbol=symbol,
         )
 
+    # ponytail: torch's __torch_dispatch__ protocol is Any-typed upstream
+    # (OpOverload/overload-packet dispatch args); nothing here can recover
+    # concrete types torch itself doesn't expose.
     @classmethod
-    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+    def __torch_dispatch__(
+        cls,
+        func: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+        types: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+        args: tuple[Any, ...] = (),  # pyright: ignore[reportExplicitAny]
+        kwargs: dict[str, Any] | None = None,  # pyright: ignore[reportExplicitAny]
+    ) -> Any:  # pyright: ignore[reportExplicitAny]
         """Deep PyTorch integration for zero-overhead compilation."""
         if kwargs is None:
             kwargs = {}
 
-        def unwrap(x):
+        def unwrap(x: Any) -> Any:  # pyright: ignore[reportExplicitAny]
             if isinstance(x, Quantity):
                 # For torch dispatch, we act on the magnitude (Tensor)
                 # We essentially strip the unit for the operation
@@ -558,7 +598,7 @@ class Quantity(
 
         out = func(*args_unwrapped, **kwargs_unwrapped)
 
-        def wrap(x):
+        def wrap(x: Any) -> Any:  # pyright: ignore[reportExplicitAny]
             return x
 
         return torch.utils._pytree.tree_map(wrap, out)
@@ -598,6 +638,10 @@ class Quantity(
                 from measurekit.application.startup import create_system
 
                 sys = create_system(f"{system_name.lower()}.conf")
+                if unit is None:
+                    raise ValueError(
+                        f"No se puede validar Quantity desde {type(value)}"
+                    )
                 u = sys.get_unit(unit)
                 return Quantity.from_input(mag, u, sys)
             raise ValueError(
@@ -808,7 +852,7 @@ class Quantity(
             )
         return f"{self.magnitude} \\; {unit_latex}"
 
-    def _repr_latex_(self):
+    def _repr_latex_(self) -> str:
         """Returns LaTeX for Jupyter notebooks."""
         return f"${self.to_latex()}$"
 
@@ -829,7 +873,12 @@ class Quantity(
             f"</span>"
         )
 
-    def _repr_mimebundle_(self, include=None, exclude=None, **kwargs) -> dict:
+    def _repr_mimebundle_(
+        self,
+        include=None,
+        exclude=None,
+        **kwargs,  # pyright: ignore[reportUnusedParameter]
+    ) -> dict:
         """MIME bundle for Jupyter — lets the frontend pick the best format."""
         bundle = {
             "text/plain": repr(self),
@@ -897,7 +946,9 @@ class Quantity(
             return "gaussian"
 
     @property
-    def uncertainty(self) -> Any:  # noqa: F811
+    def uncertainty(  # noqa: F811  # pyright: ignore[reportIncompatibleVariableOverride]
+        self,
+    ) -> Numeric:
         """Returns the standard deviation of the uncertainty."""
         # Source of truth: Rust Core std_dev
         try:
@@ -906,7 +957,9 @@ class Quantity(
             return 0.0
 
     @property
-    def unit(self) -> Any:
+    def unit(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self,
+    ) -> CompoundUnit:
         """Retrieves the unit of the quantity as a CompoundUnit."""
         # Zero-Overhead: Return stored attribute directly.
         # This bypasses super() calls and dynamic checks that break torch.compile graphs.
@@ -943,7 +996,7 @@ class Quantity(
     def _convert_via_converters(
         self,
         target_unit: CompoundUnit,
-    ) -> Quantity[ValueType, UncType] | None:
+    ) -> Quantity[ValueType, UncType, UnitType] | None:
         """Converts using unit-specific converters when both units are simple.
 
         Returns a converted Quantity, or None if this path does not apply.
@@ -975,21 +1028,25 @@ class Quantity(
         ):
             return None
 
-        base_val = source_def.converter.to_base(self.magnitude)
+        base_val = source_def.converter.to_base(
+            self.magnitude  # pyright: ignore[reportArgumentType]
+        )
         new_magnitude = target_def.converter.from_base(base_val)
 
         # Chain rule: d(new)/d(old) = from_base'(base) * to_base'(old).
         # Exact for linear/offset units and correct for nonlinear (log)
         # units, where a plain scale ratio would be wrong.
         jac = self._backend.mul(
-            source_def.converter.to_base_derivative(self.magnitude),
+            source_def.converter.to_base_derivative(
+                self.magnitude  # pyright: ignore[reportArgumentType]
+            ),
             target_def.converter.from_base_derivative(base_val),
         )
         new_uncertainty = self._backend.mul(
             self.uncertainty, self._backend.abs(jac)
         )
         return cast(
-            "Quantity[ValueType, UncType]",
+            "Quantity[ValueType, UncType, UnitType]",
             Quantity.from_input(
                 new_magnitude,
                 target_unit,
@@ -998,12 +1055,64 @@ class Quantity(
             ),
         )
 
+    def plot(
+        self,
+        x: Any = None,
+        kind: str | None = None,
+        ax: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Aesthetic plotting of this physical quantity.
+
+        Imports `measurekit.plotting` dynamically to preserve startup time.
+        """
+        from measurekit.plotting import plot
+
+        return plot(self, x=x, kind=kind, ax=ax, **kwargs)
+
+    def plot_slices(
+        self,
+        slice_dim: int = 0,
+        num_slices: int = 4,
+        cmap: str = "plasma",
+        **kwargs: Any,
+    ) -> Any:
+        """Plots multiple 2D slice grids of a 3D+ Quantity for N-D field visualization."""
+        from measurekit.plotting import plot_slices
+
+        return plot_slices(
+            self,
+            slice_dim=slice_dim,
+            num_slices=num_slices,
+            cmap=cmap,
+            **kwargs,
+        )
+
+    def plot_interactive(
+        self,
+        slice_dims: list[int] | int = 0,
+        cmap: str = "plasma",
+        **kwargs: Any,
+    ) -> Any:
+        """Creates an interactive GUI plot with sliders to scrub through N-D dimensions."""
+        from measurekit.plotting import plot_interactive
+
+        return plot_interactive(
+            self, slice_dims=slice_dims, cmap=cmap, **kwargs
+        )
+
+    def plot_covariance(self, ax: Any = None, **kwargs: Any) -> Any:
+        """Plots the covariance/correlation matrix of this Quantity if available."""
+        from measurekit.plotting import plot_covariance
+
+        return plot_covariance(self, ax=ax, **kwargs)
+
     def to(
         self,
         target_unit: CompoundUnit | UnitName,
         *,
         equivalencies: Any = None,
-    ) -> Quantity[ValueType, UncType]:
+    ) -> Quantity[ValueType, UncType, UnitType]:
         """Converts the quantity to a different unit or moves to a device.
 
         Examples:
@@ -1040,13 +1149,16 @@ class Quantity(
         )
 
         # Using backend for multiplication
-        new_value = self._backend.mul(self.magnitude, conversion_factor)
+        new_value = self._backend.mul(
+            self.magnitude,  # pyright: ignore[reportArgumentType]
+            conversion_factor,
+        )
         new_uncertainty = self._backend.mul(
             self.uncertainty, conversion_factor
         )
 
         return cast(
-            "Quantity[ValueType, UncType]",
+            "Quantity[ValueType, UncType, UnitType]",
             Quantity.from_input(
                 new_value,
                 target_unit,
@@ -1080,7 +1192,7 @@ class Quantity(
 
     def _convert_via_equivalencies(
         self, target_unit: Any, equivalencies: Any
-    ) -> Quantity[ValueType, UncType]:
+    ) -> Quantity[ValueType, UncType, UnitType]:
         """Cross-dimension conversion through active/passed equivalencies."""
         from measurekit.domain.measurement.equivalencies import (
             _ACTIVE_EQUIVALENCIES,
@@ -1127,13 +1239,21 @@ class Quantity(
         )
         return target_base.to(target_unit)
 
+    # ponytail: ValueType is an unbound TypeVar (numpy/torch/jax array or
+    # plain scalar), so basedpyright can't prove `magnitude` satisfies
+    # int()/round()/math.floor()/etc.'s protocols. These dunders are only
+    # meaningful for scalar magnitudes; array-backed ones fail at runtime
+    # with a clear TypeError from the builtin itself, which is acceptable.
     def __int__(self) -> int:
         """Converts to int."""
-        return int(self.magnitude)
+        return int(self.magnitude)  # pyright: ignore[reportArgumentType]
 
     def __round__(self, ndigits: int | None = None) -> Quantity:
         """Rounds the quantity."""
-        val = round(self.magnitude, ndigits)
+        val = round(  # pyright: ignore[reportCallIssue]
+            self.magnitude,  # pyright: ignore[reportArgumentType]
+            ndigits,  # pyright: ignore[reportArgumentType]
+        )
         return Quantity.from_input(
             val, self.unit, self.system, self.uncertainty
         )
@@ -1141,7 +1261,9 @@ class Quantity(
     def __floor__(self) -> Quantity:
         """Returns floor of quantity."""
         return Quantity.from_input(
-            math.floor(self.magnitude),
+            math.floor(  # pyright: ignore[reportCallIssue]
+                self.magnitude  # pyright: ignore[reportArgumentType]
+            ),
             self.unit,
             self.system,
             self.uncertainty,
@@ -1150,13 +1272,18 @@ class Quantity(
     def __ceil__(self) -> Quantity:
         """Returns ceiling of quantity."""
         return Quantity.from_input(
-            math.ceil(self.magnitude), self.unit, self.system, self.uncertainty
+            math.ceil(  # pyright: ignore[reportCallIssue]
+                self.magnitude  # pyright: ignore[reportArgumentType]
+            ),
+            self.unit,
+            self.system,
+            self.uncertainty,
         )
 
     def __trunc__(self) -> Quantity:
         """Truncates quantity."""
         return Quantity.from_input(
-            math.trunc(self.magnitude),
+            math.trunc(self.magnitude),  # pyright: ignore[reportArgumentType]
             self.unit,
             self.system,
             self.uncertainty,
@@ -1179,27 +1306,44 @@ class Quantity(
             return self.magnitude
 
     def __float__(self) -> float:
-        """Converts to float."""
-        return float(self.magnitude)  # May fail for arrays
+        """Converts to float. May fail for arrays."""
+        return float(self.magnitude)  # pyright: ignore[reportArgumentType]
 
     # --- Math & Vector Ops ---
 
     def dot(self, other: Quantity) -> Quantity:
         """Computes dot product."""
-        if not isinstance(other, Quantity):
-            raise TypeError(f"dot requires Quantity, got {type(other)}")
+        # ponytail: defensive runtime guard against duck-typed callers that
+        # bypass the static type hint; basedpyright sees `other: Quantity`
+        # as already-narrowed, so it flags this as unreachable/unnecessary.
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            other, Quantity
+        ):
+            raise TypeError(  # pyright: ignore[reportUnreachable]
+                f"dot requires Quantity, got {type(other)}"
+            )
 
-        mag = self._backend.dot(self.magnitude, other.magnitude)
+        mag = self._backend.dot(
+            self.magnitude,  # pyright: ignore[reportArgumentType]
+            other.magnitude,
+        )
         new_unit = self.unit * other.unit
         # Uncertainty ignored for now
         return Quantity.from_input(mag, new_unit, self.system)
 
     def cross(self, other: Quantity) -> Quantity:
         """Computes cross product."""
-        if not isinstance(other, Quantity):
-            raise TypeError(f"cross requires Quantity, got {type(other)}")
+        if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            other, Quantity
+        ):
+            raise TypeError(  # pyright: ignore[reportUnreachable]
+                f"cross requires Quantity, got {type(other)}"
+            )
 
-        mag = self._backend.cross(self.magnitude, other.magnitude)
+        mag = self._backend.cross(
+            self.magnitude,  # pyright: ignore[reportArgumentType]
+            other.magnitude,
+        )
         new_unit = self.unit * other.unit
         # Uncertainty ignored for now
         return Quantity.from_input(mag, new_unit, self.system)
@@ -1217,12 +1361,12 @@ class Quantity(
 
     def __len__(self) -> int:
         """Returns length (if array)."""
-        return len(self.magnitude)
+        return len(self.magnitude)  # pyright: ignore[reportArgumentType]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         """Scalar: yields (magnitude, unit). Array: yields elements."""
         try:
-            n = len(self.magnitude)
+            n = len(self.magnitude)  # pyright: ignore[reportArgumentType]
         except TypeError:
             # Scalar case: magnitude has no len()
             yield self.magnitude
@@ -1248,7 +1392,7 @@ class Quantity(
 
     def __getitem__(self, key: Any) -> Quantity:
         """Slices the quantity."""
-        new_mag = self.magnitude[key]
+        new_mag = self.magnitude[key]  # pyright: ignore[reportIndexIssue]
 
         # Slicing uncertainty
         # If uncertainty is array, slice it.
@@ -1290,17 +1434,21 @@ class Quantity(
         # We need to ensure units match.
         if isinstance(value, Quantity):
             val_converted = value.to(self.unit)
-            self.magnitude[key] = val_converted.magnitude
+            self.magnitude[  # pyright: ignore[reportIndexIssue]
+                key
+            ] = val_converted.magnitude
             # We should also update uncertainty...
             # This is complex for immutable/updates.
             # If magnitude is mutable (numpy), this works for value.
             # Uncertainty update is ignored here (limitation).
         else:
             # Assume value is magnitude in same unit
-            self.magnitude[key] = value
+            self.magnitude[  # pyright: ignore[reportIndexIssue]
+                key
+            ] = value
 
     @property
-    def uncertainty_obj(self) -> Any:
+    def uncertainty_obj(self) -> Uncertainty:
         """Returns the rich uncertainty object (legacy support)."""
         if self._uncertainty_obj is not None:
             return self._uncertainty_obj
@@ -1380,32 +1528,43 @@ class Quantity(
 
 
 # --- PyTorch Integration ---
-_TORCH_PYTREE_REGISTERED = False
+_torch_pytree_registered = False
 
 
 def _register_torch_pytree() -> None:
     """Register Quantity as a torch pytree node. Idempotent; no-op without torch."""
-    global _TORCH_PYTREE_REGISTERED
-    if _TORCH_PYTREE_REGISTERED:
+    global _torch_pytree_registered
+    if _torch_pytree_registered:
         return
     try:
         from torch.utils import _pytree
     except (ImportError, AttributeError):
         return
 
-    def _torch_flatten_quantity(q):
+    def _torch_flatten_quantity(
+        q: Quantity,
+    ) -> tuple[
+        list[Any],  # pyright: ignore[reportExplicitAny]
+        tuple[Any, Any, Any],  # pyright: ignore[reportExplicitAny]
+    ]:
         children, context = q.tree_flatten()
         return [children[0], children[1]], context
 
-    def _torch_unflatten_quantity(children, context):
-        return Quantity.tree_unflatten(context, (children[0], children[1]))
+    def _torch_unflatten_quantity(
+        children: Iterable[Any],  # pyright: ignore[reportExplicitAny]
+        context: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+    ) -> Quantity:
+        children_list = list(children)
+        return Quantity.tree_unflatten(
+            context, (children_list[0], children_list[1])
+        )
 
     _pytree.register_pytree_node(
         Quantity,
         _torch_flatten_quantity,
         _torch_unflatten_quantity,
     )
-    _TORCH_PYTREE_REGISTERED = True
+    _torch_pytree_registered = True
 
 
 # Registering eagerly here used to `from torch.utils import _pytree`, pulling

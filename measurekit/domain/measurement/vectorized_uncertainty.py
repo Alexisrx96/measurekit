@@ -11,7 +11,7 @@ except ImportError:
     np = None
 
 
-def _scipy():
+def _scipy() -> Any:
     """Return the scipy module, or None if not installed.
 
     Lazy import: scipy costs ~0.2s and most sessions never build a sparse
@@ -20,7 +20,10 @@ def _scipy():
     global _scipy_mod
     if _scipy_mod is False:
         try:
-            import scipy.sparse
+            # ponytail: bare `scipy` is used below, but basedpyright's
+            # unused-import check for dotted `import a.b` only credits
+            # explicit `a.b` attribute access, not the bare-name use.
+            import scipy.sparse  # pyright: ignore[reportUnusedImport]
 
             _scipy_mod = scipy
         except ImportError:
@@ -31,8 +34,15 @@ def _scipy():
 _scipy_mod: Any = False
 
 try:
-    from measurekit_core import CovarianceStore as CoreStore
-    from measurekit_core import PruningConfig
+    # ponytail: Rust core is always optional (CLAUDE.md); the fallback
+    # classes below are structurally different types by design, so
+    # pyright can't verify the two branches are interchangeable.
+    from measurekit_core import (
+        CovarianceStore as CoreStore,  # pyright: ignore[reportAssignmentType]
+    )
+    from measurekit_core import (
+        PruningConfig,  # pyright: ignore[reportAssignmentType]
+    )
 except ImportError:
 
     @dataclass
@@ -46,11 +56,11 @@ except ImportError:
     class CoreStore:
         """Python fallback for CovarianceStore where Rust is missing."""
 
-        def __init__(self, config: PruningConfig = None):
+        def __init__(self, config: PruningConfig | None = None) -> None:
             self.config = config or PruningConfig()
             self.matrix = None
 
-        def register_variable(self, _var_id, variance):
+        def register_variable(self, _var_id: int, variance: Numeric) -> None:
             """Appends a variance block to the covariance matrix."""
             scipy = _scipy()
             if self.matrix is None:
@@ -60,13 +70,17 @@ except ImportError:
                     [[self.matrix, None], [None, variance]], format="csr"
                 )
 
-        def register_diagonal(self, var_id, variance_diag):
+        def register_diagonal(
+            self, var_id: int, variance_diag: Numeric
+        ) -> None:
             """Registers a diagonal variance vector."""
-            _ = len(variance_diag)
+            _ = len(variance_diag)  # pyright: ignore[reportArgumentType]
             sp = _scipy().sparse.diags([variance_diag], [0], format="csr")
             self.register_variable(var_id, sp)
 
-        def propagate(self, out_id, input_ids, jacobians):
+        def propagate(
+            self, out_id: int, input_ids: list[int], jacobians: list[Numeric]
+        ) -> None:
             """Applies Jacobians to propagate covariance to the output."""
             # Compute sizes from jacobians
             out_size = jacobians[0].shape[0]
@@ -78,9 +92,9 @@ except ImportError:
                 in_slices.append(slice(i_id, i_id + in_size))
 
             # Need a backend for propagate_affine
-            from measurekit.backends.numpy_backend import NumpyBackend
+            from measurekit.core.dispatcher import BackendManager
 
-            backend = NumpyBackend()
+            backend = BackendManager.get_backend(jacobians[0])
 
             self.matrix = propagate_affine(
                 self.matrix, out_slice, in_slices, jacobians, backend
@@ -96,7 +110,9 @@ except ImportError:
 
 
 if TYPE_CHECKING:
-    from measurekit.core.protocols import BackendOps
+    from types import TracebackType
+
+    from measurekit.core.protocols import BackendOps, Numeric
 
 T = TypeVar("T")
 
@@ -105,7 +121,7 @@ T = TypeVar("T")
 class CovarianceStore:
     """Stateless-ready store for covariance management using Rust core."""
 
-    backend: BackendOps
+    backend: BackendOps | None
     config: PruningConfig = field(default_factory=PruningConfig)
     _core: CoreStore = field(init=False)
     _next_idx: int = 0
@@ -130,14 +146,6 @@ class CovarianceStore:
         if hasattr(self._core, "get_covariance_block"):
             return self._core.get_covariance_block(row_slice, col_slice)
 
-        if row_slice is None or col_slice is None:
-            # Return zero block if no slice info (e.g. independent variables)
-            # We don't have enough shape info here to return a specific size
-            # but usually this is called when slices are expected to exist.
-            # Returning None or raising a clearer error might be better,
-            # but let's try to infer if we can.
-            return None
-
         id1 = row_slice.start
         id2 = col_slice.start
 
@@ -153,40 +161,24 @@ class CovarianceStore:
                 )
 
             csr = scipy.sparse.csr_matrix((data, indices, indptr), shape=shape)
-
-            if self.backend.__class__.__name__ == "TorchBackend":
-                coo = csr.tocoo()
-                import torch
-
-                indices = torch.tensor(
-                    np.vstack((coo.row, coo.col)), dtype=torch.long
-                )
-                values = torch.tensor(coo.data, dtype=torch.float64)
-                return torch.sparse_coo_tensor(
-                    indices, values, size=shape, dtype=torch.float64
-                )
-
-            elif hasattr(self.backend, "from_scipy_sparse"):
-                return self.backend.from_scipy_sparse(csr)
-
-            return csr
+            return self.backend.from_scipy_sparse(csr)
 
         shape = (
             row_slice.stop - row_slice.start,
             col_slice.stop - col_slice.start,
         )
-        if self.backend.__class__.__name__ == "TorchBackend":
-            import torch
-
-            return torch.sparse_coo_tensor(size=shape, dtype=torch.float64)
-
         scipy = _scipy()
         if scipy:
-            return scipy.sparse.csr_matrix(shape)
+            return self.backend.from_scipy_sparse(
+                scipy.sparse.csr_matrix(shape)
+            )
 
         return self.backend.zeros(shape)
 
     def _densify_sparse(self, val: Any) -> Any:
+        # ponytail: val may be a scipy sparse matrix, torch sparse tensor,
+        # or dense array — sparse types aren't part of the Numeric alias,
+        # so this duck-typed converter stays Any at the boundary.
         """Converts sparse matrix representations to a dense array."""
         if hasattr(val, "toarray"):
             return val.toarray()
@@ -196,9 +188,11 @@ class CovarianceStore:
             return val.todense()
         return val
 
+    # ponytail: val may still be sparse-derived or a bare Python scalar
+    # here; same dynamic-boundary reasoning as _densify_sparse.
     def _to_numpy_or_tensor(self, val: Any) -> Any:
         """Converts val to numpy, or keeps it as a Torch tensor."""
-        if self.backend.__class__.__name__ == "TorchBackend":
+        if self.backend.preserves_native_gradients():
             return self.backend.asarray(val)
         if hasattr(val, "detach"):
             val = val.detach()
@@ -212,6 +206,12 @@ class CovarianceStore:
             return np.array(val)
         return val
 
+    # ponytail: this jacobian pipeline moves values between sparse
+    # matrices, dense arrays, and tensors via duck-typed attribute checks
+    # (.ndim, .dtype, .toarray, ...) — Numeric's float|int members don't
+    # carry those, so the internal helpers stay Any; the public entry
+    # points (update_from_propagation, register_independent_array) are
+    # typed Numeric at the boundary instead.
     def _broadcast_scalar_jacobian(
         self, scalar: Any, out_size: int, in_size: int
     ) -> Any:
@@ -253,7 +253,7 @@ class CovarianceStore:
 
     def _ensure_float64_jac(self, val: Any) -> Any:
         """Casts val to float64; also re-densifies any sparse result."""
-        if self.backend.__class__.__name__ == "TorchBackend":
+        if self.backend.preserves_native_gradients():
             import torch
 
             if not isinstance(val, torch.Tensor):
@@ -292,7 +292,7 @@ class CovarianceStore:
         self,
         out_slice: slice,
         in_slices: list[slice],
-        jacobians: list[Any],
+        jacobians: list[Numeric],
     ) -> None:
         """Updates the covariance matrix using affine transformation via Rust backend."""
         out_id = out_slice.start
@@ -312,7 +312,7 @@ class CovarianceStore:
 
     def _prepare_variance_diagonal(self, variance: Any) -> Any:
         """Converts a variance array to a flat float64 diagonal ready for the core."""
-        if self.backend.__class__.__name__ == "TorchBackend":
+        if self.backend.preserves_native_gradients():
             import torch
 
             val = self.backend.reshape(variance, (-1,))
@@ -358,7 +358,7 @@ class CovarianceStore:
                     "Rust CoreStore.register_diagonal missing."
                 ) from err
 
-    def register_independent_array(self, std_dev: Any) -> slice:
+    def register_independent_array(self, std_dev: Numeric) -> slice:
         """Registers a new independent array and returns its slice."""
         size = self.backend.size(std_dev)
         slc = self.allocate(size)
@@ -380,7 +380,7 @@ class MeasureKitContext:
         self,
         backend_type: str = "numpy",
         pruning_config: PruningConfig | None = None,
-    ):
+    ) -> None:
         self.backend_type = backend_type
         self.pruning_config = pruning_config
         self.token = None
@@ -388,12 +388,20 @@ class MeasureKitContext:
     def __enter__(self) -> CovarianceStore:
         # Use default config if none provided
         config = self.pruning_config or PruningConfig()
-        store = CovarianceStore(backend=None, config=config)  # type: ignore
+        # backend is assigned lazily by ensure_store() on first real use.
+        store = CovarianceStore(backend=None, config=config)
         self.token = _current_store.set(store)
         return store
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        _current_store.reset(self.token)
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        # ponytail: self.token is None only if __enter__ never ran; the
+        # context-manager protocol guarantees __exit__ only runs after it.
+        _current_store.reset(self.token)  # pyright: ignore[reportArgumentType]
 
 
 def get_current_store() -> CovarianceStore | None:
@@ -439,7 +447,7 @@ def propagate_affine(
     matrix: Any,
     out_slice: slice,
     in_slices: list[slice],
-    jacobians: list[Any],
+    jacobians: list[Numeric],
     backend: BackendOps,
 ) -> Any:
     """Performs J * Sigma * J.T update on the matrix (Functional API).

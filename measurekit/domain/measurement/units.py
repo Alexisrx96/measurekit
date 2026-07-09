@@ -22,6 +22,8 @@ from measurekit.domain.measurement.converters import (
 from measurekit.domain.notation.base_entity import BaseExponentEntity
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
     from measurekit.domain.measurement.dimensions import Dimension
@@ -97,7 +99,10 @@ def reconstruct_compound_unit(exponents: ExponentsDict) -> CompoundUnit:
 
     # Use the stable reference if the public one is corrupted
     cls = CompoundUnit
-    if not isinstance(cls, type):
+    # ponytail: guards against the public CompoundUnit name being
+    # monkeypatched/corrupted at runtime; statically cls is always a
+    # type, but this is a deliberate defensive check, not dead code.
+    if not isinstance(cls, type):  # pyright: ignore[reportUnnecessaryIsInstance]
         cls = _CompoundUnit
 
     return cls(exponents)
@@ -141,7 +146,13 @@ def _resolve_unit_dim(unit_name: str, system: Any, Dimension: type) -> Any:
 
 
 try:
-    from measurekit_core import RationalUnit
+    # ponytail: the Rust RationalUnit and the pure-Python fallback below
+    # are structurally different types by design (Rust core is always
+    # optional, per CLAUDE.md); pyright can't verify they're
+    # interchangeable, but callers only ever see one or the other.
+    from measurekit_core import (
+        RationalUnit,  # pyright: ignore[reportAssignmentType]
+    )
 
     IS_CORE_AVAILABLE = True
 except ImportError:
@@ -150,14 +161,21 @@ except ImportError:
         """Inert stub used when measurekit_core is unavailable."""
 
         def __init__(
-            self, *args, **kwargs
-        ): ...  # intentionally empty stub; replaced by measurekit_core at runtime
+            self, *args: Any, **kwargs: Any
+        ) -> None: ...  # intentionally empty stub; replaced by measurekit_core at runtime
 
-    IS_CORE_AVAILABLE = False
+    # ponytail: IS_CORE_AVAILABLE toggles between True/False across the
+    # try/except branches by design; not a real constant-redefinition bug.
+    IS_CORE_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
 
 
+# ponytail: intentional Flyweight/PyO3-hybrid multiple inheritance —
+# __new__ builds the cached singleton and __init__ below is a deliberate
+# no-op, so neither base's __init__/__new__ needs to run independently.
 @dataclass(frozen=True)
-class CompoundUnit(RationalUnit, BaseExponentEntity):
+class CompoundUnit(  # pyright: ignore[reportUnsafeMultipleInheritance]
+    RationalUnit, BaseExponentEntity
+):
     """Represents a unit composed of base units raised to various powers."""
 
     _is_compound: ClassVar[bool] = True
@@ -187,7 +205,10 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
 
     _cache: ClassVar[dict[tuple, CompoundUnit]] = {}
 
-    def __new__(cls, exponents: ExponentsDict):
+    # ponytail: the Flyweight cache is keyed by exponents only and always
+    # stores/returns a plain CompoundUnit, so `Self` would overpromise for
+    # subclasses; CompoundUnit is the honest contract here.
+    def __new__(cls, exponents: ExponentsDict) -> CompoundUnit:  # noqa: PYI034
         """Create or retrieve a cached CompoundUnit instance."""
         normalized_exponents = normalize_exponents(exponents)
         # Sort keys to ensure consistent repr and hash
@@ -209,16 +230,20 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
         cls._cache[key] = cast("CompoundUnit", instance)
         return cast("CompoundUnit", instance)
 
-    def __init__(self, exponents: ExponentsDict) -> None:
+    # ponytail: real initialization happens in __new__'s singleton cache;
+    # this __init__ is intentionally a no-op, so it deliberately skips
+    # calling super().__init__().
+    def __init__(  # pyright: ignore[reportMissingSuperCall]
+        self, exponents: ExponentsDict
+    ) -> None:
         """Initializes the compound unit with a dictionary of exponents."""
-        pass
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Eliminamos cualquier unidad con exponente 0."""
         clean_exponents = {k: v for k, v in self.exponents.items() if v != 0}
         object.__setattr__(self, "exponents", clean_exponents)
 
-    def __reduce__(self):
+    def __reduce__(self) -> tuple[Any, ...]:
         """Custom pickling to ensure Flyweight pattern (cache) is used.
 
         By returning (reconstruct_compound_unit, (args,)), we bypass direct
@@ -366,12 +391,12 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
         return source_factor / target_factor
 
     @overload
-    def __rmul__(self, other: float) -> Quantity[float, float]: ...
+    def __rmul__(self, other: float) -> Quantity[float, float, Any]: ...
 
     @overload
     def __rmul__(
         self, other: NDArray[Any]
-    ) -> Quantity[NDArray[Any], NDArray[Any]]: ...
+    ) -> Quantity[NDArray[Any], NDArray[Any], Any]: ...
 
     def __rmul__(self, other: Any) -> Any:
         """Handle right-side multiplication, typically for creating a Quantity.
@@ -452,15 +477,21 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
             return _CompoundUnit(new_exponents)
 
         # For rational tuples, we use Rust core if available
-        if isinstance(exponent, tuple):
-            res = super().__pow__(exponent)
-            if hasattr(res, "dimensions"):
-                return _CompoundUnit(res.dimensions)
-            return res
+        # ponytail: the Rust RationalUnit core accepts a rational
+        # (numerator, denominator) tuple here even though the Python
+        # stub's __pow__ only declares float (same "Rust core is
+        # optional/dynamic" pattern as elsewhere in this file).
+        res = super().__pow__(exponent)  # pyright: ignore[reportArgumentType]
+        if hasattr(res, "dimensions"):
+            return _CompoundUnit(res.dimensions)
+        return res
 
-        return super().__pow__(exponent)
-
-    def __rtruediv__(self, other: Any) -> CompoundUnit:
+    # ponytail: BaseExponentEntity.__rtruediv__ is a singledispatchmethod;
+    # CompoundUnit intentionally replaces it with a plain method for the
+    # `1 / unit` case instead of participating in the dispatch.
+    def __rtruediv__(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self, other: Any
+    ) -> CompoundUnit:
         """Right division (1 / unit)."""
         if other == 1:
             return self**-1
@@ -486,7 +517,7 @@ class CompoundUnit(RationalUnit, BaseExponentEntity):
 
         return sp.latex(expr, mul_symbol="dot")
 
-    def _repr_latex_(self):
+    def _repr_latex_(self) -> str:
         """Provide a LaTeX representation for automatic rendering in Jupyter.
 
         Returns:
@@ -540,7 +571,7 @@ _CompoundUnit = CompoundUnit
 units = UnitRegistry()
 
 
-def _register_core_units():
+def _register_core_units() -> None:
     """Helper to populate the registry from the generated index."""
     try:
         # Import the index generated by scripts/compile_units.py
@@ -550,13 +581,17 @@ def _register_core_units():
         # This allows bootstrapping or running without generated units.
         return
 
-    def _make_loader(scope_module: str, unit_name: str):
-        def loader():
+    # ponytail: this loader dynamically imports a generated unit-index module
+    # and getattr()s the requested symbol out of it, so the loaded value's
+    # real type is unknowable to the checker until import time — Any is the
+    # honest type here, not a gap in our own annotations.
+    def _make_loader(scope_module: str, unit_name: str) -> Callable[[], Any]:  # pyright: ignore[reportExplicitAny]
+        def loader() -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
             # Dynamically import the scope module (e.g., measurekit.units.core)
-            module = __import__(
+            module = __import__(  # pyright: ignore[reportAny]
                 f"measurekit.units.{scope_module}", fromlist=[unit_name]
             )
-            return getattr(module, unit_name)
+            return getattr(module, unit_name)  # pyright: ignore[reportAny]
 
         return loader
 
@@ -575,20 +610,28 @@ _register_core_units()
 # This ensures that results of Rust unit arithmetic (which return raw RationalUnit
 # objects) still have access to the high-level Python methods.
 if IS_CORE_AVAILABLE:
-
-    def wrap_arithmetic(op_name):
+    # ponytail: monkey-patches an operator onto the Rust RationalUnit class at
+    # runtime via getattr/setattr; both the wrapped operator and its operands
+    # are opaque to the checker at this reflection boundary, so Any is the
+    # honest type here, not a gap in our own annotations.
+    def wrap_arithmetic(
+        op_name: str,
+    ) -> Callable[[Any, Any], Any] | None:  # pyright: ignore[reportExplicitAny]
         """Wraps a RationalUnit operator to coerce plain numbers."""
         orig_op = getattr(RationalUnit, op_name, None)
         if orig_op:
 
-            def wrapped(self, other):
+            def wrapped(  # pyright: ignore[reportAny]
+                self: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+                other: Any,  # pyright: ignore[reportAny, reportExplicitAny]
+            ) -> Any:
                 if isinstance(other, (int, float, complex)):
-                    return self
-                res = orig_op(self, other)
+                    return self  # pyright: ignore[reportAny]
+                res = orig_op(self, other)  # pyright: ignore[reportAny]
                 if isinstance(res, RationalUnit):
                     # Wrap in CompoundUnit to use Flyweight cache
                     return _CompoundUnit(res.dimensions)
-                return res
+                return res  # pyright: ignore[reportAny]
 
             return wrapped
         return None

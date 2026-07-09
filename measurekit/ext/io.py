@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 try:
     import h5py
@@ -18,10 +18,13 @@ except ImportError:
 from measurekit import __version__
 
 if TYPE_CHECKING:
+    from h5py import Dataset, Group
+
+    from measurekit.core.protocols import Numeric
     from measurekit.domain.measurement.quantity import Quantity
 
 
-def to_hdf5(quantity: Quantity, group: Any, dataset_name: str) -> Any:
+def to_hdf5(quantity: Quantity, group: Group, dataset_name: str) -> Dataset:
     """Saves a Quantity to an HDF5 group as a dataset with unit metadata.
 
     The magnitude array is saved to the dataset and the unit string is written
@@ -80,7 +83,7 @@ def to_hdf5(quantity: Quantity, group: Any, dataset_name: str) -> Any:
     return ds
 
 
-def from_hdf5(dataset: Any) -> Quantity:
+def from_hdf5(dataset: Dataset) -> Quantity:
     """Reconstitutes a Quantity from an HDF5 dataset.
 
     Args:
@@ -161,6 +164,6 @@ if xr is not None:
             return self._obj
 
         @property
-        def magnitude(self) -> Any:
+        def magnitude(self) -> Numeric:
             """Returns the raw underlying data."""
             return self._obj.values

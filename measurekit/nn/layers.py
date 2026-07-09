@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from measurekit.domain.measurement.quantity import Quantity
 from measurekit.nn.utils import extract_dimension_matrix, null_space_basis
@@ -10,6 +10,8 @@ from measurekit.nn.utils import extract_dimension_matrix, null_space_basis
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from measurekit.core.protocols import Numeric
+    from measurekit.domain.measurement.system import UnitSystem
     from measurekit.domain.measurement.units import CompoundUnit
 
 # --- PyTorch Implementation ---
@@ -34,7 +36,7 @@ try:
             self,
             units: Sequence[CompoundUnit | Quantity],
             out_features: int,
-            system: Any = None,
+            system: UnitSystem | None = None,
         ):
             super().__init__()
             self.in_features = len(units)
@@ -93,10 +95,14 @@ try:
                 if isinstance(m, torch.Tensor) and m.ndim == 1:
                     processed_mags.append(m.unsqueeze(-1))
                 elif isinstance(m, (int, float)):
+                    # ponytail: V_null is a registered buffer; nn.Module's
+                    # __getattr__ stub types it as Tensor | Module, so
+                    # pyright can't see .device as a plain torch.device.
                     processed_mags.append(
-                        torch.tensor([m], device=self.V_null.device).unsqueeze(
-                            -1
-                        )
+                        torch.tensor(
+                            [m],
+                            device=self.V_null.device,  # pyright: ignore[reportArgumentType]
+                        ).unsqueeze(-1)
                     )
                 else:
                     processed_mags.append(m)
@@ -111,7 +117,9 @@ try:
             # 3. Constrained Linear Layer
             # W = V * theta
             # W shape: (N_in, N_null) @ (N_null, N_out) -> (N_in, N_out)
-            W = self.V_null @ self.theta
+            # ponytail: same buffer/parameter dynamic-typing false positive
+            # as torch.tensor(device=...) above.
+            W = self.V_null @ self.theta  # pyright: ignore[reportOperatorIssue]
 
             Y = log_x @ W
 
@@ -126,7 +134,9 @@ except ImportError:
 
 # --- JAX / Equinox Implementation ---
 try:
-    import equinox as eqx
+    # ponytail: equinox is an optional dependency not published as a
+    # project extra; no stubs are available when it's not installed.
+    import equinox as eqx  # pyright: ignore[reportMissingImports]
     import jax
     import jax.numpy as jnp
 
@@ -138,12 +148,15 @@ try:
         in_features: int = eqx.field(static=True)
         out_features: int = eqx.field(static=True)
 
-        def __init__(
+        # ponytail: equinox Modules are frozen dataclasses with their own
+        # metaclass-driven init machinery; calling super().__init__() is
+        # not part of the equinox convention.
+        def __init__(  # pyright: ignore[reportMissingSuperCall]
             self,
             units: Sequence[CompoundUnit | Quantity],
             out_features: int,
-            key: jax.random.PRNGKey,
-            system: Any = None,
+            key: jax.Array,
+            system: UnitSystem | None = None,
         ):
             self.in_features = len(units)
             self.out_features = out_features
@@ -159,7 +172,7 @@ try:
             n_null = self.V_null.shape[1]
             self.theta = jax.random.normal(key, (n_null, out_features)) * 0.1
 
-        def __call__(self, *inputs: Quantity | Any) -> jnp.ndarray:
+        def __call__(self, *inputs: Quantity | Numeric) -> jnp.ndarray:
             """Forward pass."""
             # 1. Stack Magnitudes
             mags = []

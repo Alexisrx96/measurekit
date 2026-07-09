@@ -1,3 +1,7 @@
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownParameterType=false
+# ponytail: BackendOps is the adapter contract every concrete backend
+# implements at the raw array/scalar boundary — Numeric/Any here is the
+# interface, not a typing gap.
 from __future__ import annotations
 
 from typing import (
@@ -13,14 +17,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     try:
-        from jaxtyping import Array, Bool, Float
+        from jaxtyping import Array, Float
     except ImportError:
         Array = Any
-        Bool = Any
         Float = Any
 else:
     Array = Any
-    Bool = Any
     Float = Any
     Sequence = Any
 
@@ -41,10 +43,9 @@ T = TypeVar("T")
 
 
 @runtime_checkable
-class BackendOps(Protocol):
-    """Protocol defining the operations a backend must support."""
+class ArrayCreationOps(Protocol):
+    """Protocol for array creation, tracing, and device operations."""
 
-    # Creation
     def is_array(self, obj: Any) -> bool:
         """Returns True if the object is a supported array type."""
         ...
@@ -65,7 +66,15 @@ class BackendOps(Protocol):
         """Returns the device identifier for the given object."""
         ...
 
-    # Math Operations
+    def preserves_native_gradients(self) -> bool:
+        """Returns True if values must stay native to preserve autograd."""
+        ...
+
+
+@runtime_checkable
+class ElementwiseMathOps(Protocol):
+    """Protocol for element-wise arithmetic and transcendental operations."""
+
     def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Performs element-wise addition."""
         ...
@@ -126,7 +135,11 @@ class BackendOps(Protocol):
         """Computes element-wise sign."""
         ...
 
-    # Reduction Operations
+
+@runtime_checkable
+class ReductionOps(Protocol):
+    """Protocol for reduction and tolerance-comparison operations."""
+
     def sum(
         self, obj: Any, axis: int | Sequence[int] | None = None
     ) -> Numeric:
@@ -153,6 +166,11 @@ class BackendOps(Protocol):
         """Returns True if elements are equal within a tolerance."""
         ...
 
+
+@runtime_checkable
+class ComparisonOps(Protocol):
+    """Protocol for element-wise comparison operations."""
+
     def equal(self, x: Numeric, y: Numeric) -> Boolean:
         """Element-wise equality."""
         ...
@@ -177,7 +195,11 @@ class BackendOps(Protocol):
         """Element-wise greater than or equal."""
         ...
 
-    # Shape and Structure
+
+@runtime_checkable
+class ShapeOps(Protocol):
+    """Protocol for shape inspection and structural operations."""
+
     def shape(self, obj: Any) -> tuple[int, ...]:
         """Returns the shape of the object."""
         ...
@@ -190,7 +212,11 @@ class BackendOps(Protocol):
         """Concatenates a sequence of arrays along the specified axis."""
         ...
 
-    # Sparse / Jacobian Helper
+
+@runtime_checkable
+class SparseLinAlgOps(Protocol):
+    """Protocol for sparse-matrix and Jacobian-helper operations."""
+
     def size(self, obj: Any) -> int:
         """Returns the total number of elements in the object."""
         ...
@@ -257,3 +283,27 @@ class BackendOps(Protocol):
     def ones(self, shape: tuple[int, ...], reference: Any = None) -> Any:
         """Returns an array (or matrix) of ones with the given shape."""
         ...
+
+    def zeros(self, shape: tuple[int, ...], reference: Any = None) -> Any:
+        """Returns an array (or matrix) of zeros with the given shape."""
+        ...
+
+    def from_scipy_sparse(self, matrix: Any) -> Any:
+        """Converts a SciPy sparse matrix to this backend's native sparse representation."""
+        ...
+
+
+@runtime_checkable
+class BackendOps(
+    ArrayCreationOps,
+    ElementwiseMathOps,
+    ReductionOps,
+    ComparisonOps,
+    ShapeOps,
+    SparseLinAlgOps,
+    Protocol,
+):
+    """Full backend contract.
+
+    Every concrete backend implements all six role protocols above.
+    """

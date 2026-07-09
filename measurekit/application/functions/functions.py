@@ -13,7 +13,9 @@ try:
     HAVE_SYMENGINE = True
 except ImportError:
     se = None  # type: ignore
-    HAVE_SYMENGINE = False
+    # ponytail: HAVE_SYMENGINE toggles between True/False across the
+    # try/except branches by design; not a real constant-redefinition bug.
+    HAVE_SYMENGINE = False  # pyright: ignore[reportConstantRedefinition]
 
 from measurekit import default_system
 
@@ -98,8 +100,7 @@ class Function:
         self, output_unit: CompoundUnit | str, **kwargs: Quantity
     ) -> Quantity:
         """Evaluates the function with the given quantity arguments."""
-        if isinstance(output_unit, str):
-            output_unit = self.system.get_unit(output_unit)
+        output_unit = self.system.resolve_unit(output_unit)
 
         # Verify output dimension consistency
         if output_unit.dimension(self.system) != self.output_unit.dimension(

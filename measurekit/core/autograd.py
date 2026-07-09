@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from measurekit.core.dispatcher import BackendManager
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from measurekit.core.protocols import Numeric
 
 log = logging.getLogger(__name__)
 
@@ -20,9 +22,9 @@ class AutogradPropagator:
 
     @staticmethod
     def compute_jacobians(
-        func: Callable[..., Any],
-        primals: Sequence[Any],
-    ) -> tuple[Any, tuple[Any, ...]]:
+        func: Callable[..., Numeric],
+        primals: Sequence[Numeric],
+    ) -> tuple[Numeric, tuple[Numeric, ...]]:
         """Computes the result and Jacobians of func with respect to primals.
 
         Args:
@@ -58,8 +60,8 @@ class AutogradPropagator:
 
     @staticmethod
     def _compute_torch(
-        func: Callable[..., Any], primals: Sequence[Any]
-    ) -> tuple[Any, tuple[Any, ...]]:
+        func: Callable[..., Numeric], primals: Sequence[Numeric]
+    ) -> tuple[Numeric, tuple[Numeric, ...]]:
         try:
             import torch
             import torch.func
@@ -95,8 +97,8 @@ class AutogradPropagator:
 
     @staticmethod
     def _compute_jax(
-        func: Callable[..., Any], primals: Sequence[Any]
-    ) -> tuple[Any, tuple[Any, ...]]:
+        func: Callable[..., Numeric], primals: Sequence[Numeric]
+    ) -> tuple[Numeric, tuple[Numeric, ...]]:
         try:
             import jax
             import jax.numpy as jnp
@@ -124,8 +126,8 @@ class AutogradPropagator:
 
     @staticmethod
     def _compute_finite_diff(
-        func: Callable[..., Any], primals: Sequence[Any]
-    ) -> tuple[Any, tuple[Any, ...]]:
+        func: Callable[..., Numeric], primals: Sequence[Numeric]
+    ) -> tuple[Numeric, tuple[Numeric, ...]]:
         """Simple finite difference fallback (Numerical Perturbation)."""
         # Central difference
         epsilon = 1e-5

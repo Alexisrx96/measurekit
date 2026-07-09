@@ -6,15 +6,32 @@ Activate them with the :func:`equivalencies` context manager or pass them
 directly to ``Quantity.to(..., equivalencies=...)``.
 """
 
+from __future__ import annotations
+
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
-_ACTIVE_EQUIVALENCIES: ContextVar[tuple] = ContextVar(
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Sequence
+
+    from measurekit.core.protocols import Numeric
+    from measurekit.domain.measurement.dimensions import Dimension
+
+EquivalencyEntry = tuple[
+    "Dimension",
+    "Dimension",
+    "Callable[[Numeric], Numeric]",
+    "Callable[[Numeric], Numeric]",
+]
+EquivalencyList = list[EquivalencyEntry]
+
+_ACTIVE_EQUIVALENCIES: ContextVar[tuple[EquivalencyEntry, ...]] = ContextVar(
     "active_equivalencies", default=()
 )
 
 
-def spectral():
+def spectral() -> EquivalencyList:
     """Equivalencies between wavelength, frequency, wavenumber and energy."""
     c = 299792458.0  # speed of light in vacuum in m/s
     h = 6.62607015e-34  # planck_constant in J*s
@@ -47,7 +64,7 @@ def spectral():
     ]
 
 
-def thermodynamic():
+def thermodynamic() -> EquivalencyList:
     """Equivalency between temperature and energy (E = k_b * T)."""
     k_b = 1.380649e-23
     from measurekit.domain.measurement.dimensions import Dimension
@@ -59,13 +76,14 @@ def thermodynamic():
 
 
 @contextmanager
-def equivalencies(*eq_lists):
+def equivalencies(
+    *eq_lists: EquivalencyList | Callable[[], EquivalencyList],
+) -> Generator[None]:
     """Context manager activating equivalencies for Quantity.to() calls."""
-    flat_eqs = []
+    flat_eqs: EquivalencyList = []
     for eq_list in eq_lists:
-        if callable(eq_list):
-            eq_list = eq_list()
-        flat_eqs.extend(eq_list)
+        resolved = eq_list() if callable(eq_list) else eq_list
+        flat_eqs.extend(resolved)
 
     current = _ACTIVE_EQUIVALENCIES.get()
     token = _ACTIVE_EQUIVALENCIES.set((*current, *flat_eqs))
@@ -75,12 +93,18 @@ def equivalencies(*eq_lists):
         _ACTIVE_EQUIVALENCIES.reset(token)
 
 
-def find_conversion_path(dim_from, dim_to, active_eqs):
+def find_conversion_path(
+    dim_from: Dimension,
+    dim_to: Dimension,
+    active_eqs: Sequence[EquivalencyEntry],
+) -> list[Callable[[Numeric], Numeric]] | None:
     """BFS over active equivalencies; returns the list of magnitude maps.
 
     Returns None when no path connects the two dimensions.
     """
-    graph = {}
+    graph: dict[
+        Dimension, list[tuple[Dimension, Callable[[Numeric], Numeric]]]
+    ] = {}
     for d1, d2, to_f, from_f in active_eqs:
         if d1 not in graph:
             graph[d1] = []
@@ -92,7 +116,9 @@ def find_conversion_path(dim_from, dim_to, active_eqs):
     if dim_from not in graph or dim_to not in graph:
         return None
 
-    queue = [(dim_from, [])]
+    queue: list[tuple[Dimension, list[Callable[[Numeric], Numeric]]]] = [
+        (dim_from, [])
+    ]
     visited = {dim_from}
 
     while queue:
@@ -107,7 +133,12 @@ def find_conversion_path(dim_from, dim_to, active_eqs):
     return None
 
 
-def numerical_derivative(f, x, dx=1e-8):
+def numerical_derivative(
+    f: Callable[[Numeric], Numeric], x: Numeric, dx: float = 1e-8
+) -> Numeric:
     """Central-difference derivative, used to propagate uncertainty."""
     h = abs(x) * dx or dx  # falls back to dx at exactly zero
-    return (f(x + h) - f(x - h)) / (2 * h)
+    # ponytail: Numeric is a union of mutually-incompatible backend types
+    # (Tensor/Array/ndarray/float); pyright can't prove x and h share one
+    # concrete member, but callers always pass a single homogeneous backend.
+    return (f(x + h) - f(x - h)) / (2 * h)  # pyright: ignore[reportOperatorIssue, reportUnknownArgumentType, reportUnknownVariableType]

@@ -1,8 +1,14 @@
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
+# ponytail: pandas is an optional dependency; when unavailable,
+# ExtensionArray/ExtensionDtype fall back to plain `object` below, so pyright
+# can't resolve their real API and every dtype/array value crossing that
+# boundary is genuinely unknown/Any upstream, not a gap in our own
+# annotations.
 """Pandas extension for MeasureKit quantities."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -17,7 +23,7 @@ except (ImportError, AttributeError):
     ExtensionArray = object
     ExtensionDtype = object
 
-    def register_extension_dtype(cls):
+    def register_extension_dtype(cls: type) -> type:
         """No-op decorator when pandas is unavailable."""
         return cls
 
@@ -30,20 +36,28 @@ if TYPE_CHECKING:
     from measurekit.domain.measurement.units import CompoundUnit
 
 
+# ponytail: pandas is an optional dependency; ExtensionDtype falls back
+# to plain `object` above when pandas is unavailable, so pyright can't
+# statically verify this is a valid base class in both cases.
 @register_extension_dtype
-class MeasureKitDtype(ExtensionDtype):
+class MeasureKitDtype(ExtensionDtype):  # pyright: ignore[reportGeneralTypeIssues]
     """Pandas ExtensionDtype for MeasureKit Quantity."""
 
     name = "measurekit"
     type = Quantity
     kind = "O"
 
-    def __init__(self, unit: CompoundUnit | str | None = None):
+    def __init__(self, unit: CompoundUnit | str | None = None) -> None:
         """Initializes the dtype with an optional unit."""
+        super().__init__()
+        if isinstance(unit, str):
+            from measurekit.application.context import get_current_system
+
+            unit = get_current_system().resolve_unit(unit)
         self._unit = unit
 
     @property
-    def unit(self) -> CompoundUnit | str | None:
+    def unit(self) -> CompoundUnit | None:
         """Returns the unit associated with this dtype."""
         return self._unit
 
@@ -67,16 +81,22 @@ class MeasureKitDtype(ExtensionDtype):
         raise TypeError(f"Cannot construct a MeasureKitDtype from {string}")
 
 
-class MeasureKitArray(ExtensionArray):
+# ponytail: same optional-pandas fallback-to-object pattern as
+# MeasureKitDtype above.
+class MeasureKitArray(ExtensionArray):  # pyright: ignore[reportGeneralTypeIssues]
     """Pandas ExtensionArray for MeasureKit Quantity."""
 
     def __init__(
         self,
         values: Any,
-        dtype: MeasureKitDtype | None = None,
+        # ponytail: MeasureKitDtype's own base is ambiguous to pyright (see
+        # the fallback-to-object comment above), so referencing it in a
+        # union annotation trips reportGeneralTypeIssues here too.
+        dtype: MeasureKitDtype | None = None,  # pyright: ignore[reportGeneralTypeIssues]
         copy: bool = False,
-    ):
+    ) -> None:
         """Initializes the MeasureKitArray."""
+        super().__init__()
         self._data = (
             np.array(values, dtype=object, copy=True)
             if copy
@@ -100,14 +120,21 @@ class MeasureKitArray(ExtensionArray):
         return type(self)(self._data[item], dtype=self.dtype)
 
     @classmethod
-    def _from_sequence(cls, scalars, dtype=None, copy=False):
+    def _from_sequence(
+        cls,
+        scalars: Sequence[Any],
+        dtype: MeasureKitDtype | None = None,  # pyright: ignore[reportGeneralTypeIssues]
+        copy: bool = False,
+    ) -> MeasureKitArray:
         return cls(scalars, dtype=dtype, copy=copy)
 
     @classmethod
-    def _from_factorized(cls, values, original):
+    def _from_factorized(
+        cls, values: np.ndarray, original: MeasureKitArray
+    ) -> MeasureKitArray:
         return cls(values, dtype=original.dtype)
 
-    def copy(self):
+    def copy(self) -> MeasureKitArray:
         """Returns a copy of the array."""
         return type(self)(self._data.copy(), dtype=self.dtype)
 
@@ -115,7 +142,12 @@ class MeasureKitArray(ExtensionArray):
         """Returns a boolean mask of missing values."""
         return np.array([v is None for v in self._data], dtype=bool)
 
-    def take(self, indices, allow_fill=False, fill_value=None):
+    def take(
+        self,
+        indices: Sequence[int],
+        allow_fill: bool = False,
+        fill_value: Any = None,
+    ) -> MeasureKitArray:
         """Takes elements from the array."""
         from pandas.api.extensions import take
 
@@ -131,11 +163,15 @@ class MeasureKitArray(ExtensionArray):
         self, to_concat: Sequence[MeasureKitArray]
     ) -> MeasureKitArray:
         return type(self)(
-            np.concatenate([cast("np.ndarray", p._data) for p in to_concat]),
+            np.concatenate([p._data for p in to_concat]),
             dtype=self.dtype,
         )
 
-    def _reduce(self, name: str, skipna: bool = True, **kwargs):
+    def _reduce(self, name: str, skipna: bool = True, **kwargs: Any) -> Any:
+        # ponytail: skipna/kwargs are part of pandas' ExtensionArray._reduce
+        # interface (called by pandas internals with these keywords) but
+        # unused by this simple sum-only implementation.
+        del skipna, kwargs
         if name == "sum":
             # Reduction for Quantity objects
             result = self._data[0]

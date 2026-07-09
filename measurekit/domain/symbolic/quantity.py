@@ -10,7 +10,9 @@ try:
     HAVE_SYMENGINE = True
 except ImportError:
     se = None  # type: ignore
-    HAVE_SYMENGINE = False
+    # ponytail: HAVE_SYMENGINE toggles between True/False across the
+    # try/except branches by design; not a real constant-redefinition bug.
+    HAVE_SYMENGINE = False  # pyright: ignore[reportConstantRedefinition]
 
 
 from measurekit import default_system
@@ -35,9 +37,7 @@ class SymbolicQuantity(SymbolicExpression):
             if HAVE_SYMENGINE
             else sp.Symbol(name, positive=True)  # type: ignore
         )
-        resolved_unit = (
-            system.get_unit(unit) if isinstance(unit, str) else unit
-        )
+        resolved_unit = system.resolve_unit(unit)
 
         super().__init__(symbol, resolved_unit, system, variables=None)
         self.variables = {self}
@@ -45,7 +45,9 @@ class SymbolicQuantity(SymbolicExpression):
     @property
     def symbol(self) -> sp.Symbol:
         """Returns the underlying SymPy symbol."""
-        return self.expr
+        # ponytail: self.expr is typed as the parent's general sp.Expr, but
+        # __init__ always constructs this class from a Symbol.
+        return self.expr  # pyright: ignore[reportReturnType]
 
     def __repr__(self) -> str:
         """Returns a string representation."""
@@ -54,6 +56,7 @@ class SymbolicQuantity(SymbolicExpression):
     @classmethod
     def from_expression(cls, *args, **kwargs):
         """Quantities are atomic; this method is disabled."""
+        del args, kwargs
         raise NotImplementedError(
             "Quantities are atomic. Use SymbolicExpression for results."
         )

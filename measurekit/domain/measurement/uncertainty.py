@@ -16,9 +16,10 @@ from measurekit.core.dispatcher import BackendManager
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from numpy.typing import NDArray
-
-    from measurekit.core.protocols import BackendOps
+    from measurekit.core.protocols import BackendOps, Numeric
+    from measurekit.domain.measurement.vectorized_uncertainty import (
+        CovarianceStore,
+    )
 
 UncType = TypeVar("UncType")
 
@@ -39,10 +40,10 @@ class Uncertainty(ABC, Generic[UncType]):
     @abstractmethod
     def add(
         self,
-        other: Uncertainty[UncType],
-        jac_self: Any = 1.0,
-        jac_other: Any = 1.0,
-        out_magnitude: Any = None,
+        other: Uncertainty[UncType] | None,
+        jac_self: Numeric = 1.0,
+        jac_other: Numeric = 1.0,
+        out_magnitude: Numeric | None = None,
     ) -> Uncertainty[UncType]:
         """Propagates uncertainty for addition/subtraction."""
         ...
@@ -58,25 +59,28 @@ class Uncertainty(ABC, Generic[UncType]):
     @abstractmethod
     def propagate_mul_div(
         self,
-        other: Uncertainty[Any],
-        val1: Any,
-        val2: Any,
-        result_value: Any,
-        jac_self: Any = None,
-        jac_other: Any = None,
+        other: Uncertainty[Any] | None,
+        val1: Numeric,
+        val2: Numeric,
+        result_value: Numeric,
+        jac_self: Numeric | None = None,
+        jac_other: Numeric | None = None,
     ) -> Uncertainty[Any]:
         """Propagates uncertainty for multiplication or division."""
         ...
 
     @abstractmethod
     def power(
-        self, exponent: float, value: Any, jac: Any = None
+        self,
+        exponent: float,
+        value: Numeric | None,
+        jac: Numeric | None = None,
     ) -> Uncertainty[Any]:
         """Propagates uncertainty for power."""
         ...
 
     @abstractmethod
-    def scale(self, factor: float | NDArray[Any]) -> Uncertainty[UncType]:
+    def scale(self, factor: Numeric) -> Uncertainty[UncType]:
         """Scales the uncertainty by a factor."""
         ...
 
@@ -98,7 +102,14 @@ class Uncertainty(ABC, Generic[UncType]):
 
         if backend.is_array(std_dev) and backend.size(std_dev) > 1:
             # Check if all elements are zero to avoid unnecessary store registration
-            mask = backend.not_equal(std_dev, 0)
+            # ponytail: UncType is an unbound TypeVar here (classmethod on
+            # a generic base); basedpyright can't verify it satisfies the
+            # Numeric protocol backend ops expect. Same false-positive
+            # pattern as ValueType in quantity.py.
+            mask = backend.not_equal(
+                std_dev,  # pyright: ignore[reportArgumentType]
+                0,
+            )
             if not backend.any(mask):
                 return VarianceModel(variance=std_dev)
             return CovarianceModel.from_standard(std_dev, measurement_id)
@@ -112,9 +123,8 @@ class Uncertainty(ABC, Generic[UncType]):
             return CovarianceModel.from_standard(std_dev, measurement_id)
 
         # For simple scalars with no active store, return None to keep Quantity "simple"
-        if backend.is_array(std_dev) or backend.any(
-            backend.not_equal(std_dev, 0)
-        ):
+        nonzero = backend.not_equal(std_dev, 0)  # pyright: ignore[reportArgumentType]
+        if backend.is_array(std_dev) or backend.any(nonzero):
             return VarianceModel.from_standard(std_dev)
         return None
 
@@ -122,9 +132,9 @@ class Uncertainty(ABC, Generic[UncType]):
     def propagate(
         cls,
         func: Callable[..., Any],
-        values: Sequence[Any],
-        uncertainties: Sequence[Uncertainty[Any]],
-    ) -> tuple[Any, Uncertainty[Any]]:
+        values: Sequence[Numeric],
+        uncertainties: Sequence[Uncertainty[Any] | None],
+    ) -> tuple[Numeric, Uncertainty[Any]]:
         """Generic Autograd-driven propagation.
 
         Returns:
@@ -141,7 +151,15 @@ class Uncertainty(ABC, Generic[UncType]):
         # We check the first uncertainty to decide strategy
         if not uncertainties:
             # If no uncertainties, usually zero uncertainty model
-            return result, cls.from_standard(0.0)
+            # ponytail: UncType is unbound on this classmethod; 0.0 and
+            # the Optional return are both false positives from that
+            # (same pattern as ValueType in quantity.py).
+            return (
+                result,
+                cls.from_standard(  # pyright: ignore[reportReturnType]
+                    0.0  # pyright: ignore[reportArgumentType]
+                ),
+            )
 
         # If any is CovarianceModel, we use Covariance logic
         if any(isinstance(u, CovarianceModel) for u in uncertainties):
@@ -177,28 +195,49 @@ class VarianceModel(Uncertainty[UncType]):
 
         backend = BackendManager.get_backend(self.variance)
         try:
-            return cast("UncType", backend.sqrt(self.variance))
+            # ponytail: UncType is unbound on this instance method's
+            # generic class; basedpyright can't verify it satisfies
+            # Numeric (same false-positive pattern as ValueType in
+            # quantity.py).
+            return cast(
+                "UncType",
+                backend.sqrt(self.variance),  # pyright: ignore[reportArgumentType]
+            )
         except (TypeError, AttributeError):
             # Fallback for types that backend doesn't support (e.g., SymPy Zero)
-            return self.variance**0.5
+            return self.variance**0.5  # pyright: ignore[reportOperatorIssue]
 
     @classmethod
-    def from_standard(cls, std_dev: UncType) -> VarianceModel[UncType]:
-        """Creates a VarianceModel from a standard deviation."""
+    def from_standard(
+        cls, std_dev: UncType, measurement_id: str | None = None
+    ) -> VarianceModel[UncType]:
+        """Creates a VarianceModel from a standard deviation.
+
+        measurement_id is unused here (only CovarianceModel tracks
+        per-measurement lineage) but kept for override parity with
+        Uncertainty.from_standard.
+        """
         backend = BackendManager.get_backend(std_dev)
         # Handle zero variance safely
-        var = backend.pow(std_dev, 2)
-        return cls(variance=var)
+        # ponytail: UncType is unbound on this classmethod; basedpyright
+        # can't verify std_dev/var satisfy Numeric/UncType here (same
+        # false-positive pattern as ValueType in quantity.py).
+        var = backend.pow(std_dev, 2)  # pyright: ignore[reportArgumentType]
+        return cls(variance=var)  # pyright: ignore[reportArgumentType]
 
     @classmethod
     def _propagate_from_jacobians(
         cls,
-        jacs: tuple[Any, ...],
-        uncertainties: Sequence[Uncertainty],
-        values: Sequence[Any],
-        result: Any,
+        jacs: tuple[Numeric, ...],
+        uncertainties: Sequence[Uncertainty | None],
+        values: Sequence[Numeric],
+        _result: Numeric,
     ) -> VarianceModel:
-        """Internal propagation using pre-computed Jacobians."""
+        """Internal propagation using pre-computed Jacobians.
+
+        _result is unused here but kept for positional parity with
+        CovarianceModel._propagate_from_jacobians, which needs it.
+        """
         backend = BackendManager.get_backend(values[0])
 
         total_var = 0.0
@@ -226,11 +265,17 @@ class VarianceModel(Uncertainty[UncType]):
 
             total_var = term if i == 0 else backend.add(total_var, term)
 
-        return cls(variance=total_var)
+        return cls(
+            variance=total_var  # pyright: ignore[reportArgumentType]
+        )
 
     def _matmul_jac_sq_var(
-        self, jac_sq: Any, var_flat: Any, var: Any, backend: BackendOps
-    ) -> Any:
+        self,
+        jac_sq: Numeric,
+        var_flat: Numeric,
+        var: Numeric,
+        backend: BackendOps,
+    ) -> Numeric:
         """Multiplies squared Jacobian by variance, with a scalar fallback."""
         try:
             return backend.sparse_matmul(jac_sq, var_flat)
@@ -242,7 +287,9 @@ class VarianceModel(Uncertainty[UncType]):
                 res = res.todense()
             return res
 
-    def _apply_jacobian(self, var: Any, jac: Any, backend: BackendOps) -> Any:
+    def _apply_jacobian(
+        self, var: Numeric, jac: Numeric | None, backend: BackendOps
+    ) -> Numeric:
         """Applies a Jacobian to a variance vector: var_out = (J^2) @ var_in.
 
         For uncorrelated propagation, we only care about the variance mapping.
@@ -285,10 +332,10 @@ class VarianceModel(Uncertainty[UncType]):
 
     def add(
         self,
-        other: Uncertainty[UncType],
-        jac_self: Any = 1.0,
-        jac_other: Any = 1.0,
-        out_magnitude: Any = None,
+        other: Uncertainty[UncType] | None,
+        jac_self: Numeric = 1.0,
+        jac_other: Numeric = 1.0,
+        out_magnitude: Numeric | None = None,
     ) -> VarianceModel[UncType]:
         """Adds two uncertainty models."""
         backend = BackendManager.get_backend(self.variance)
@@ -304,21 +351,24 @@ class VarianceModel(Uncertainty[UncType]):
         else:
             # Handle numeric or Uncertainty other
             std = getattr(other, "std_dev", other)
-            other_var = backend.pow(std, 2)
+            # ponytail: UncType is unbound here; basedpyright can't verify
+            # std satisfies Numeric (same false-positive pattern as
+            # ValueType in quantity.py).
+            other_var = backend.pow(std, 2)  # pyright: ignore[reportArgumentType]
 
         v_other = self._apply_jacobian(other_var, jac_other, backend)
 
         new_var = backend.add(v_self, v_other)
-        return VarianceModel(new_var)
+        return VarianceModel(new_var)  # pyright: ignore[reportReturnType]
 
     def propagate_mul_div(
         self,
-        other: Uncertainty[Any],
-        val1: Any,
-        val2: Any,
-        result_value: Any,
-        jac_self: Any = None,
-        jac_other: Any = None,
+        other: Uncertainty[Any] | None,
+        val1: Numeric,
+        val2: Numeric,
+        result_value: Numeric,
+        jac_self: Numeric | None = None,
+        jac_other: Numeric | None = None,
     ) -> VarianceModel[Any]:
         """Propagates uncertainty for multiplication/division.
 
@@ -334,7 +384,10 @@ class VarianceModel(Uncertainty[UncType]):
         return self.add(other, jac_self, jac_other, out_magnitude=result_value)
 
     def power(
-        self, exponent: float, value: Any = None, jac: Any = None
+        self,
+        exponent: float,
+        value: Numeric | None = None,
+        jac: Numeric | None = None,
     ) -> VarianceModel[Any]:
         """Propagates uncertainty for exponentiation."""
         backend = BackendManager.get_backend(self.variance)
@@ -349,11 +402,17 @@ class VarianceModel(Uncertainty[UncType]):
         new_var = self._apply_jacobian(self.variance, jac, backend)
         return VarianceModel(new_var)
 
-    def scale(self, factor: float | NDArray[Any]) -> VarianceModel[UncType]:
+    def scale(self, factor: Numeric) -> VarianceModel[UncType]:
         """Scales the uncertainty."""
         backend = BackendManager.get_backend(factor)
-        new_var = backend.mul(self.variance, backend.pow(factor, 2))
-        return VarianceModel(new_var)
+        # ponytail: UncType is unbound here; basedpyright can't verify
+        # self.variance satisfies Numeric (same false-positive pattern as
+        # ValueType in quantity.py).
+        new_var = backend.mul(
+            self.variance,  # pyright: ignore[reportArgumentType]
+            backend.pow(factor, 2),
+        )
+        return VarianceModel(new_var)  # pyright: ignore[reportReturnType]
 
     def __hash__(self) -> int:
         """Hash implementation for VarianceModel."""
@@ -402,7 +461,10 @@ class CovarianceModel(Uncertainty[UncType]):
             return cls(std_dev_internal=std_dev, vector_slice=slc)
 
         uid = measurement_id or str(uuid.uuid4())
-        is_pos = backend.greater(std_dev, 0)
+        # ponytail: UncType is unbound here; basedpyright can't verify
+        # std_dev satisfies Numeric (same false-positive pattern as
+        # ValueType in quantity.py).
+        is_pos = backend.greater(std_dev, 0)  # pyright: ignore[reportArgumentType]
         lineage = {uid: std_dev} if backend.any(is_pos) else {}
 
         return cls(std_dev_internal=std_dev, lineage=lineage)
@@ -410,10 +472,10 @@ class CovarianceModel(Uncertainty[UncType]):
     @classmethod
     def _vector_propagation_path(
         cls,
-        jacs: tuple[Any, ...],
-        uncertainties: Sequence[Uncertainty],
-        result: Any,
-        backend: Any,
+        jacs: tuple[Numeric, ...],
+        uncertainties: Sequence[Uncertainty | None],
+        result: Numeric,
+        backend: BackendOps,
     ) -> CovarianceModel:
         """Propagates via covariance store (vector/array path)."""
         from measurekit.domain.measurement.vectorized_uncertainty import (
@@ -443,7 +505,7 @@ class CovarianceModel(Uncertainty[UncType]):
         return cls(std_dev_internal=std_dev, vector_slice=out_slice)
 
     @staticmethod
-    def _scalar_lineage_from_uncertainty(u: Uncertainty) -> dict:
+    def _scalar_lineage_from_uncertainty(u: Uncertainty) -> dict[str, Numeric]:
         """Returns the lineage dict for a single uncertainty input."""
         if isinstance(u, CovarianceModel):
             return u.lineage
@@ -453,10 +515,10 @@ class CovarianceModel(Uncertainty[UncType]):
     @classmethod
     def _propagate_from_jacobians(
         cls,
-        jacs: tuple[Any, ...],
-        uncertainties: Sequence[Uncertainty],
-        values: Sequence[Any],
-        result: Any,
+        jacs: tuple[Numeric, ...],
+        uncertainties: Sequence[Uncertainty | None],
+        values: Sequence[Numeric],
+        result: Numeric,
     ) -> CovarianceModel:
         """Internal propagation for CovarianceModel."""
         backend = BackendManager.get_backend(values[0])
@@ -470,7 +532,7 @@ class CovarianceModel(Uncertainty[UncType]):
             )
 
         # Scalar Path (Lineage): merge coeff_new(uid) = sum(J_k * coeff_k(uid))
-        new_lineage: dict = {}
+        new_lineage: dict[str, Numeric] = {}
         for u, jac in zip(uncertainties, jacs, strict=False):
             if u is None:
                 continue
@@ -488,8 +550,20 @@ class CovarianceModel(Uncertainty[UncType]):
             if backend.any(backend.not_equal(v, 0))
         }
 
-        dummy_inst = cls(std_dev_internal=0.0)
-        new_std = dummy_inst._compute_std_dev(filtered_lineage, backend)
+        # ponytail: UncType is unbound on this classmethod; 0.0 is a
+        # false positive from that (same pattern as ValueType in
+        # quantity.py).
+        dummy_inst = cls(
+            std_dev_internal=0.0  # pyright: ignore[reportArgumentType]
+        )
+        # ponytail: UncType is unbound on this classmethod, so
+        # dict[str, Numeric] can't be proven to satisfy the invariant
+        # dict[str, UncType] parameter (same pattern as ValueType in
+        # quantity.py).
+        new_std = dummy_inst._compute_std_dev(
+            filtered_lineage,  # pyright: ignore[reportArgumentType]
+            backend,
+        )
 
         needs_reshape = (
             backend.is_array(result) and backend.shape(result) != ()
@@ -497,7 +571,10 @@ class CovarianceModel(Uncertainty[UncType]):
         if needs_reshape:
             new_std = backend.reshape(new_std, backend.shape(result))
 
-        return cls(std_dev_internal=new_std, lineage=filtered_lineage)
+        return cls(
+            std_dev_internal=new_std,
+            lineage=filtered_lineage,  # pyright: ignore[reportArgumentType]
+        )
 
     def __hash__(self) -> int:
         """Hash implementation for CovarianceModel."""
@@ -533,7 +610,13 @@ class CovarianceModel(Uncertainty[UncType]):
         if not lineage:
             return cast("UncType", 0.0)
         values = list(lineage.values())
-        squares = [backend.pow(v, 2) for v in values]
+        # ponytail: UncType is unbound here; basedpyright can't verify v
+        # satisfies Numeric (same false-positive pattern as ValueType in
+        # quantity.py).
+        squares = [
+            backend.pow(v, 2)  # pyright: ignore[reportArgumentType]
+            for v in values
+        ]
         sum_sq = squares[0]
         for s in squares[1:]:
             sum_sq = backend.add(sum_sq, s)
@@ -541,12 +624,12 @@ class CovarianceModel(Uncertainty[UncType]):
 
     def _add_other_to_store(
         self,
-        other: Uncertainty,
-        jac_other: Any,
-        store: Any,
-        backend: Any,
-        in_slices: list,
-        jacobians: list,
+        other: Uncertainty | None,
+        jac_other: Numeric,
+        store: CovarianceStore,
+        backend: BackendOps,
+        in_slices: list[slice],
+        jacobians: list[Numeric],
     ) -> None:
         """Appends the 'other' uncertainty's slice and jacobian to the store lists."""
         if other is None:
@@ -560,11 +643,11 @@ class CovarianceModel(Uncertainty[UncType]):
 
     def _add_vector_path(
         self,
-        other: Uncertainty,
-        jac_self: Any,
-        jac_other: Any,
-        out_magnitude: Any,
-        backend: Any,
+        other: Uncertainty | None,
+        jac_self: Numeric,
+        jac_other: Numeric,
+        out_magnitude: Numeric,
+        backend: BackendOps,
     ) -> CovarianceModel:
         """Vector-path implementation of add() — uses the covariance store."""
         from measurekit.domain.measurement.vectorized_uncertainty import (
@@ -591,10 +674,14 @@ class CovarianceModel(Uncertainty[UncType]):
         )
 
     def _merge_lineage_with_jac(
-        self, other: Uncertainty, jac_self: Any, jac_other: Any, backend: Any
-    ) -> dict:
+        self,
+        other: Uncertainty | None,
+        jac_self: Numeric,
+        jac_other: Numeric,
+        backend: BackendOps,
+    ) -> dict[str, Numeric]:
         """Merges self.lineage and other's lineage scaled by their jacobians."""
-        other_lineage: dict = {}
+        other_lineage: dict[str, Numeric] = {}
         if other is not None:
             if isinstance(other, CovarianceModel):
                 other_lineage = other.lineage
@@ -602,7 +689,7 @@ class CovarianceModel(Uncertainty[UncType]):
                 std = getattr(other, "std_dev", other)
                 other_lineage = {str(uuid.uuid4()): std}
 
-        new_lineage: dict = {
+        new_lineage: dict[str, Numeric] = {
             uid: backend.mul(coeff, jac_self)
             for uid, coeff in self.lineage.items()
         }
@@ -620,10 +707,10 @@ class CovarianceModel(Uncertainty[UncType]):
 
     def add(
         self,
-        other: Uncertainty[UncType],
-        jac_self: Any = 1.0,
-        jac_other: Any = 1.0,
-        out_magnitude: Any = None,
+        other: Uncertainty[UncType] | None,
+        jac_self: Numeric = 1.0,
+        jac_other: Numeric = 1.0,
+        out_magnitude: Numeric | None = None,
     ) -> Uncertainty[UncType]:
         """Adds two uncertainty models (correlated)."""
         backend = BackendManager.get_backend(self.std_dev_internal)
@@ -640,7 +727,14 @@ class CovarianceModel(Uncertainty[UncType]):
         filtered_lineage = self._merge_lineage_with_jac(
             other, jac_self, jac_other, backend
         )
-        new_std = self._compute_std_dev(filtered_lineage, backend)
+        # ponytail: UncType is unbound here (instance is Uncertainty[UncType]
+        # generically), so dict[str, Numeric] can't be proven to satisfy the
+        # invariant dict[str, UncType] parameter (same pattern as ValueType
+        # in quantity.py).
+        new_std = self._compute_std_dev(
+            filtered_lineage,  # pyright: ignore[reportArgumentType]
+            backend,
+        )
 
         needs_reshape = (
             backend.is_array(out_magnitude)
@@ -650,17 +744,18 @@ class CovarianceModel(Uncertainty[UncType]):
             new_std = backend.reshape(new_std, backend.shape(out_magnitude))
 
         return CovarianceModel(
-            std_dev_internal=new_std, lineage=filtered_lineage
+            std_dev_internal=new_std,
+            lineage=filtered_lineage,  # pyright: ignore[reportArgumentType]
         )
 
     def propagate_mul_div(
         self,
-        other: Uncertainty[Any],
-        val1: Any,
-        val2: Any,
-        result_value: Any,
-        jac_self: Any = None,
-        jac_other: Any = None,
+        other: Uncertainty[Any] | None,
+        val1: Numeric,
+        val2: Numeric,
+        result_value: Numeric,
+        jac_self: Numeric | None = None,
+        jac_other: Numeric | None = None,
     ) -> CovarianceModel[Any]:
         """Propagates uncertainty for multiplication/division (correlated).
 
@@ -679,7 +774,10 @@ class CovarianceModel(Uncertainty[UncType]):
         )
 
     def power(
-        self, exponent: float, value: Any = None, jac: Any = None
+        self,
+        exponent: float,
+        value: Numeric | None = None,
+        jac: Numeric | None = None,
     ) -> CovarianceModel[Any]:
         """Propagates uncertainty for exponentiation (correlated)."""
         backend = BackendManager.get_backend(self.std_dev_internal)
@@ -691,24 +789,36 @@ class CovarianceModel(Uncertainty[UncType]):
             term = backend.pow(value, exponent - 1)
             jac = backend.mul(term, exponent)
 
+        # ponytail: UncType is unbound on these instance methods;
+        # basedpyright can't verify lineage values satisfy Numeric/UncType
+        # (same false-positive pattern as ValueType in quantity.py).
         new_lineage = {
-            uid: backend.mul(coeff, jac) for uid, coeff in self.lineage.items()
+            uid: backend.mul(coeff, jac)  # pyright: ignore[reportArgumentType]
+            for uid, coeff in self.lineage.items()
         }
         filtered = {
             k: v
             for k, v in new_lineage.items()
             if backend.any(backend.not_equal(v, 0))
         }
-        new_std = self._compute_std_dev(filtered, backend)
+        new_std = self._compute_std_dev(
+            filtered,  # pyright: ignore[reportArgumentType]
+            backend,
+        )
 
         return CovarianceModel(std_dev_internal=new_std, lineage=filtered)
 
-    def scale(self, factor: float | NDArray[Any]) -> CovarianceModel[UncType]:
+    def scale(self, factor: Numeric) -> CovarianceModel[UncType]:
         """Scales the uncertainty (correlated)."""
         backend = BackendManager.get_backend(factor)
         new_lineage = {
-            uid: backend.mul(coeff, factor)
+            uid: backend.mul(coeff, factor)  # pyright: ignore[reportArgumentType]
             for uid, coeff in self.lineage.items()
         }
-        new_std = backend.mul(self.std_dev_internal, backend.abs(factor))
-        return CovarianceModel(std_dev_internal=new_std, lineage=new_lineage)
+        new_std = backend.mul(
+            self.std_dev_internal,  # pyright: ignore[reportArgumentType]
+            backend.abs(factor),
+        )
+        return CovarianceModel(  # pyright: ignore[reportReturnType]
+            std_dev_internal=new_std, lineage=new_lineage
+        )
