@@ -180,6 +180,10 @@ class JaxBackend(BackendOps):
                 pass
         return "cpu"
 
+    def preserves_native_gradients(self) -> bool:
+        """JAX arrays flow through the functional API's explicit state, not this coercion path."""
+        return False
+
     @enforce_tensor_contract
     def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise addition."""
@@ -407,6 +411,16 @@ class JaxBackend(BackendOps):
         """Returns an array of ones."""
         dtype = getattr(reference, "dtype", None)
         return jnp.ones(shape, dtype=dtype)
+
+    def zeros(self, shape: tuple[int, ...], reference: Any = None) -> Numeric:
+        """Returns an array of zeros."""
+        dtype = getattr(reference, "dtype", None)
+        return jnp.zeros(shape, dtype=dtype)
+
+    def from_scipy_sparse(self, matrix: Any) -> Any:
+        """Converts a SciPy sparse matrix to a JAX sparse (or dense-fallback) array."""
+        coo = matrix.tocoo()
+        return self.sparse_matrix(coo.data, (coo.row, coo.col), matrix.shape)
 
     def size(self, obj: Any) -> int:
         """Returns the total number of elements in the object."""

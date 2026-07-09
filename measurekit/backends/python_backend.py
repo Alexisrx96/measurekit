@@ -44,6 +44,10 @@ class PythonBackend(BackendOps):
         """Returns the device of the object (always 'cpu')."""
         return "cpu"
 
+    def preserves_native_gradients(self) -> bool:
+        """Plain Python numbers/lists have no autograd to preserve."""
+        return False
+
     @enforce_tensor_contract
     def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Adds two values (or lists element-wise)."""
@@ -349,6 +353,10 @@ class PythonBackend(BackendOps):
         """Constructs a sparse matrix from COO data."""
         raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
 
+    def from_scipy_sparse(self, matrix: Any) -> Any:
+        """Sparse matrices are not supported in PythonBackend."""
+        raise NotImplementedError(self.SPARSE_NOT_SUPPORTED)
+
     def sparse_diags(
         self,
         diagonals: Sequence[Any],
@@ -416,4 +424,16 @@ class PythonBackend(BackendOps):
             [[1.0] * shape[-1] for _ in range(shape[-2])]
             if len(shape) == 2
             else [1.0]
+        )
+
+    def zeros(self, shape: tuple[int, ...], reference: Any = None) -> Any:
+        """Returns an array of zeros with the specified shape."""
+        if len(shape) == 0:
+            return 0.0
+        if len(shape) == 1:
+            return [0.0] * shape[0]
+        return (
+            [[0.0] * shape[-1] for _ in range(shape[-2])]
+            if len(shape) == 2
+            else [0.0]
         )

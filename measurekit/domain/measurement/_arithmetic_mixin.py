@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from typing_extensions import Self
 
+    from measurekit.core.protocols import BackendOps, Numeric
     from measurekit.domain.measurement.quantity import Quantity
+    from measurekit.domain.measurement.system import UnitSystem
 
 from measurekit.domain.exceptions import (
     DimensionError,
@@ -46,31 +48,31 @@ class ArithmeticMixin:
         _core_magnitude: Any  # pyright: ignore[reportUninitializedInstanceVariable]
         unit: CompoundUnit  # pyright: ignore[reportUninitializedInstanceVariable]
         dimension: Dimension  # pyright: ignore[reportUninitializedInstanceVariable]
-        system: Any  # pyright: ignore[reportUninitializedInstanceVariable]
-        magnitude: Any  # pyright: ignore[reportUninitializedInstanceVariable]
-        uncertainty: Uncertainty | None  # pyright: ignore[reportUninitializedInstanceVariable]
-        _backend: Any  # pyright: ignore[reportUninitializedInstanceVariable]
-        _uncertainty_obj: Any  # pyright: ignore[reportUninitializedInstanceVariable]
+        system: UnitSystem  # pyright: ignore[reportUninitializedInstanceVariable]
+        magnitude: Numeric  # pyright: ignore[reportUninitializedInstanceVariable]
+        uncertainty: Numeric  # pyright: ignore[reportUninitializedInstanceVariable]
+        _backend: BackendOps  # pyright: ignore[reportUninitializedInstanceVariable]
+        _uncertainty_obj: Uncertainty | None  # pyright: ignore[reportUninitializedInstanceVariable]
 
         @classmethod
         def _fast_new(
             cls,
-            value: Any,  # pyright: ignore[reportUnusedParameter]
+            value: Numeric,  # pyright: ignore[reportUnusedParameter]
             unit: CompoundUnit,  # pyright: ignore[reportUnusedParameter]
-            uncertainty: Any,  # pyright: ignore[reportUnusedParameter]
-            system: Any,  # pyright: ignore[reportUnusedParameter]
-            dimension: Any,  # pyright: ignore[reportUnusedParameter]
-            backend: Any = None,  # pyright: ignore[reportUnusedParameter]
+            uncertainty: Numeric,  # pyright: ignore[reportUnusedParameter]
+            system: UnitSystem,  # pyright: ignore[reportUnusedParameter]
+            dimension: Dimension,  # pyright: ignore[reportUnusedParameter]
+            backend: BackendOps | None = None,  # pyright: ignore[reportUnusedParameter]
             symbol: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> Quantity: ...
 
         @classmethod
         def from_input(
             cls,
-            value: Any,  # pyright: ignore[reportUnusedParameter]
+            value: Numeric,  # pyright: ignore[reportUnusedParameter]
             unit: CompoundUnit,  # pyright: ignore[reportUnusedParameter]
-            system: Any,  # pyright: ignore[reportUnusedParameter]
-            uncertainty: Any = 0.0,  # pyright: ignore[reportUnusedParameter]
+            system: UnitSystem,  # pyright: ignore[reportUnusedParameter]
+            uncertainty: Numeric = 0.0,  # pyright: ignore[reportUnusedParameter]
             symbol: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> Quantity: ...
 
@@ -79,11 +81,16 @@ class ArithmeticMixin:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _is_zero_uncertainty(u: Any) -> bool:
+    def _is_zero_uncertainty(u: Numeric | None) -> bool:
         """Return True when *u* is absent or a scalar zero."""
         return u is None or (isinstance(u, (int, float)) and not u)
 
-    def _record_op(self, op_name: str, other: Any, res: Any) -> None:
+    def _record_op(
+        self,
+        op_name: str,
+        other: Quantity | Numeric | CompoundUnit,
+        res: Quantity,
+    ) -> None:
         """Record an arithmetic operation in the active tracer (if any)."""
         from measurekit.application.tracing.context import get_active_tracer
 
@@ -92,7 +99,9 @@ class ArithmeticMixin:
                 op_name, operands=(self, other), result=res
             )
 
-    def _has_rust_operand(self, other: Any) -> bool:
+    def _has_rust_operand(
+        self, other: Quantity | Numeric | CompoundUnit | None
+    ) -> bool:
         try:
             from measurekit_core import Quantity as RustCoreQuantity
         except ImportError:
@@ -102,7 +111,9 @@ class ArithmeticMixin:
             and isinstance(other._core_magnitude, RustCoreQuantity)
         )
 
-    def _rust_align_operand(self, other: Any, op_name: str) -> Any:
+    def _rust_align_operand(
+        self, other: Quantity | Numeric | CompoundUnit | None, op_name: str
+    ) -> Quantity | Numeric | CompoundUnit | None:
         """Converts a Quantity operand to self's unit for add/sub ops."""
         if (
             isinstance(other, _q())
@@ -115,8 +126,11 @@ class ArithmeticMixin:
         return other
 
     def _rust_mul_div(
-        self, op_name: str, other: Any, other_val: Any
-    ) -> tuple[Any, Any]:
+        self,
+        op_name: str,
+        other: Quantity | CompoundUnit | Numeric | None,
+        other_val: Numeric,
+    ) -> tuple[Any, CompoundUnit]:
         self_core = self._core_magnitude
         apply = operator.mul if op_name == "mul" else operator.truediv
         if isinstance(other, CompoundUnit):
@@ -125,7 +139,7 @@ class ArithmeticMixin:
             return apply(self_core, other_val), apply(self.unit, other.unit)
         return apply(self_core, other_val), self.unit
 
-    def _rust_pow(self, exponent: Any) -> tuple[Any, Any]:
+    def _rust_pow(self, exponent: Numeric) -> tuple[Any, CompoundUnit]:
         from fractions import Fraction
 
         new_core = self._core_magnitude**exponent
@@ -135,8 +149,11 @@ class ArithmeticMixin:
         return new_core, self.unit ** (exp_r.numerator, exp_r.denominator)
 
     def _rust_op_result(
-        self, op_name: str, other: Any, other_val: Any
-    ) -> tuple[Any, Any] | None:
+        self,
+        op_name: str,
+        other: Quantity | CompoundUnit | Numeric | None,
+        other_val: Numeric | None,
+    ) -> tuple[Any, CompoundUnit] | None:
         self_core = self._core_magnitude
         simple = {
             "add": lambda: (self_core + other_val, self.unit),
@@ -149,19 +166,23 @@ class ArithmeticMixin:
         if op_name in simple:
             return simple[op_name]()
         if op_name in ("mul", "truediv"):
-            return self._rust_mul_div(op_name, other, other_val)
+            return self._rust_mul_div(
+                op_name, other, cast("Numeric", other_val)
+            )
         if op_name == "pow":
-            return self._rust_pow(other_val)
+            return self._rust_pow(cast("Numeric", other_val))
         return None
 
     def _check_and_handle_rust_propagation(
-        self, other: Any, op_name: str
-    ) -> Any:
+        self, other: Quantity | Numeric | CompoundUnit | None, op_name: str
+    ) -> Quantity | None:
         if not self._has_rust_operand(other):
             return None
         other = self._rust_align_operand(other, op_name)
         other_val = other._core_magnitude if isinstance(other, _q()) else other
-        result = self._rust_op_result(op_name, other, other_val)
+        result = self._rust_op_result(
+            op_name, other, cast("Numeric | None", other_val)
+        )
         if result is None:
             return None
         new_core, new_unit = result
@@ -169,12 +190,12 @@ class ArithmeticMixin:
 
     def _add_sub_array_path(
         self,
-        other: Any,
-        new_magnitude: Any,
-        j_self: Any,
-        j_other: Any,
+        other: Quantity,
+        new_magnitude: Numeric,
+        j_self: Numeric,
+        j_other: Numeric,
         op_name: str,
-    ) -> Any:
+    ) -> Quantity:
         """Vectorized uncertainty propagation for add/sub (same unit)."""
         new_unc = self._propagate_vectorized(
             other, new_magnitude, j_self, j_other
@@ -199,13 +220,13 @@ class ArithmeticMixin:
 
     def _add_sub_scalar_path(
         self,
-        other: Any,
-        new_magnitude: Any,
-        u_other: Any,
+        other: Quantity,
+        new_magnitude: Numeric,
+        u_other: Numeric,
         jac_self: float,
         jac_other: float,
         op_name: str,
-    ) -> Any:
+    ) -> Quantity:
         """Scalar uncertainty propagation for add/sub when both share the same unit."""
         u_obj_other = other._uncertainty_obj
         new_u_obj = None
@@ -239,12 +260,12 @@ class ArithmeticMixin:
 
     def _mul_numeric_path(
         self,
-        other: Any,
-        new_magnitude: Any,
-        new_unit: Any,
-        j_self: Any,
+        other: Numeric,
+        new_magnitude: Numeric,
+        new_unit: CompoundUnit,
+        j_self: Numeric,
         op_name: str,
-    ) -> Any:
+    ) -> Quantity:
         """Build and return a result for Quantity * scalar/array-numeric."""
         if self._backend.is_array(new_magnitude):
             new_unc = self._propagate_vectorized(
@@ -302,14 +323,14 @@ class ArithmeticMixin:
 
     def _mul_qq_path(
         self,
-        other: Any,
-        new_magnitude: Any,
-        new_unit: Any,
-        new_dimension: Any,
-        j_self: Any,
-        j_other: Any,
+        other: Quantity,
+        new_magnitude: Numeric,
+        new_unit: CompoundUnit,
+        new_dimension: Dimension,
+        j_self: Numeric,
+        j_other: Numeric,
         op_name: str,
-    ) -> Any:
+    ) -> Quantity:
         """Build and return a result for Quantity * Quantity (array or scalar)."""
         if self._backend.is_array(new_magnitude):
             new_unc = self._propagate_vectorized(
@@ -373,12 +394,12 @@ class ArithmeticMixin:
 
     def _div_numeric_path(
         self,
-        other: Any,
-        new_magnitude: Any,
-        new_unit: Any,
-        j_self: Any,
+        other: Numeric,
+        new_magnitude: Numeric,
+        new_unit: CompoundUnit,
+        j_self: Numeric,
         op_name: str,
-    ) -> Any:
+    ) -> Quantity:
         """Build and return a result for Quantity / scalar/array-numeric."""
         if self._backend.is_array(new_magnitude):
             new_unc = self._propagate_vectorized(
@@ -434,14 +455,14 @@ class ArithmeticMixin:
 
     def _div_qq_path(
         self,
-        other: Any,
-        new_magnitude: Any,
-        new_unit: Any,
-        new_dimension: Any,
-        j_self: Any,
-        j_other: Any,
+        other: Quantity,
+        new_magnitude: Numeric,
+        new_unit: CompoundUnit,
+        new_dimension: Dimension,
+        j_self: Numeric,
+        j_other: Numeric,
         op_name: str,
-    ) -> Any:
+    ) -> Quantity:
         """Build and return a result for Quantity / Quantity (array or scalar)."""
         if self._backend.is_array(new_magnitude):
             new_unc = self._propagate_vectorized(
@@ -502,18 +523,21 @@ class ArithmeticMixin:
         return res
 
     @staticmethod
-    def _densify_element(x: Any) -> float:
+    def _densify_element(x: Numeric) -> float:
         """Collapse a sparse/array element to a plain Python float."""
         if hasattr(x, "toarray"):  # Sparse matrix
-            return x.toarray().item() if x.size == 1 else x.toarray().sum()
+            return cast(
+                "float",
+                x.toarray().item() if x.size == 1 else x.toarray().sum(),
+            )
         if hasattr(x, "item") and x.size == 1:  # Scalar-like array
-            return x.item()
+            return cast("float", x.item())
         if hasattr(x, "sum") and hasattr(x, "shape") and x.shape != ():
-            return x.sum()
-        return x
+            return cast("float", x.sum())
+        return cast("float", x)
 
     @staticmethod
-    def _ensure_float64(arr: Any) -> Any:
+    def _ensure_float64(arr: Numeric) -> Numeric:
         """Convert an object-dtype array to float64 in-place when possible."""
         if not (hasattr(arr, "dtype") and arr.dtype == object):
             return arr
@@ -532,7 +556,7 @@ class ArithmeticMixin:
             return arr
 
     @staticmethod
-    def _fix_matrix_term(res_var: Any, term2: Any) -> Any:
+    def _fix_matrix_term(res_var: Numeric, term2: Numeric) -> Numeric:
         """Collapse a 2-D square *term2* to its diagonal when *res_var* is 1-D."""
         is_matrix_mismatch = (
             hasattr(res_var, "shape")
@@ -556,13 +580,13 @@ class ArithmeticMixin:
 
     def _propagate_rich_model(
         self,
-        other: Any,
+        other: Quantity | None,
         is_other_q: bool,
-        u_obj_other: Any,
-        jac_self: Any,
-        jac_other: Any,
-        out_magnitude: Any,
-    ) -> Any | None:
+        u_obj_other: Uncertainty | None,
+        jac_self: Numeric,
+        jac_other: Numeric | None,
+        out_magnitude: Numeric,
+    ) -> Numeric | None:
         """Return std_dev via rich uncertainty model, or None to fall through."""
         if self._uncertainty_obj is None and u_obj_other is None:
             return None
@@ -599,11 +623,11 @@ class ArithmeticMixin:
 
     def _propagate_vectorized(
         self,
-        other: Any,
-        out_magnitude: Any,
-        jac_self: Any,
-        jac_other: Any = None,
-    ) -> Any:
+        other: Quantity | None,
+        out_magnitude: Numeric,
+        jac_self: Numeric,
+        jac_other: Numeric | None = None,
+    ) -> Numeric:
         """Helper to propagate vectorized uncertainty."""
         is_other_q = isinstance(other, _q())
         u_obj_other = other._uncertainty_obj if is_other_q else None
@@ -721,7 +745,7 @@ class ArithmeticMixin:
         # Usually differentiation results in meaningful units.
 
         return type(self).from_input(
-            new_mag, new_unit, self.system, uncertainty=0.0
+            cast("Numeric", new_mag), new_unit, self.system, uncertainty=0.0
         )
 
     def _get_converter_if_simple(self):
@@ -736,7 +760,7 @@ class ArithmeticMixin:
         return None
 
     @staticmethod
-    def _scalar_to_python(val: Any) -> Any:
+    def _scalar_to_python(val: Numeric) -> Numeric:
         """Coerce a 0-d array or array scalar to a Python float, if possible."""
         if hasattr(val, "ndim") and val.ndim == 0:
             with contextlib.suppress(ValueError, TypeError):
@@ -746,17 +770,17 @@ class ArithmeticMixin:
                 return val.item()
         return val
 
-    def _affine_to_base(self, q: Any) -> Any:
+    def _affine_to_base(self, q: Quantity) -> Numeric:
         """Convert *q*'s magnitude to the base unit for its dimension."""
         conv = q._get_converter_if_simple()
         if conv:
-            return conv.to_base(q.magnitude)
+            return conv.to_base(cast("float", q.magnitude))
         factor = q.unit._compound_factor(q.system)
         return self._backend.mul(q.magnitude, factor)
 
     def _affine_result_absolute(
-        self, res_base: Any, result_unit: CompoundUnit | None
-    ) -> Any:
+        self, res_base: Numeric, result_unit: CompoundUnit | None
+    ) -> Quantity:
         """Convert *res_base* back through *result_unit* and return a Quantity."""
         if not result_unit:
             raise ValueError("Result unit required for absolute result.")
@@ -767,12 +791,14 @@ class ArithmeticMixin:
                 target_conv = self.system.get_definition(name).converter
         if target_conv is None:
             raise NotImplementedError("Complex absolute units not supported.")
-        res_mag = self._scalar_to_python(target_conv.from_base(res_base))
+        res_mag = self._scalar_to_python(
+            target_conv.from_base(cast("float", res_base))
+        )
         return type(self).from_input(
             res_mag, result_unit, self.system, uncertainty=0.0
         )
 
-    def _affine_result_delta(self, res_base: Any) -> Any:
+    def _affine_result_delta(self, res_base: Numeric) -> Quantity:
         """Express *res_base* in the linear base unit for this dimension."""
         base_unit_name = None
         candidates = self.system.UNIT_REGISTRY.get(self.dimension, {})
@@ -802,7 +828,7 @@ class ArithmeticMixin:
         result_unit: CompoundUnit | None,
     ) -> Quantity:
         """Helper for Affine operations (Absolute/Delta)."""
-        val_self_base = self._affine_to_base(self)
+        val_self_base = self._affine_to_base(cast("Quantity", self))
         val_other_base = self._affine_to_base(other)
 
         # Perform operation in base domain
@@ -901,7 +927,7 @@ class ArithmeticMixin:
         """Computes the hyperbolic tangent."""
         return self._apply_transcendental("tanh")
 
-    def _broadcast_to_size(self, param: Any, size: int) -> Any:
+    def _broadcast_to_size(self, param: Numeric, size: int) -> Numeric:
         """Helper to broadcast a parameter to a flat size-vector."""
         if self._backend.is_array(param):
             shape = self._backend.shape(param)
@@ -967,15 +993,15 @@ class ArithmeticMixin:
         is_log_other = isinstance(conv_other, LogarithmicConverter)
 
         if is_log_self and is_log_other:
-            base_self = conv_self.to_base(self.magnitude)
-            base_other = conv_other.to_base(other.magnitude)
+            base_self = conv_self.to_base(cast("float", self.magnitude))
+            base_other = conv_other.to_base(cast("float", other.magnitude))
 
             if is_add:
                 res_base = self._backend.add(base_self, base_other)
             else:
                 res_base = self._backend.sub(base_self, base_other)
 
-            res_mag = conv_self.from_base(res_base)
+            res_mag = conv_self.from_base(cast("float", res_base))
 
             if hasattr(res_mag, "ndim") and res_mag.ndim == 0:
                 with contextlib.suppress(ValueError, TypeError):
@@ -987,11 +1013,12 @@ class ArithmeticMixin:
         return None
 
     def _resolve_compatible_magnitude(
-        self, other: Any, is_other_q: bool
-    ) -> Any:
+        self, other: Quantity | Numeric, is_other_q: bool
+    ) -> Numeric:
         """Return the numeric value of other, converting units if needed for add/sub."""
         if not is_other_q:
-            return other
+            return cast("Numeric", other)
+        other = cast("Quantity", other)
         if self.unit != other.unit:
             if self.dimension != other.dimension:
                 raise IncompatibleUnitsError(self.unit, other.unit)
@@ -999,8 +1026,8 @@ class ArithmeticMixin:
         return other.magnitude
 
     def _mul_numeric_internal(
-        self, other: Any, new_magnitude: Any, new_unit: Any
-    ) -> Any:
+        self, other: Numeric, new_magnitude: Numeric, new_unit: CompoundUnit
+    ) -> Quantity:
         """Jacobian + dispatch for numeric multiplication path."""
         if self._backend.is_array(new_magnitude):
             size = self._backend.size(new_magnitude)
@@ -1023,8 +1050,8 @@ class ArithmeticMixin:
         )
 
     def _div_numeric_internal(
-        self, other: Any, new_magnitude: Any, new_unit: Any
-    ) -> Any:
+        self, other: Numeric, new_magnitude: Numeric, new_unit: CompoundUnit
+    ) -> Quantity:
         """Jacobian + dispatch for numeric division path."""
         if self._backend.is_array(new_magnitude):
             size = self._backend.size(new_magnitude)
@@ -1048,17 +1075,17 @@ class ArithmeticMixin:
         )
 
     # --- Arithmetic Dunder Methods ---
-    def __add__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __add__(self, other: Quantity | Numeric) -> Quantity:
         """Handles arithmetic with Affine Support."""
         return self._add_sub_impl(other, is_add=True)
 
-    def __sub__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __sub__(self, other: Quantity | Numeric) -> Quantity:
         """Handles subtraction."""
         return self._add_sub_impl(other, is_add=False)
 
     def _add_sub_same_unit(
-        self, other: Any, u_other: Any, is_add: bool, op: str
-    ) -> Quantity[Any, Any, Any]:
+        self, other: Quantity, u_other: Numeric, is_add: bool, op: str
+    ) -> Quantity:
         """Same-unit add/sub with uncertainty (array or scalar path)."""
         backend_op = self._backend.add if is_add else self._backend.sub
         new_magnitude = backend_op(self.magnitude, other.magnitude)
@@ -1083,8 +1110,12 @@ class ArithmeticMixin:
         )
 
     def _add_sub_no_unc_path(
-        self, other: Any, is_other_q: bool, is_add: bool, op: str
-    ) -> Quantity[Any, Any, Any] | None:
+        self,
+        other: Quantity | Numeric,
+        is_other_q: bool,
+        is_add: bool,
+        op: str,
+    ) -> Quantity | None:
         """Fast add/sub when neither operand carries uncertainty."""
         u_other = other.uncertainty if is_other_q else 0.0
         no_unc = self._is_zero_uncertainty(self.uncertainty) and (
@@ -1100,8 +1131,8 @@ class ArithmeticMixin:
         return res
 
     def _add_sub_impl(
-        self, other: Any, is_add: bool
-    ) -> Quantity[Any, Any, Any]:
+        self, other: Quantity | Numeric, is_add: bool
+    ) -> Quantity:
         op = "add" if is_add else "sub"
         rust_res = self._check_and_handle_rust_propagation(other, op)
         if rust_res is not None:
@@ -1139,7 +1170,7 @@ class ArithmeticMixin:
         # Recurse with unit-converted other
         return self._add_sub_impl(other.to(self.unit), is_add)
 
-    def __rsub__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __rsub__(self, other: Quantity | Numeric) -> Quantity:
         """Right subtraction."""
         rust_res = self._check_and_handle_rust_propagation(other, "rsub")
         if rust_res is not None:
@@ -1148,7 +1179,7 @@ class ArithmeticMixin:
         # checks and uncertainty propagation.
         return (-self) + other
 
-    def __mul__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __mul__(self, other: Quantity | Numeric | CompoundUnit) -> Quantity:
         """Multiplies two quantities."""
         rust_res = self._check_and_handle_rust_propagation(other, "mul")
         if rust_res is not None:
@@ -1187,6 +1218,7 @@ class ArithmeticMixin:
             other, (int, float, complex)
         ) or self._backend.is_array(other)
         if is_numeric_other:
+            other = cast("Numeric", other)
             new_magnitude = self._backend.mul(self.magnitude, other)
             new_unit = self.unit * other
             return self._mul_numeric_internal(other, new_magnitude, new_unit)
@@ -1197,7 +1229,7 @@ class ArithmeticMixin:
 
         return NotImplemented
 
-    def _mul_quantities(self, other: Any) -> Quantity[Any, Any, Any]:
+    def _mul_quantities(self, other: Quantity) -> Quantity:
         """Quantity * Quantity with uncertainty propagation."""
         new_magnitude = self._backend.mul(self.magnitude, other.magnitude)
         new_unit = self.unit * other.unit
@@ -1224,15 +1256,17 @@ class ArithmeticMixin:
             "mul",
         )
 
-    def __rmul__(self, other: Any) -> Quantity:
+    def __rmul__(self, other: Quantity | Numeric | CompoundUnit) -> Quantity:
         """Handles reverse multiplication."""
         return self.__mul__(other)
 
-    def __radd__(self, other: Any) -> Quantity:
+    def __radd__(self, other: Quantity | Numeric) -> Quantity:
         """Handles reverse addition."""
         return self.__add__(other)
 
-    def __truediv__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __truediv__(
+        self, other: Quantity | Numeric | CompoundUnit
+    ) -> Quantity:
         """Divides two quantities."""
         rust_res = self._check_and_handle_rust_propagation(other, "truediv")
         if rust_res is not None:
@@ -1271,6 +1305,7 @@ class ArithmeticMixin:
             other, (int, float, complex)
         ) or self._backend.is_array(other)
         if is_numeric_other:
+            other = cast("Numeric", other)
             new_magnitude = self._backend.truediv(self.magnitude, other)
             new_unit = self.unit / other
             return self._div_numeric_internal(other, new_magnitude, new_unit)
@@ -1281,7 +1316,7 @@ class ArithmeticMixin:
 
         return NotImplemented
 
-    def _div_quantities(self, other: Any) -> Quantity[Any, Any, Any]:
+    def _div_quantities(self, other: Quantity) -> Quantity:
         """Quantity / Quantity with uncertainty propagation."""
         new_magnitude = self._backend.truediv(self.magnitude, other.magnitude)
         new_unit = self.unit / other.unit
@@ -1312,7 +1347,7 @@ class ArithmeticMixin:
             "truediv",
         )
 
-    def __pow__(self, exponent: float) -> Quantity[Any, Any, Any]:
+    def __pow__(self, exponent: float) -> Quantity:
         """Raises quantity to power."""
         rust_res = self._check_and_handle_rust_propagation(exponent, "pow")
         if rust_res is not None:
@@ -1350,11 +1385,11 @@ class ArithmeticMixin:
             )
         return res
 
-    def __rpow__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __rpow__(self, other: Numeric) -> Quantity:
         """Right power."""
         return NotImplemented
 
-    def __rtruediv__(self, other: Any) -> Quantity[Any, Any, Any]:
+    def __rtruediv__(self, other: Numeric) -> Quantity:
         """Right division."""
         rust_res = self._check_and_handle_rust_propagation(other, "rtruediv")
         if rust_res is not None:
@@ -1396,7 +1431,7 @@ class ArithmeticMixin:
         """Returns the negation of the quantity."""
         rust_res = self._check_and_handle_rust_propagation(None, "neg")
         if rust_res is not None:
-            return rust_res
+            return cast("Self", rust_res)
 
         return cast(
             "Self",
@@ -1416,7 +1451,7 @@ class ArithmeticMixin:
         """Returns the absolute value of the quantity."""
         rust_res = self._check_and_handle_rust_propagation(None, "abs")
         if rust_res is not None:
-            return rust_res
+            return cast("Self", rust_res)
 
         return cast(
             "Self",

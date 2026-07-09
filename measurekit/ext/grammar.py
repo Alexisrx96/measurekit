@@ -33,14 +33,21 @@ from __future__ import annotations
 
 import math
 import re
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
 from measurekit.domain.notation.lexer import parse_superscript
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from measurekit.domain.measurement.quantity import Quantity
     from measurekit.domain.measurement.system import UnitSystem
+
+    # A statement evaluates to a bare number (unitless arithmetic) or to
+    # a Quantity once a unit identifier enters the expression.
+    GrammarValue: TypeAlias = Quantity[Any, Any, Any] | int | float
+else:
+    GrammarValue = Any
 
 # The tokenizer regex, built from one small pattern per token kind.
 _NUMBER_PAT = r"\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?"
@@ -111,15 +118,15 @@ class _ExprParser:
     def __init__(
         self,
         tokens: list[Token],
-        resolve: Callable[[str], Any],
-        make_quantity: Callable[..., Any],
+        resolve: Callable[[str], GrammarValue],
+        make_quantity: Callable[..., GrammarValue],
     ) -> None:
         self._tokens = tokens
         self._i = 0
         self._resolve = resolve
         self._q = make_quantity
 
-    def parse(self) -> Any:
+    def parse(self) -> GrammarValue:
         result = self._sum()
         if self._i < len(self._tokens):
             tok = self._tokens[self._i]
@@ -134,7 +141,7 @@ class _ExprParser:
         self._i += 1
         return tok
 
-    def _sum(self) -> Any:
+    def _sum(self) -> GrammarValue:
         result = self._product()
         while (tok := self._peek()) and tok.value in ("+", "-"):
             self._next()
@@ -142,7 +149,7 @@ class _ExprParser:
             result = result + rhs if tok.value == "+" else result - rhs
         return result
 
-    def _product(self) -> Any:
+    def _product(self) -> GrammarValue:
         result = self._implicit()
         while (tok := self._peek()) and tok.value in ("*", "/"):
             self._next()
@@ -150,7 +157,7 @@ class _ExprParser:
             result = result * rhs if tok.value == "*" else result / rhs
         return result
 
-    def _implicit(self) -> Any:
+    def _implicit(self) -> GrammarValue:
         result = self._unary()
         # Adjacency is multiplication: `500 N`, `2 m^2`, `3 (x + y)`.
         while (tok := self._peek()) and (
@@ -159,13 +166,13 @@ class _ExprParser:
             result = result * self._power()
         return result
 
-    def _unary(self) -> Any:
+    def _unary(self) -> GrammarValue:
         if (tok := self._peek()) and tok.value == "-":
             self._next()
             return -self._unary()
         return self._power()
 
-    def _power(self) -> Any:
+    def _power(self) -> GrammarValue:
         base = self._atom()
         tok = self._peek()
         if tok and tok.value in ("^", "**"):
@@ -179,7 +186,7 @@ class _ExprParser:
             return base ** parse_superscript(tok.value)
         return base
 
-    def _atom(self) -> Any:
+    def _atom(self) -> GrammarValue:
         tok = self._peek()
         if tok is None:
             raise GrammarError("Unexpected end of expression")
@@ -230,15 +237,15 @@ class GrammarInterpreter:
 
         self._q = QuantityFactory(system)
         self.rel_tol = rel_tol
-        self.env: dict[str, Any] = {}
+        self.env: dict[str, GrammarValue] = {}
 
-    def __getitem__(self, name: str) -> Any:
+    def __getitem__(self, name: str) -> GrammarValue:
         return self.env[name]
 
-    def __setitem__(self, name: str, value: Any) -> None:
+    def __setitem__(self, name: str, value: GrammarValue) -> None:
         self.env[name] = value
 
-    def run(self, source: str) -> list[Any]:
+    def run(self, source: str) -> list[GrammarValue | None]:
         """Evaluates every statement; returns one result per statement.
 
         Assignments yield None; queries, conversions, assertions and bare
@@ -251,7 +258,7 @@ class GrammarInterpreter:
                 results.append(self._eval_statement(stmt))
         return results
 
-    def eval(self, source: str) -> Any:
+    def eval(self, source: str) -> GrammarValue | None:
         """Evaluates statements and returns the last result."""
         results = self.run(source)
         return results[-1] if results else None
@@ -310,7 +317,7 @@ class GrammarInterpreter:
             )
         return tokens[assign_idx + 1 :], lhs_tokens[0].value
 
-    def _eval_statement(self, stmt: str) -> Any:
+    def _eval_statement(self, stmt: str) -> GrammarValue | None:
         tokens = _tokenize(stmt)
 
         eq_idx = _top_level_index(tokens, "==")
@@ -333,19 +340,19 @@ class GrammarInterpreter:
             return value if want_value == "assign" else None
         return value
 
-    def _eval_expr(self, tokens: list[Token]) -> Any:
+    def _eval_expr(self, tokens: list[Token]) -> GrammarValue:
         if not tokens:
             raise GrammarError("Empty expression")
         return _ExprParser(tokens, self._resolve, self._q).parse()
 
-    def _resolve(self, name: str) -> Any:
+    def _resolve(self, name: str) -> GrammarValue:
         if name in self.env:
             return self.env[name]
         # Unknown names are tried as units; UnknownUnitError (with
         # suggestions) propagates if the unit system doesn't know them.
         return self._q(1, name)
 
-    def _is_close(self, lhs: Any, rhs: Any) -> bool:
+    def _is_close(self, lhs: GrammarValue, rhs: GrammarValue) -> bool:
         # ponytail: scalar isclose; no uncertainty-overlap test yet — add a
         # sigma-based comparison if assertions on uncertain values need it.
         if hasattr(lhs, "to") and hasattr(rhs, "unit"):
@@ -355,7 +362,9 @@ class GrammarInterpreter:
         return math.isclose(a, b, rel_tol=self.rel_tol)
 
 
-def evaluate(source: str, **kwargs: Any) -> Any:
+def evaluate(
+    source: str, system: UnitSystem | None = None, rel_tol: float = 1e-9
+) -> GrammarValue | None:
     """One-shot evaluation: fresh interpreter, returns the last result.
 
     Example:
@@ -363,4 +372,4 @@ def evaluate(source: str, **kwargs: Any) -> Any:
         >>> str(evaluate("KE = 0.5 * 2 kg * (3 m/s)^2 = ?"))
         '9.0 kg·m²/s²'
     """
-    return GrammarInterpreter(**kwargs).eval(source)
+    return GrammarInterpreter(system=system, rel_tol=rel_tol).eval(source)

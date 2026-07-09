@@ -25,6 +25,14 @@ _EXCEPTION_ATTRS = {
     "UnknownUnitError",
 }
 _VECTORIZED_ATTRS = {"MeasureKitContext", "PruningConfig"}
+_PLOT_ATTRS = {
+    "plot",
+    "plot_slices",
+    "plot_interactive",
+    "plot_parallel_coordinates",
+    "plot_pairplot",
+    "plot_covariance",
+}
 
 
 def _load_io_attr(name: str) -> Any:
@@ -163,6 +171,11 @@ def __getattr__(name: str) -> Any:
         }
         return _eq_map[name]
 
+    if name in _PLOT_ATTRS:
+        import measurekit.plotting as plotting
+
+        return getattr(plotting, name)
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -200,6 +213,12 @@ __all__ = [
     "get_unit",
     "jit",
     "load_state",
+    "plot",
+    "plot_covariance",
+    "plot_interactive",
+    "plot_pairplot",
+    "plot_parallel_coordinates",
+    "plot_slices",
     "save_state",
     "spectral",
     "system_context",

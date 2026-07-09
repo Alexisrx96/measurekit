@@ -66,6 +66,10 @@ class NumpyBackend(BackendOps):
         """Returns 'cpu' for NumPy backend."""
         return "cpu"
 
+    def preserves_native_gradients(self) -> bool:
+        """NumPy has no autograd; values are always coerced to NumPy arrays."""
+        return False
+
     @enforce_tensor_contract
     def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise addition."""
@@ -395,3 +399,13 @@ class NumpyBackend(BackendOps):
         """Returns an array of ones."""
         dtype = getattr(reference, "dtype", None)
         return np.ones(shape, dtype=dtype)
+
+    @enforce_tensor_contract
+    def zeros(self, shape: tuple[int, ...], reference: Any = None) -> Numeric:
+        """Returns an array of zeros."""
+        dtype = getattr(reference, "dtype", None)
+        return np.zeros(shape, dtype=dtype)
+
+    def from_scipy_sparse(self, matrix: Any) -> Any:
+        """SciPy sparse matrices are already this backend's native representation."""
+        return matrix

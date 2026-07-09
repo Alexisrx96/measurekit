@@ -82,11 +82,7 @@ class SpecializedQuantityFactory:
             self._system if self._system is not None else get_active_system()
         )
         if from_unit:
-            temp_unit = (
-                system.get_unit(from_unit)
-                if isinstance(from_unit, str)
-                else from_unit
-            )
+            temp_unit = system.resolve_unit(from_unit)
             temp_q = Quantity.from_input(
                 value, temp_unit, system, uncertainty, symbol
             )
@@ -160,9 +156,10 @@ class QuantityFactory:
             # system)
             if unit is not None:
                 # Resolve unit in the target system preferably
-                target_unit = (
-                    system.get_unit(unit) if isinstance(unit, str) else unit
-                )
+                # ponytail: `unit` is Any here because this __call__ impl
+                # backs generic overloads (unit: _UT) used for literal-string
+                # unit narrowing by the mypy plugin; genuinely dynamic.
+                target_unit = system.resolve_unit(unit)  # pyright: ignore[reportAny]
                 value = value.to(target_unit)
 
             # Move to the target system if different
@@ -184,10 +181,14 @@ class QuantityFactory:
             value, unit = self._parse_string_value(value, system)
 
         # Handle string unit resolution
-        if unit is None:
-            unit = system.get_unit("dimensionless")
-        elif isinstance(unit, str):
-            unit = system.get_unit(unit)
+        # ponytail: `unit` is Any here because this __call__ impl backs
+        # generic overloads (unit: _UT) used for literal-string unit
+        # narrowing by the mypy plugin; genuinely dynamic.
+        unit = (
+            system.get_unit("dimensionless")
+            if unit is None
+            else system.resolve_unit(unit)  # pyright: ignore[reportAny]
+        )
 
         return Quantity.from_input(
             value=value,
@@ -204,11 +205,7 @@ class QuantityFactory:
         system = (
             self._system if self._system is not None else get_active_system()
         )
-        default_unit = (
-            system.get_unit(unit_expression)
-            if isinstance(unit_expression, str)
-            else unit_expression
-        )
+        default_unit = system.resolve_unit(unit_expression)
         if default_unit in self._cache:
             return self._cache[default_unit]
         factory = SpecializedQuantityFactory(default_unit, system)

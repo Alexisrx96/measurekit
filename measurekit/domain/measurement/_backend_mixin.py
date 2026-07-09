@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import operator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing_extensions import Self
+
+    from measurekit.core.protocols import Numeric
 
 from measurekit.domain.exceptions import IncompatibleUnitsError
 from measurekit.domain.measurement.uncertainty import Uncertainty
@@ -46,7 +48,9 @@ class BackendMixin:
         )
     )
 
-    def _numpy_ufunc_reduce(self, ufunc, inputs, kwargs):
+    def _numpy_ufunc_reduce(
+        self, ufunc: Any, inputs: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
         """Handle np.add.reduce (e.g. np.sum); return NotImplemented for others."""
         import numpy as np
 
@@ -58,7 +62,7 @@ class BackendMixin:
         res_mag = self._backend.sum(inp.magnitude, axis=kwargs.get("axis"))
         return type(self).from_input(res_mag, inp.unit, self.system)
 
-    def _numpy_ufunc_check_compatible(self, val):
+    def _numpy_ufunc_check_compatible(self, val: Any) -> None:
         """Raise IncompatibleUnitsError on dimension mismatch."""
         if (
             isinstance(val, _q())
@@ -67,7 +71,9 @@ class BackendMixin:
         ):
             raise IncompatibleUnitsError(self.unit, val.unit)
 
-    def _numpy_ufunc_arithmetic(self, ufunc, inputs):
+    def _numpy_ufunc_arithmetic(
+        self, ufunc: Any, inputs: tuple[Any, ...]
+    ) -> Any:
         """Dispatch numpy arithmetic ufuncs (add/sub/mul/div/pow)."""
         import numpy as np
 
@@ -91,8 +97,13 @@ class BackendMixin:
         return NotImplemented
 
     def _numpy_ufunc_trig_with_uncertainty(
-        self, ufunc, inp, res_mag, u_inp, **kwargs
-    ):
+        self,
+        ufunc: Any,
+        inp: Any,
+        res_mag: Numeric,
+        u_inp: Numeric,
+        **kwargs: Any,
+    ) -> Any:
         """Propagate uncertainty through a trig ufunc; returns a Quantity."""
         # ponytail: kwargs is part of the call signature forwarded from
         # __array_ufunc__ (numpy ufunc kwargs like `where=`) but the
@@ -116,7 +127,9 @@ class BackendMixin:
                 res_mag, CompoundUnit({}), self.system, uncertainty=u_inp
             )
 
-    def _numpy_ufunc_trig(self, ufunc, inputs, kwargs):
+    def _numpy_ufunc_trig(
+        self, ufunc: Any, inputs: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
         """Handle dimensionless trig ufuncs; return NotImplemented if ufunc not recognised."""
         if ufunc.__name__ not in self._NUMPY_TRIG_NAMES:
             return NotImplemented
@@ -132,7 +145,13 @@ class BackendMixin:
             )
         return type(self).from_input(res_mag, CompoundUnit({}), self.system)
 
-    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+    def __array_ufunc__(
+        self,
+        ufunc: Any,
+        method: str,
+        *inputs: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Handles NumPy ufuncs by delegating to the backend."""
         try:
             import numpy as np
@@ -163,7 +182,9 @@ class BackendMixin:
 
         return self._numpy_ufunc_trig(ufunc, inputs, kwargs)
 
-    def _numpy_concatenate(self, np, args, kwargs):
+    def _numpy_concatenate(
+        self, np: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
         """Collect magnitudes from a same-unit sequence and concatenate them."""
         mags = []
         unit = None
@@ -185,7 +206,13 @@ class BackendMixin:
             system=self.system,
         )
 
-    def __array_function__(self, func, types, args, kwargs):
+    def __array_function__(
+        self,
+        func: Any,
+        types: tuple[type, ...],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
         """Handles NumPy functions like np.concatenate, np.mean."""
         try:
             import numpy as np
@@ -207,7 +234,7 @@ class BackendMixin:
 
         return NotImplemented
 
-    def _torch_unwrap(self, obj):
+    def _torch_unwrap(self, obj: Any) -> Any:
         """Recursively unwrap Quantity objects to their raw magnitudes."""
         if isinstance(obj, _q()):
             return obj.magnitude
@@ -215,7 +242,7 @@ class BackendMixin:
             return type(obj)(self._torch_unwrap(x) for x in obj)
         return obj
 
-    def _torch_arithmetic(self, func, args):
+    def _torch_arithmetic(self, func: Any, args: tuple[Any, ...]) -> Any:
         """Delegate torch arithmetic to Python operators."""
         import torch
 
@@ -231,7 +258,9 @@ class BackendMixin:
             return operator.pow(args[0], args[1])  # type: ignore
         return NotImplemented
 
-    def _torch_unary_math(self, func, args, kwargs):
+    def _torch_unary_math(
+        self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
         """Handle torch unary math (sqrt, abs, trig)."""
         import torch
 
@@ -260,7 +289,9 @@ class BackendMixin:
         res_mag = func(q.magnitude, **kwargs)
         return type(self).from_input(res_mag, CompoundUnit({}), q.system)
 
-    def _torch_fallback(self, func, args, kwargs):
+    def _torch_fallback(
+        self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
         """Unwrap args, call func, and re-wrap the result with the first Quantity's unit."""
         import torch
 
@@ -276,7 +307,13 @@ class BackendMixin:
             )
         return result
 
-    def __torch_function__(self, func, types, args=(), kwargs=None):
+    def __torch_function__(
+        self,
+        func: Any,
+        types: tuple[type, ...],
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
         """Handles Torch functions like torch.mean, torch.relu."""
         if kwargs is None:
             kwargs = {}
@@ -306,7 +343,7 @@ class BackendMixin:
             self._backend,
         )
 
-    def backward(self, *args, **kwargs) -> None:
+    def backward(self, *args: Any, **kwargs: Any) -> None:
         """Delegates autograd backward call to the underlying magnitude."""
         if hasattr(self.magnitude, "backward"):
             self.magnitude.backward(*args, **kwargs)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from measurekit.domain.measurement.quantity import Quantity
 from measurekit.nn.utils import extract_dimension_matrix, null_space_basis
@@ -10,6 +10,8 @@ from measurekit.nn.utils import extract_dimension_matrix, null_space_basis
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from measurekit.core.protocols import Numeric
+    from measurekit.domain.measurement.system import UnitSystem
     from measurekit.domain.measurement.units import CompoundUnit
 
 # --- PyTorch Implementation ---
@@ -34,7 +36,7 @@ try:
             self,
             units: Sequence[CompoundUnit | Quantity],
             out_features: int,
-            system: Any = None,
+            system: UnitSystem | None = None,
         ):
             super().__init__()
             self.in_features = len(units)
@@ -154,7 +156,7 @@ try:
             units: Sequence[CompoundUnit | Quantity],
             out_features: int,
             key: jax.Array,
-            system: Any = None,
+            system: UnitSystem | None = None,
         ):
             self.in_features = len(units)
             self.out_features = out_features
@@ -170,7 +172,7 @@ try:
             n_null = self.V_null.shape[1]
             self.theta = jax.random.normal(key, (n_null, out_features)) * 0.1
 
-        def __call__(self, *inputs: Quantity | Any) -> jnp.ndarray:
+        def __call__(self, *inputs: Quantity | Numeric) -> jnp.ndarray:
             """Forward pass."""
             # 1. Stack Magnitudes
             mags = []

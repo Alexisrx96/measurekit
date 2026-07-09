@@ -135,7 +135,7 @@ class MeasureKitAccessor:
             magnitudes, unit, system, uncertainty=uncertainties
         )
 
-    def to(self, unit_name: str | Any) -> pd.Series:
+    def to(self, unit_name: str) -> pd.Series:
         """Converts the column to a different unit via vectorized engine."""
         vec_q = self.array.to(unit_name)
         return self._wrap_vectorized(vec_q)

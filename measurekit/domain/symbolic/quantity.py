@@ -37,9 +37,7 @@ class SymbolicQuantity(SymbolicExpression):
             if HAVE_SYMENGINE
             else sp.Symbol(name, positive=True)  # type: ignore
         )
-        resolved_unit = (
-            system.get_unit(unit) if isinstance(unit, str) else unit
-        )
+        resolved_unit = system.resolve_unit(unit)
 
         super().__init__(symbol, resolved_unit, system, variables=None)
         self.variables = {self}

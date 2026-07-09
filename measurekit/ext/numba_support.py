@@ -1,9 +1,16 @@
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
+# ponytail: numba ships no type stubs; every value crossing its compiler
+# API (c.pyapi, cgutils, c.context, ...) is genuinely untyped upstream, not
+# a gap in our own annotations.
 """Numba extension for MeasureKit.
 
 Allows Quantity objects to be passed into @njit decorated functions.
 """
 
+from typing import Any
+
 from measurekit.domain.measurement.quantity import Quantity
+from measurekit.domain.measurement.units import CompoundUnit
 
 try:
     from numba import types
@@ -20,6 +27,11 @@ try:
 
     HAS_NUMBA = True
 
+    # ponytail: numba ships no type stubs, so every value that crosses its
+    # compiler API (dtype/typ/c/obj/dmm/fe_type/val below) is genuinely
+    # Any from pyright's perspective — no annotation here can recover the
+    # unknown-member errors numba's own untyped API produces downstream.
+
     # --- 1. Definir el Tipo en Numba ---
     class QuantityType(types.Type):
         """Representa una Quantity en el sistema de tipos de Numba.
@@ -28,7 +40,7 @@ try:
         para poder reconstruir el objeto al salir.
         """
 
-        def __init__(self, dtype, unit):
+        def __init__(self, dtype: Any, unit: CompoundUnit) -> None:
             """Initializes the QuantityType."""
             self.dtype = dtype  # El tipo de la magnitud (ej. float64)
             self.unit = unit  # La unidad (CompoundUnit)
@@ -36,13 +48,13 @@ try:
             super().__init__(name=f"Quantity({dtype}, unit={unit!r})")
 
         @property
-        def key(self):
+        def key(self) -> tuple[Any, CompoundUnit]:
             """Numba usa esto para diferenciar tipos."""
             return (self.dtype, self.unit)
 
     # --- 2. Inferencia de Tipos (Python -> Numba) ---
     @typeof_impl.register(Quantity)
-    def typeof_quantity(val, c):
+    def typeof_quantity(val: Quantity, c: Any) -> QuantityType:
         """Le dice a Numba: 'Cuando veas est objeto, crea este Tipo'."""
         # Inferimos el tipo de la magnitud (float, array, etc.)
         mag_type = typeof_impl(val.magnitude, c)
@@ -58,7 +70,7 @@ try:
         La unidad es manejada estáticamente por el sistema de tipos.
         """
 
-        def __init__(self, dmm, fe_type):
+        def __init__(self, dmm: Any, fe_type: QuantityType) -> None:
             """Initializes the QuantityModel."""
             members = [
                 ("magnitude", fe_type.dtype),
@@ -71,7 +83,7 @@ try:
 
     # --- 5. Unboxing (Python -> Native) ---
     @unbox(QuantityType)
-    def unbox_quantity(typ, obj, c):
+    def unbox_quantity(typ: QuantityType, obj: Any, c: Any) -> NativeValue:
         """Convierte el objeto Python Quantity a nuestro struct nativo."""
         # 1. Obtener el atributo .magnitude del objeto Python
         mag_obj = c.pyapi.object_getattr_string(obj, "magnitude")
@@ -97,7 +109,7 @@ try:
 
     # --- 6. Boxing (Native -> Python) ---
     @box(QuantityType)
-    def box_quantity(typ, val, c):
+    def box_quantity(typ: QuantityType, val: Any, c: Any) -> Any:
         """Convierte struct nativo de vuelta a un objeto Python.
 
         Aquí es donde recuperamos la unidad que guardamos en QuantityType.

@@ -25,21 +25,21 @@ except ImportError:
     class RationalUnit:
         """Python fallback for RationalUnit when extension is missing."""
 
-        def __init__(self, dimensions: dict[str, tuple[int, int]]):
+        def __init__(self, dimensions: dict[str, tuple[int, int]]) -> None:
             self.dimensions = dimensions
 
-        def __repr__(self):
+        def __repr__(self) -> str:
             return f"RationalUnit({self.dimensions})"
 
-        def __hash__(self):
+        def __hash__(self) -> int:
             return hash(tuple(sorted(self.dimensions.items())))
 
-        def __eq__(self, other):
+        def __eq__(self, other: object) -> bool:
             if isinstance(other, RationalUnit):
                 return self.dimensions == other.dimensions
             return False
 
-        def __mul__(self, other):
+        def __mul__(self, other: object) -> RationalUnit:
             if not isinstance(other, RationalUnit):
                 return NotImplemented
             new_dims = self.dimensions.copy()
@@ -54,7 +54,7 @@ except ImportError:
                     new_dims[k] = (res.numerator, res.denominator)
             return RationalUnit(new_dims)
 
-        def __truediv__(self, other):
+        def __truediv__(self, other: object) -> RationalUnit:
             if not isinstance(other, RationalUnit):
                 return NotImplemented
             new_dims = self.dimensions.copy()
@@ -69,15 +69,21 @@ except ImportError:
                     new_dims[k] = (res.numerator, res.denominator)
             return RationalUnit(new_dims)
 
-        def __pow__(self, power):
+        def __pow__(self, power: int | tuple[int, int]) -> RationalUnit:
             if isinstance(power, int):
                 p = Fraction(power, 1)
-            elif isinstance(power, tuple) and len(power) == 2:
+            # ponytail: this dunder is reachable from `**` with arbitrary
+            # runtime arguments regardless of the static annotation, so the
+            # tuple-length guard is a real runtime check, not dead code.
+            elif (
+                isinstance(power, tuple)  # pyright: ignore[reportUnnecessaryIsInstance]
+                and len(power) == 2
+            ):
                 p = Fraction(*power)
             else:
-                return NotImplemented
+                return NotImplemented  # pyright: ignore[reportUnreachable]
 
-            new_dims = {}
+            new_dims: dict[str, tuple[int, int]] = {}
             for k, v in self.dimensions.items():
                 f = Fraction(*v) * p
                 if f != 0:
@@ -94,7 +100,7 @@ class Node:
 
     __slots__ = ("args", "op")
 
-    def __init__(self, op: str, args: tuple[Any, ...]):
+    def __init__(self, op: str, args: tuple[Any, ...]) -> None:
         self.op = op
         self.args = args
 
@@ -102,7 +108,7 @@ class Node:
 class TracerQuantity:
     """A symbolic quantity used during JIT tracing."""
 
-    def __init__(self, node: str | Node | float, unit: RationalUnit):
+    def __init__(self, node: str | Node | float, unit: RationalUnit) -> None:
         self.node = node
         self.unit = unit
 
@@ -247,14 +253,14 @@ def _rational_unit_to_exponents(
     return exponents
 
 
-def jit(func: Callable):
+def jit(func: Callable) -> Callable:
     """JIT compiler for unit-aware functions.
 
     Traces the function to validate units and bakes a unit-less numerical kernel.
     """
 
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         from measurekit.application.context import get_uncertainty_mode
         from measurekit.domain.measurement.quantity import Quantity
 

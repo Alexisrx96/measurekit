@@ -97,6 +97,10 @@ class CoreBackend(BackendOps):
         """Returns the device of the object (always 'cpu')."""
         return "cpu"
 
+    def preserves_native_gradients(self) -> bool:
+        """Scalar core quantities carry no autograd state."""
+        return False
+
     def sum(self, obj: Any, axis: int | Sequence[int] | None = None) -> Any:
         """Returns a scalar core quantity unchanged."""
         return obj
@@ -186,6 +190,10 @@ class CoreBackend(BackendOps):
         """Sparse matrices are not supported for scalar core quantities."""
         raise NotImplementedError(self.CORE_NOT_SUPPORTED)
 
+    def from_scipy_sparse(self, matrix: Any) -> Any:
+        """Sparse matrices are not supported for scalar core quantities."""
+        raise NotImplementedError(self.CORE_NOT_SUPPORTED)
+
     def sparse_diags(
         self,
         diagonals: Sequence[Any],
@@ -222,5 +230,9 @@ class CoreBackend(BackendOps):
         raise NotImplementedError(self.CORE_NOT_SUPPORTED)
 
     def ones(self, shape: tuple[int, ...], reference: Any = None) -> Any:
+        """Array creation is not supported for scalar core quantities."""
+        raise NotImplementedError(self.CORE_NOT_SUPPORTED)
+
+    def zeros(self, shape: tuple[int, ...], reference: Any = None) -> Any:
         """Array creation is not supported for scalar core quantities."""
         raise NotImplementedError(self.CORE_NOT_SUPPORTED)

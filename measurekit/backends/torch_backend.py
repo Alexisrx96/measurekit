@@ -126,6 +126,10 @@ class TorchBackend(BackendOps):
             return str(obj.device)
         return "cpu"
 
+    def preserves_native_gradients(self) -> bool:
+        """Torch tensors carry autograd history that must not be coerced to NumPy."""
+        return True
+
     @enforce_tensor_contract
     def add(self, x: Numeric, y: Numeric) -> Numeric:
         """Element-wise addition."""
@@ -440,6 +444,19 @@ class TorchBackend(BackendOps):
         return torch.sparse_coo_tensor(
             i, v, shape, dtype=torch.float64
         ).coalesce()
+
+    def from_scipy_sparse(self, matrix: Any) -> Any:
+        """Converts a SciPy sparse matrix to a torch sparse COO tensor."""
+        coo = matrix.tocoo()
+        row = torch.as_tensor(coo.row, dtype=torch.long)
+        col = torch.as_tensor(coo.col, dtype=torch.long)
+        values = torch.as_tensor(coo.data, dtype=torch.float64)
+        return torch.sparse_coo_tensor(
+            torch.stack([row, col]),
+            values,
+            size=coo.shape,
+            dtype=torch.float64,
+        )
 
     def sparse_diags(
         self,

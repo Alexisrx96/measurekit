@@ -8,7 +8,7 @@ backend-agnostic execution via the Array API standard.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 try:
     import array_api_compat
@@ -25,10 +25,14 @@ from measurekit.domain.measurement.converters import (
 from measurekit.domain.measurement.units import CompoundUnit
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
+    from measurekit.core.protocols import Numeric
+    from measurekit.domain.measurement.dimensions import Dimension
     from measurekit.domain.measurement.system import UnitSystem
 
 
-def get_xp(*arrays: Any) -> Any:
+def get_xp(*arrays: Numeric) -> ModuleType:
     """Determines the array API namespace for the given inputs.
 
     Args:
@@ -61,7 +65,7 @@ def _get_converter_if_simple(unit: CompoundUnit, system: UnitSystem):
 
 
 def _find_linear_unit_for_dimension(
-    dimension: Any, system: UnitSystem
+    dimension: Dimension, system: UnitSystem
 ) -> CompoundUnit | None:
     """Finds a linear unit (scale=1.0) for the given dimension."""
     # This searches the registry for a base unit or standard linear unit
@@ -75,12 +79,12 @@ def _find_linear_unit_for_dimension(
 
 
 def add_quantities(
-    val1: Any,
+    val1: Numeric,
     unit1: CompoundUnit,
-    val2: Any,
+    val2: Numeric,
     unit2: CompoundUnit,
     system: UnitSystem,
-) -> tuple[Any, CompoundUnit]:
+) -> tuple[Numeric, CompoundUnit]:
     """Adds two quantities.
 
     Examples:
@@ -113,12 +117,12 @@ def add_quantities(
 
 
 def sub_quantities(
-    val1: Any,
+    val1: Numeric,
     unit1: CompoundUnit,
-    val2: Any,
+    val2: Numeric,
     unit2: CompoundUnit,
     system: UnitSystem,
-) -> tuple[Any, CompoundUnit]:
+) -> tuple[Numeric, CompoundUnit]:
     """Subtracts two quantities."""
     is_nonlinear = _check_nonlinear(unit1, unit2, system)
     if is_nonlinear:
@@ -139,7 +143,9 @@ def sub_quantities(
     return result, unit1
 
 
-def _check_nonlinear(unit1, unit2, system) -> bool:
+def _check_nonlinear(
+    unit1: CompoundUnit, unit2: CompoundUnit, system: UnitSystem
+) -> bool:
     conv1 = _get_converter_if_simple(unit1, system)
     conv2 = _get_converter_if_simple(unit2, system)
 
@@ -148,7 +154,13 @@ def _check_nonlinear(unit1, unit2, system) -> bool:
     return bool(nl1 or nl2)
 
 
-def _add_nonlinear(val1, unit1, val2, unit2, system):
+def _add_nonlinear(
+    val1: Numeric,
+    unit1: CompoundUnit,
+    val2: Numeric,
+    unit2: CompoundUnit,
+    system: UnitSystem,
+) -> tuple[Numeric, CompoundUnit]:
     xp = get_xp(val1, val2)
     conv1 = _get_converter_if_simple(unit1, system)
     conv2 = _get_converter_if_simple(unit2, system)
@@ -213,7 +225,13 @@ def _add_nonlinear(val1, unit1, val2, unit2, system):
     return xp.add(val1, val2_converted), unit1
 
 
-def _sub_nonlinear(val1, unit1, val2, unit2, system):
+def _sub_nonlinear(
+    val1: Numeric,
+    unit1: CompoundUnit,
+    val2: Numeric,
+    unit2: CompoundUnit,
+    system: UnitSystem,
+) -> tuple[Numeric, CompoundUnit]:
     xp = get_xp(val1, val2)
     conv1 = _get_converter_if_simple(unit1, system)
     conv2 = _get_converter_if_simple(unit2, system)
@@ -294,12 +312,12 @@ def _sub_nonlinear(val1, unit1, val2, unit2, system):
 
 
 def mul_quantities(
-    val1: Any,
+    val1: Numeric,
     unit1: CompoundUnit,
-    val2: Any,
+    val2: Numeric,
     unit2: CompoundUnit,
     _system: UnitSystem,
-) -> tuple[Any, CompoundUnit]:
+) -> tuple[Numeric, CompoundUnit]:
     """Multiplies two quantities."""
     xp = get_xp(val1, val2)
     result_mag = xp.multiply(val1, val2)
@@ -313,12 +331,12 @@ def mul_quantities(
 
 
 def truediv_quantities(
-    val1: Any,
+    val1: Numeric,
     unit1: CompoundUnit,
-    val2: Any,
+    val2: Numeric,
     unit2: CompoundUnit,
     _system: UnitSystem,
-) -> tuple[Any, CompoundUnit]:
+) -> tuple[Numeric, CompoundUnit]:
     """Divides two quantities."""
     xp = get_xp(val1, val2)
     result_mag = xp.divide(val1, val2)
@@ -332,8 +350,8 @@ def truediv_quantities(
 
 
 def pow_quantities(
-    val1: Any, unit1: CompoundUnit, exponent: Any, _system: UnitSystem
-) -> tuple[Any, CompoundUnit]:
+    val1: Numeric, unit1: CompoundUnit, exponent: Numeric, _system: UnitSystem
+) -> tuple[Numeric, CompoundUnit]:
     """Raises a quantity to a power."""
     xp = get_xp(val1)
     result_mag = xp.pow(val1, exponent)

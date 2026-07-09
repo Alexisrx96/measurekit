@@ -1,9 +1,22 @@
 """Utilities for Physics-Informed Neural Networks."""
 
-from collections.abc import Sequence
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from measurekit.core.dispatcher import BackendManager
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import numpy as np
+
+    from measurekit.core.protocols import Numeric
+    from measurekit.domain.measurement.dimensions import Dimension
+    from measurekit.domain.measurement.quantity import Quantity
+    from measurekit.domain.measurement.system import UnitSystem
+    from measurekit.domain.measurement.units import CompoundUnit
+    from measurekit.domain.notation.typing import ExponentsDict
 
 
 def _compute_rcond_val(
@@ -15,7 +28,7 @@ def _compute_rcond_val(
     return eps * max(m, n)
 
 
-def _null_space_torch(matrix: Any, rcond: float | None) -> Any:
+def _null_space_torch(matrix: Numeric, rcond: float | None) -> Numeric:
     """Computes the null-space basis using PyTorch SVD."""
     import torch
 
@@ -32,7 +45,7 @@ def _null_space_torch(matrix: Any, rcond: float | None) -> Any:
     return vh[rank:].T
 
 
-def _null_space_jax(matrix: Any, rcond: float | None) -> Any:
+def _null_space_jax(matrix: Numeric, rcond: float | None) -> Numeric:
     """Computes the null-space basis using JAX SVD."""
     import jax.numpy as jnp
 
@@ -47,7 +60,7 @@ def _null_space_jax(matrix: Any, rcond: float | None) -> Any:
     return vh[rank:].T.conj()
 
 
-def _null_space_numpy(matrix: Any, rcond: float | None) -> Any:
+def _null_space_numpy(matrix: Numeric, rcond: float | None) -> Numeric:
     """Computes the null-space basis using NumPy SVD."""
     import numpy as np
 
@@ -67,7 +80,7 @@ def _null_space_numpy(matrix: Any, rcond: float | None) -> Any:
     return vh[rank:].T.conj()
 
 
-def null_space_basis(matrix: Any, rcond: float | None = None) -> Any:
+def null_space_basis(matrix: Numeric, rcond: float | None = None) -> Numeric:
     """Computes an orthonormal basis for the null space (kernel) of a matrix.
 
     Args:
@@ -98,7 +111,10 @@ def null_space_basis(matrix: Any, rcond: float | None = None) -> Any:
     return _null_space_numpy(matrix, rcond)
 
 
-def _resolve_system(units_or_quantities: Sequence[Any], system: Any) -> Any:
+def _resolve_system(
+    units_or_quantities: Sequence[Quantity | CompoundUnit],
+    system: UnitSystem | None,
+) -> UnitSystem:
     """Returns ``system`` unchanged, or infers it from the first element."""
     if system is not None:
         return system
@@ -110,7 +126,9 @@ def _resolve_system(units_or_quantities: Sequence[Any], system: Any) -> Any:
     return get_default_system()
 
 
-def _item_dimension(item: Any, system: Any) -> Any:
+def _item_dimension(
+    item: Quantity | CompoundUnit, system: UnitSystem
+) -> Dimension:
     """Returns the dimension of a Quantity or CompoundUnit item."""
     from measurekit.domain.measurement.quantity import Quantity
     from measurekit.domain.measurement.units import CompoundUnit
@@ -122,7 +140,7 @@ def _item_dimension(item: Any, system: Any) -> Any:
     raise ValueError(f"Cannot extract dimension from {type(item)}")
 
 
-def _dim_exponents(d: Any) -> Any:
+def _dim_exponents(d: Dimension | ExponentsDict) -> ExponentsDict:
     """Returns a dict-like mapping of base-dimension -> exponent."""
     if hasattr(d, "exponents"):
         return d.exponents
@@ -132,8 +150,9 @@ def _dim_exponents(d: Any) -> Any:
 
 
 def extract_dimension_matrix(
-    units_or_quantities: Sequence[Any], system: Any = None
-) -> tuple[Any, list[str]]:
+    units_or_quantities: Sequence[Quantity | CompoundUnit],
+    system: UnitSystem | None = None,
+) -> tuple[np.ndarray, list[str]]:
     """Constructs the dimensional constraint matrix D from a list of Units or Quantities.
 
     Args:
@@ -151,7 +170,7 @@ def extract_dimension_matrix(
     dims_list = [_item_dimension(item, system) for item in units_or_quantities]
 
     # 2. Identify all unique base dimensions
-    all_bases: set[Any] = set()
+    all_bases: set[str] = set()
     for d in dims_list:
         all_bases.update(_dim_exponents(d).keys())
 

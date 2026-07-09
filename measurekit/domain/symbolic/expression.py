@@ -24,6 +24,7 @@ from measurekit.domain.exceptions import IncompatibleUnitsError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from measurekit.domain.measurement.dimensions import Dimension
     from measurekit.domain.measurement.quantity import Quantity
     from measurekit.domain.measurement.system import UnitSystem
     from measurekit.domain.measurement.units import CompoundUnit
@@ -35,10 +36,10 @@ class SymbolicExpression:
 
     def __init__(
         self,
-        sympy_expr: Any,
+        sympy_expr: sp.Expr,
         unit: CompoundUnit,
         system: UnitSystem = default_system,
-        variables: set[Any] | None = None,
+        variables: set[SymbolicQuantity] | None = None,
     ):
         """Initializes a symbolic expression."""
         if HAVE_SYMENGINE:
@@ -69,13 +70,13 @@ class SymbolicExpression:
         return self._expr
 
     @property
-    def dimension(self):
+    def dimension(self) -> Dimension:
         """Returns the physical dimension of the expression."""
         return self.unit.dimension(self.system)
 
     # --- NEW: Direct Evaluation ---
     def evaluate(
-        self, output_unit: str | CompoundUnit | None = None, **kwargs: Any
+        self, output_unit: str | CompoundUnit | None = None, **kwargs: Quantity
     ) -> Quantity:
         """Evaluates the expression directly with Quantity arguments.
 
@@ -100,13 +101,13 @@ class SymbolicExpression:
         return func(target, **kwargs)
 
     def __call__(
-        self, output_unit: str | CompoundUnit | None = None, **kwargs: Any
+        self, output_unit: str | CompoundUnit | None = None, **kwargs: Quantity
     ) -> Quantity:
         """Alias for evaluate(), allowing the object to be called."""
         return self.evaluate(output_unit, **kwargs)
 
     # --- NEW: Jupyter Pretty Printing ---
-    def _repr_latex_(self):
+    def _repr_latex_(self) -> str:
         """Returns the LaTeX representation for Jupyter rendering."""
         # Format: Expression [Unit]
         from sympy import latex
@@ -118,7 +119,10 @@ class SymbolicExpression:
 
     # --- Existing Arithmetic Methods ---
     def _operate(
-        self, other: Any, op: Callable, unit_op: Callable
+        self,
+        other: SymbolicExpression | float,
+        op: Callable,
+        unit_op: Callable,
     ) -> SymbolicExpression:
         """Helper to perform operations with unit propagation."""
         if isinstance(other, SymbolicExpression):
@@ -138,7 +142,7 @@ class SymbolicExpression:
             new_expr, self.unit, self.system, self.variables
         )
 
-    def __add__(self, other: Any) -> SymbolicExpression:
+    def __add__(self, other: SymbolicExpression) -> SymbolicExpression:
         """Adds two symbolic expressions."""
         if not isinstance(other, SymbolicExpression):
             raise TypeError("Can only add/sub other SymbolicExpressions.")
@@ -151,7 +155,7 @@ class SymbolicExpression:
             self.variables | other.variables,
         )
 
-    def __sub__(self, other: Any) -> SymbolicExpression:
+    def __sub__(self, other: SymbolicExpression) -> SymbolicExpression:
         """Subtracts two symbolic expressions."""
         if not isinstance(other, SymbolicExpression):
             raise TypeError("Can only add/sub other SymbolicExpressions.")
@@ -164,19 +168,23 @@ class SymbolicExpression:
             self.variables | other.variables,
         )
 
-    def __mul__(self, other: Any) -> SymbolicExpression:
+    def __mul__(self, other: SymbolicExpression | float) -> SymbolicExpression:
         """Multiplies two symbolic expressions."""
         return self._operate(other, lambda x, y: x * y, lambda u1, u2: u1 * u2)
 
-    def __rmul__(self, other: Any) -> SymbolicExpression:
+    def __rmul__(
+        self, other: SymbolicExpression | float
+    ) -> SymbolicExpression:
         """Multiplies two symbolic expressions (reflected)."""
         return self.__mul__(other)
 
-    def __truediv__(self, other: Any) -> SymbolicExpression:
+    def __truediv__(
+        self, other: SymbolicExpression | float
+    ) -> SymbolicExpression:
         """Divides two symbolic expressions."""
         return self._operate(other, lambda x, y: x / y, lambda u1, u2: u1 / u2)
 
-    def __rtruediv__(self, other: Any) -> SymbolicExpression:
+    def __rtruediv__(self, other: float) -> SymbolicExpression:
         """Divides two symbolic expressions (reflected)."""
         if not isinstance(other, (int, float)):
             return NotImplemented
@@ -271,7 +279,11 @@ class SymbolicExpression:
         return SymbolicExpression(new_expr, new_unit, self.system, new_vars)
 
     def integrate(
-        self, variable: SymbolicQuantity, **kwargs
+        self,
+        variable: SymbolicQuantity,
+        # ponytail: sympy's integrate() kwargs (meijerg, conds, risch, ...)
+        # are genuinely dynamic third-party flags, not a typing gap here.
+        **kwargs: Any,
     ) -> SymbolicExpression:
         """Integrates the expression with respect to a variable.
 

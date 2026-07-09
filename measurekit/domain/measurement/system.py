@@ -391,6 +391,14 @@ class UnitSystem(IUnitRepository):
         # Simplify the result of the parsing
         return result.simplify(self)
 
+    def resolve_unit(self, unit: str | CompoundUnit) -> CompoundUnit:
+        """Resolves a unit expression or CompoundUnit to a CompoundUnit.
+
+        Shared boundary parser for public entry points that accept either
+        a unit notation string or an already-constructed CompoundUnit.
+        """
+        return self.get_unit(unit) if isinstance(unit, str) else unit
+
     def get_base_unit_for_dimension(
         self, dimension: Dimension
     ) -> CompoundUnit:
