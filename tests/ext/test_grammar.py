@@ -124,3 +124,8 @@ def test_one_shot_evaluate():
 def test_negative_and_scientific(mn):
     result = mn.eval("-1.5e3 m => km")
     assert math.isclose(result.magnitude, -1.5)
+
+
+def test_unicode_multiplication_and_division_operators(mn):
+    assert mn.eval("2 × 3") == 6  # noqa: RUF001
+    assert mn.eval("6 ÷ 2") == 3

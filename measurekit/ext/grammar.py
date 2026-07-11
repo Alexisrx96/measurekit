@@ -53,7 +53,8 @@ else:
 _NUMBER_PAT = r"\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?"
 _IDENT_PAT = r"[^\W\d]\w*"
 _SUP_PAT = r"[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+"
-_OP_PAT = r"\+/-|±|==|=>|->|\*\*|[-+*/^()=?]"
+_OP_PAT = r"\+/-|±|==|=>|->|\*\*|[-+*/^()=?×÷]"  # noqa: RUF001
+_OP_ALIASES = {"×": "*", "÷": "/"}  # noqa: RUF001
 _TOKEN_RE = re.compile(
     "|".join(
         (
@@ -91,7 +92,10 @@ def _tokenize(stmt: str) -> list[Token]:
                 f"Unexpected character {m.group()!r} at column {m.start()} "
                 f"in: {stmt!r}"
             )
-        tokens.append(Token(kind, m.group(), m.start()))
+        value = m.group()
+        if kind == "OP":
+            value = _OP_ALIASES.get(value, value)
+        tokens.append(Token(kind, value, m.start()))
     return tokens
 
 
