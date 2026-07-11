@@ -25,7 +25,7 @@ from measurekit.ext.chemistry.species import Species
 if TYPE_CHECKING:
     from measurekit.domain.measurement.quantity import Quantity
 
-_ARROW_RE = re.compile(r"->|=|→")
+_ARROW_RE = re.compile(r"<=>|->|=|→|⇌")
 _TERM_RE = re.compile(r"^\s*\d*\s*([A-Za-z0-9()]+)\s*$")
 
 
@@ -136,29 +136,46 @@ class Reaction:
         >>> rxn = Reaction.from_string("H2 + O2 -> H2O")
         >>> rxn.reactant_coeffs, rxn.product_coeffs
         ([2, 1], [2])
+        >>> Reaction.from_string("N2 + 3 H2 ⇌ 2 NH3").reversible
+        True
     """
 
-    __slots__ = ("product_coeffs", "products", "reactant_coeffs", "reactants")
+    __slots__ = (
+        "product_coeffs",
+        "products",
+        "reactant_coeffs",
+        "reactants",
+        "reversible",
+    )
 
     def __init__(
-        self, reactants: list[Species], products: list[Species]
+        self,
+        reactants: list[Species],
+        products: list[Species],
+        reversible: bool = False,
     ) -> None:
         self.reactants = reactants
         self.products = products
+        self.reversible = reversible
         self.reactant_coeffs, self.product_coeffs = _balance(
             reactants, products
         )
 
     @classmethod
     def from_string(cls, equation: str) -> Reaction:
-        """Parses e.g. "2 H2 + O2 -> 2 H2O" (coefficients are re-derived)."""
-        parts = _ARROW_RE.split(equation)
-        if len(parts) != 2:
+        """Parses e.g. "2 H2 + O2 -> 2 H2O" (coefficients are re-derived).
+
+        Accepts irreversible arrows (``->``, ``=``, ``→``) and equilibrium
+        arrows (``⇌``, ``<=>``); the latter set `reversible` to `True`.
+        """
+        match = _ARROW_RE.search(equation)
+        if not match:
             raise ValueError(f"Invalid reaction equation: {equation!r}")
-        lhs, rhs = parts
+        lhs, rhs = equation[: match.start()], equation[match.end() :]
+        reversible = match.group() in ("<=>", "⇌")
         reactants = [_parse_species(t) for t in _split_terms(lhs)]
         products = [_parse_species(t) for t in _split_terms(rhs)]
-        return cls(reactants, products)
+        return cls(reactants, products, reversible=reversible)
 
     def calculate(self, **inputs: Quantity) -> ReactionResult:
         """Finds the limiting reactant and product yields from input masses."""

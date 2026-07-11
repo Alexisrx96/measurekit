@@ -35,6 +35,23 @@ def test_unicode_subscript_formula_in_reaction():
     assert rxn.product_coeffs == [2]
 
 
+def test_equilibrium_arrow_sets_reversible():
+    rxn = Reaction.from_string("N2 + 3 H2 ⇌ 2 NH3")
+    assert rxn.reversible is True
+    assert rxn.reactant_coeffs == [1, 3]
+    assert rxn.product_coeffs == [2]
+
+
+def test_ascii_equilibrium_arrow_sets_reversible():
+    rxn = Reaction.from_string("N2 + 3 H2 <=> 2 NH3")
+    assert rxn.reversible is True
+
+
+def test_irreversible_arrow_leaves_reversible_false():
+    rxn = Reaction.from_string("H2 + O2 -> H2O")
+    assert rxn.reversible is False
+
+
 def test_calculate_limiting_reactant_and_yield():
     rxn = Reaction.from_string("2 H2 + O2 -> 2 H2O")
     result = rxn.calculate(
