@@ -16,6 +16,7 @@ def test_parse_simple_formula():
 def test_parse_unicode_subscript_formula():
     assert parse_formula("H₂O") == {"H": 2, "O": 1}
     assert parse_formula("C₆H₁₂O₆") == {"C": 6, "H": 12, "O": 6}
+    assert parse_formula("Ca(NO₃)₂") == {"Ca": 1, "N": 2, "O": 6}
 
 
 def test_parse_no_count_defaults_to_one():

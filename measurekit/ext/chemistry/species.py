@@ -10,10 +10,10 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from measurekit.domain.notation.lexer import subscript_to_ascii
+
 if TYPE_CHECKING:
     from measurekit.domain.measurement.quantity import Quantity
-
-from measurekit.domain.notation.lexer import subscript_to_ascii
 
 # IUPAC 2021 standard atomic weights: symbol -> (mass g/mol, abs. uncertainty).
 # For elements with no stable isotopes (uncertainty not meaningful), the mass
