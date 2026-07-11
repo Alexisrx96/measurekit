@@ -29,6 +29,12 @@ def test_balance_matches_textbook_stoichiometry(
     assert rxn.product_coeffs == product_coeffs
 
 
+def test_unicode_subscript_formula_in_reaction():
+    rxn = Reaction.from_string("H₂ + O₂ -> H₂O")
+    assert rxn.reactant_coeffs == [2, 1]
+    assert rxn.product_coeffs == [2]
+
+
 def test_calculate_limiting_reactant_and_yield():
     rxn = Reaction.from_string("2 H2 + O2 -> 2 H2O")
     result = rxn.calculate(

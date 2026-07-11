@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
+from measurekit.domain.notation.lexer import subscript_to_ascii
 from measurekit.ext.chemistry.equivalency import mass_to_moles, moles_to_mass
 from measurekit.ext.chemistry.species import Species
 
@@ -33,7 +34,7 @@ def _split_terms(side: str) -> list[str]:
 
 
 def _parse_species(term: str) -> Species:
-    match = _TERM_RE.match(term)
+    match = _TERM_RE.match(subscript_to_ascii(term))
     if not match:
         raise ValueError(f"Invalid reaction term: {term!r}")
     return Species(match.group(1))
