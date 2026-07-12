@@ -170,3 +170,23 @@ def test_sqrt_function_still_works_after_migration(mn):
     # it now goes through the generic _FUNCTIONS dispatch table instead.
     result = mn.eval("sqrt(9 m^2)")
     assert math.isclose(result.to("m").magnitude, 3)
+
+
+def test_round_function(mn):
+    result = mn.eval("round(3.7 m)")
+    assert math.isclose(result.to("m").magnitude, 4)
+
+
+def test_round_function_with_ndigits(mn):
+    result = mn.eval("round(3.14159 m, 2)")
+    assert math.isclose(result.to("m").magnitude, 3.14)
+
+
+def test_floor_function(mn):
+    result = mn.eval("floor(3.7 m)")
+    assert math.isclose(result.to("m").magnitude, 3)
+
+
+def test_ceil_function(mn):
+    result = mn.eval("ceil(3.2 m)")
+    assert math.isclose(result.to("m").magnitude, 4)

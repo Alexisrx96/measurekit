@@ -296,6 +296,9 @@ def _check_arity(
 _FUNCTIONS: dict[str, tuple[int, float, Callable[..., GrammarValue]]] = {
     "abs": (1, 1, lambda x: abs(x)),
     "sqrt": (1, 1, lambda x: x**0.5),
+    "round": (1, 2, lambda *a: round(*a)),
+    "floor": (1, 1, math.floor),
+    "ceil": (1, 1, math.ceil),
 }
 
 
