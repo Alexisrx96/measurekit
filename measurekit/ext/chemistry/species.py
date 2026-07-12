@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from measurekit.domain.notation.lexer import subscript_to_ascii
+
 if TYPE_CHECKING:
     from measurekit.domain.measurement.quantity import Quantity
 
@@ -168,7 +170,10 @@ def parse_formula(formula: str) -> dict[str, int]:
         {'H': 2, 'O': 1}
         >>> parse_formula("Ca(NO3)2")
         {'Ca': 1, 'N': 2, 'O': 6}
+        >>> parse_formula("H₂O")
+        {'H': 2, 'O': 1}
     """
+    formula = subscript_to_ascii(formula)
     stack: list[dict[str, int]] = [{}]
     pos = 0
     for match in _TOKEN_RE.finditer(formula):
