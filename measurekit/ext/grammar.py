@@ -1,6 +1,6 @@
-"""MNML grammar extension: evaluate MeasureNote-style engineering notes.
+"""MKML grammar extension: evaluate MeasureKit-style engineering notes.
 
-Implements the core of the MeasureNote Meta-Language (MNML) as a
+Implements the core of the MeasureKit Meta-Lang (MKML) as a
 zero-dependency interpreter on top of measurekit. Units are plain
 identifiers resolved against the active :class:`UnitSystem`, so
 ``500 N`` is simply implicit multiplication ``500 * N``.
@@ -53,13 +53,16 @@ else:
 _NUMBER_PAT = r"\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?"
 _IDENT_PAT = r"[^\W\d]\w*"
 _SUP_PAT = r"[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+"
-_OP_PAT = r"\+/-|±|==|=>|->|\*\*|[-+*/^()=?]"
+_SQRT_PAT = r"√"
+_OP_PAT = r"\+/-|±|==|=>|->|\*\*|[-+*/^()=?×÷]"  # noqa: RUF001
+_OP_ALIASES = {"×": "*", "÷": "/"}  # noqa: RUF001
 _TOKEN_RE = re.compile(
     "|".join(
         (
             f"(?P<NUMBER>{_NUMBER_PAT})",
             f"(?P<IDENT>{_IDENT_PAT})",
             f"(?P<SUP>{_SUP_PAT})",
+            f"(?P<SQRT>{_SQRT_PAT})",
             f"(?P<OP>{_OP_PAT})",
             r"(?P<WS>[ \t]+)",
             r"(?P<BAD>.)",
@@ -91,7 +94,10 @@ def _tokenize(stmt: str) -> list[Token]:
                 f"Unexpected character {m.group()!r} at column {m.start()} "
                 f"in: {stmt!r}"
             )
-        tokens.append(Token(kind, m.group(), m.start()))
+        value = m.group()
+        if kind == "OP":
+            value = _OP_ALIASES.get(value, value)
+        tokens.append(Token(kind, value, m.start()))
     return tokens
 
 
@@ -109,7 +115,7 @@ def _top_level_index(tokens: list[Token], op: str) -> int:
 
 
 class _ExprParser:
-    """Recursive-descent expression parser mirroring MNML precedence.
+    """Recursive-descent expression parser mirroring MKML precedence.
 
     sum > product > implicit multiplication > power > atom, so
     ``500 N / 2 m^2`` parses as ``(500*N) / (2*m^2)``.
@@ -190,6 +196,15 @@ class _ExprParser:
         tok = self._peek()
         if tok is None:
             raise GrammarError("Unexpected end of expression")
+        if tok.type == "SQRT" or (
+            tok.type == "IDENT"
+            and tok.value == "sqrt"
+            and self._i + 1 < len(self._tokens)
+            and self._tokens[self._i + 1].value == "("
+        ):
+            self._next()
+            operand = self._atom()
+            return operand**0.5
         if tok.value == "(":
             self._next()
             result = self._sum()
@@ -223,7 +238,7 @@ def _to_number(text: str) -> int | float:
 
 
 class GrammarInterpreter:
-    """Stateful interpreter for MNML statements.
+    """Stateful interpreter for MKML statements.
 
     Args:
         system: UnitSystem to resolve units against (default: active system).
@@ -315,6 +330,8 @@ class GrammarInterpreter:
             raise GrammarError(
                 f"Assignment target must be a single name in: {stmt!r}"
             )
+        if lhs_tokens[0].value == "sqrt":
+            raise GrammarError(f"'sqrt' is reserved in: {stmt!r}")
         return tokens[assign_idx + 1 :], lhs_tokens[0].value
 
     def _eval_statement(self, stmt: str) -> GrammarValue | None:

@@ -29,6 +29,29 @@ def test_balance_matches_textbook_stoichiometry(
     assert rxn.product_coeffs == product_coeffs
 
 
+def test_unicode_subscript_formula_in_reaction():
+    rxn = Reaction.from_string("H₂ + O₂ -> H₂O")
+    assert rxn.reactant_coeffs == [2, 1]
+    assert rxn.product_coeffs == [2]
+
+
+def test_equilibrium_arrow_sets_reversible():
+    rxn = Reaction.from_string("N2 + 3 H2 ⇌ 2 NH3")
+    assert rxn.reversible is True
+    assert rxn.reactant_coeffs == [1, 3]
+    assert rxn.product_coeffs == [2]
+
+
+def test_ascii_equilibrium_arrow_sets_reversible():
+    rxn = Reaction.from_string("N2 + 3 H2 <=> 2 NH3")
+    assert rxn.reversible is True
+
+
+def test_irreversible_arrow_leaves_reversible_false():
+    rxn = Reaction.from_string("H2 + O2 -> H2O")
+    assert rxn.reversible is False
+
+
 def test_calculate_limiting_reactant_and_yield():
     rxn = Reaction.from_string("2 H2 + O2 -> 2 H2O")
     result = rxn.calculate(
@@ -95,6 +118,11 @@ def test_non_unique_balance_raises():
 def test_malformed_equation_raises():
     with pytest.raises(ValueError, match="Invalid reaction equation"):
         Reaction.from_string("H2 + O2")
+
+
+def test_multiple_arrows_raises():
+    with pytest.raises(ValueError, match="Invalid reaction equation"):
+        Reaction.from_string("H2 -> O2 -> H2O")
 
 
 def test_missing_reactant_input_raises():
