@@ -161,6 +161,22 @@ def test_abs_function_on_bare_number(mn):
     assert mn.eval("abs(-5)") == 5
 
 
+def test_abs_function_identity_on_positive_quantity(mn):
+    result = mn.eval("abs(3 m)")
+    assert math.isclose(result.to("m").magnitude, 3)
+
+
+def test_abs_function_preserves_uncertainty(mn):
+    result = mn.eval("abs(-3 +/- 0.1 m)")
+    assert math.isclose(result.magnitude, 3)
+    assert math.isclose(result.uncertainty, 0.1)
+
+
+def test_abs_function_on_zero(mn):
+    result = mn.eval("abs(0 m)")
+    assert math.isclose(result.to("m").magnitude, 0)
+
+
 def test_function_call_wrong_arity_raises(mn):
     with pytest.raises(GrammarError, match="abs"):
         mn.eval("abs(1 m, 2 m)")
@@ -198,6 +214,16 @@ def test_ceil_function(mn):
     assert math.isclose(result.to("m").magnitude, 4)
 
 
+def test_floor_function_negative(mn):
+    result = mn.eval("floor(-3.2 m)")
+    assert math.isclose(result.to("m").magnitude, -4)
+
+
+def test_ceil_function_negative(mn):
+    result = mn.eval("ceil(-3.2 m)")
+    assert math.isclose(result.to("m").magnitude, -3)
+
+
 def test_min_function_cross_unit(mn):
     # 200 cm == 2 m, so the smaller of (3 m, 200 cm) is 200 cm/2 m.
     result = mn.eval("min(3 m, 200 cm)")
@@ -217,6 +243,34 @@ def test_min_function_incompatible_units_raises(mn):
 def test_min_function_variadic(mn):
     result = mn.eval("min(5 m, 1 m, 3 m)")
     assert math.isclose(result.to("m").magnitude, 1)
+
+
+def test_max_function_variadic(mn):
+    result = mn.eval("max(5 m, 1 m, 3 m)")
+    assert math.isclose(result.to("m").magnitude, 5)
+
+
+def test_sqrt_of_negative_returns_complex(mn):
+    # Matches Python's own `(-4) ** 0.5` semantics: no unit involved, so
+    # this is bare-number arithmetic, not a Quantity/GrammarError concern.
+    result = mn.eval("sqrt(-4)")
+    assert isinstance(result, complex)
+    assert math.isclose(result.imag, 2.0)
+
+
+_LOG_DOMAIN_ERROR = "domain error|positive input"
+
+
+def test_log_of_zero_raises(mn):
+    # Message wording varies by Python version ("math domain error" vs.
+    # "expected a positive input" on 3.14+).
+    with pytest.raises(ValueError, match=_LOG_DOMAIN_ERROR):
+        mn.eval("log(0)")
+
+
+def test_log_of_negative_raises(mn):
+    with pytest.raises(ValueError, match=_LOG_DOMAIN_ERROR):
+        mn.eval("log(-1)")
 
 
 def test_sin_function_dimensionless(mn):
