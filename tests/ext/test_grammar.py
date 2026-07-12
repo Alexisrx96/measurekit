@@ -149,3 +149,24 @@ def test_sqrt_ascii_function_form(mn):
 def test_sqrt_is_reserved_assignment_target(mn):
     with pytest.raises(GrammarError):
         mn.eval("sqrt = 5 m")
+
+
+def test_abs_function(mn):
+    result = mn.eval("abs(-3 m)")
+    assert math.isclose(result.to("m").magnitude, 3)
+
+
+def test_abs_function_on_bare_number(mn):
+    assert mn.eval("abs(-5)") == 5
+
+
+def test_function_call_wrong_arity_raises(mn):
+    with pytest.raises(GrammarError, match="abs"):
+        mn.eval("abs(1 m, 2 m)")
+
+
+def test_sqrt_function_still_works_after_migration(mn):
+    # Regression: sqrt(...) used to be a hardcoded special case in _atom();
+    # it now goes through the generic _FUNCTIONS dispatch table instead.
+    result = mn.eval("sqrt(9 m^2)")
+    assert math.isclose(result.to("m").magnitude, 3)
