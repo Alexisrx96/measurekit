@@ -7,7 +7,12 @@ from measurekit.domain.exceptions import (
     IncompatibleUnitsError,
     UnknownUnitError,
 )
-from measurekit.ext.grammar import GrammarError, GrammarInterpreter, evaluate
+from measurekit.ext.grammar import (
+    _FUNCTIONS,
+    GrammarError,
+    GrammarInterpreter,
+    evaluate,
+)
 
 
 @pytest.fixture
@@ -147,11 +152,6 @@ def test_sqrt_ascii_function_form(mn):
     assert math.isclose(result.to("m").magnitude, 3)
 
 
-def test_sqrt_is_reserved_assignment_target(mn):
-    with pytest.raises(GrammarError):
-        mn.eval("sqrt = 5 m")
-
-
 def test_abs_function(mn):
     result = mn.eval("abs(-3 m)")
     assert math.isclose(result.to("m").magnitude, 3)
@@ -253,3 +253,9 @@ def test_ln_function_is_natural_log(mn):
 def test_log_function_wrong_dimension_raises(mn):
     with pytest.raises(DimensionError):
         mn.eval("log(3 kg)")
+
+
+@pytest.mark.parametrize("name", sorted(_FUNCTIONS))
+def test_function_names_are_reserved_assignment_targets(mn, name):
+    with pytest.raises(GrammarError):
+        mn.eval(f"{name} = 5 m")

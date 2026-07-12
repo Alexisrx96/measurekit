@@ -403,8 +403,10 @@ class GrammarInterpreter:
             raise GrammarError(
                 f"Assignment target must be a single name in: {stmt!r}"
             )
-        if lhs_tokens[0].value == "sqrt":
-            raise GrammarError(f"'sqrt' is reserved in: {stmt!r}")
+        if lhs_tokens[0].value in _FUNCTIONS:
+            raise GrammarError(
+                f"{lhs_tokens[0].value!r} is reserved in: {stmt!r}"
+            )
         return tokens[assign_idx + 1 :], lhs_tokens[0].value
 
     def _eval_statement(self, stmt: str) -> GrammarValue | None:
