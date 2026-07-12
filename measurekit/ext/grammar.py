@@ -1,6 +1,6 @@
-"""MNML grammar extension: evaluate MeasureNote-style engineering notes.
+"""MKML grammar extension: evaluate MeasureNote-style engineering notes.
 
-Implements the core of the MeasureNote Meta-Language (MNML) as a
+Implements the core of the MeasureKit Meta-Lang (MKML) as a
 zero-dependency interpreter on top of measurekit. Units are plain
 identifiers resolved against the active :class:`UnitSystem`, so
 ``500 N`` is simply implicit multiplication ``500 * N``.
@@ -115,7 +115,7 @@ def _top_level_index(tokens: list[Token], op: str) -> int:
 
 
 class _ExprParser:
-    """Recursive-descent expression parser mirroring MNML precedence.
+    """Recursive-descent expression parser mirroring MKML precedence.
 
     sum > product > implicit multiplication > power > atom, so
     ``500 N / 2 m^2`` parses as ``(500*N) / (2*m^2)``.
@@ -238,7 +238,7 @@ def _to_number(text: str) -> int | float:
 
 
 class GrammarInterpreter:
-    """Stateful interpreter for MNML statements.
+    """Stateful interpreter for MKML statements.
 
     Args:
         system: UnitSystem to resolve units against (default: active system).
