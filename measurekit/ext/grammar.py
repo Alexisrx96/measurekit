@@ -1,4 +1,4 @@
-"""MKML grammar extension: evaluate MeasureNote-style engineering notes.
+"""MKML grammar extension: evaluate MeasureKit-style engineering notes.
 
 Implements the core of the MeasureKit Meta-Lang (MKML) as a
 zero-dependency interpreter on top of measurekit. Units are plain
