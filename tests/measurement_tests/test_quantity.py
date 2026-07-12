@@ -230,6 +230,17 @@ def test_formatting(quantity_system):
     assert format(q_frac, "frac") == "3/2 m"
 
 
+def test_dimensionless_display_omits_unit(quantity_system):
+    """A dimensionless result (e.g. m/m) should not display a trailing '1'."""
+    ratio = quantity_system.Q_(1, "m") / quantity_system.Q_(1, "m")
+    assert str(ratio) == "1.0"
+    assert format(ratio, "alias") == "1.0"
+    assert ratio.to_latex() == "1.0"
+
+    ratio_unc = quantity_system.Q_(1, "m", 0.1) / quantity_system.Q_(1, "m")
+    assert str(ratio_unc) == "(1.0 ± 0.1)"
+
+
 def test_latex_representation(quantity_system):
     """Test LaTeX output."""
     q_unc = quantity_system.Q_(10, "m/s", 0.1)
