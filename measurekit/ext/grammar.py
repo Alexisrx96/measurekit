@@ -40,6 +40,8 @@ Example:
     >>> _ = mn.run("g(x) = let y = x^2 in y + 1")
     >>> mn.eval("g(3)")
     10
+    >>> mn.run("```This text is shown verbatim```")
+    ['This text is shown verbatim']
 """
 
 from __future__ import annotations
@@ -59,9 +61,10 @@ if TYPE_CHECKING:
     from measurekit.domain.measurement.quantity import Quantity
     from measurekit.domain.measurement.system import UnitSystem
 
-    # A statement evaluates to a bare number (unitless arithmetic) or to
-    # a Quantity once a unit identifier enters the expression.
-    GrammarValue: TypeAlias = Quantity[Any, Any, Any] | int | float
+    # A statement evaluates to a bare number (unitless arithmetic), a
+    # Quantity once a unit identifier enters the expression, or a str
+    # for a display-text block.
+    GrammarValue: TypeAlias = Quantity[Any, Any, Any] | int | float | str
 else:
     GrammarValue = Any
 
@@ -85,6 +88,7 @@ _TOKEN_RE = re.compile(
         )
     )
 )
+_TEXT_BLOCK_RE = re.compile(r"```(.*?)```", re.DOTALL)
 
 
 class Token(NamedTuple):
@@ -510,10 +514,26 @@ class GrammarInterpreter:
         """Evaluates every statement; returns one result per statement.
 
         Assignments yield None; queries, conversions, assertions and bare
-        expressions yield their value.
+        expressions yield their value. A triple-backtick-delimited span is a
+        display-text block: it yields its enclosed text verbatim as a str.
         """
-        results = []
-        for raw in re.split(r"[\n;]", source):
+        results: list[GrammarValue | None] = []
+        pos = 0
+        for match in _TEXT_BLOCK_RE.finditer(source):
+            results.extend(self._run_segment(source[pos : match.start()]))
+            text = match.group(1)
+            if text.startswith("\n"):
+                text = text[1:]
+            if text.endswith("\n"):
+                text = text[:-1]
+            results.append(text)
+            pos = match.end()
+        results.extend(self._run_segment(source[pos:]))
+        return results
+
+    def _run_segment(self, segment: str) -> list[GrammarValue | None]:
+        results: list[GrammarValue | None] = []
+        for raw in re.split(r"[\n;]", segment):
             stmt = raw.split("#", 1)[0].strip()
             if stmt:
                 results.append(self._eval_statement(stmt))

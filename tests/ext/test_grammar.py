@@ -482,5 +482,33 @@ def test_in_still_resolves_as_inches_outside_let(mn):
     assert math.isclose(result.to("in").magnitude, 5)
 
 
+def test_display_text_block_inline(mn):
+    results = mn.run("```Hello world```")
+    assert results == ["Hello world"]
+
+
+def test_display_text_block_multiline(mn):
+    results = mn.run("```\nLine one\nLine two\n```")
+    assert results == ["Line one\nLine two"]
+
+
+def test_display_text_block_with_hash_and_backtick_adjacent_chars(mn):
+    results = mn.run("```price is #5 and uses ` backtick```")
+    assert results == ["price is #5 and uses ` backtick"]
+
+
+def test_display_text_block_interleaved_with_statements(mn):
+    results = mn.run("x = 5 m\n```note```\nx => m")
+    assert results[0] is None
+    assert results[1] == "note"
+    assert math.isclose(results[2].magnitude, 5)
+
+
+def test_script_with_no_blocks_unaffected(mn):
+    results = mn.run("a = 1 m\nb = 2 m\na + b = ?")
+    assert math.isclose(results[-1].magnitude, 3)
+
+
+
 
 
