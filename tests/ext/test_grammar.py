@@ -348,3 +348,49 @@ def test_ternary_with_quantities(mn):
 def test_ternary_inside_function_call_args(mn):
     result = mn.eval("max(1 < 2 ? 5 : 1, 3)")
     assert result == 5
+
+
+def test_user_function_basic_call(mn):
+    mn.run("f(x) = x^2")
+    assert mn.eval("f(3)") == 9
+
+
+def test_user_function_multi_param(mn):
+    mn.run("area(w, h) = w * h")
+    result = mn.eval("area(3 m, 4 m)")
+    assert math.isclose(result.to("m^2").magnitude, 12)
+
+
+def test_user_function_wrong_arity_raises(mn):
+    mn.run("f(x) = x^2")
+    with pytest.raises(GrammarError, match="f"):
+        mn.eval("f(1, 2)")
+
+
+def test_user_function_shadowing_builtin_raises(mn):
+    with pytest.raises(GrammarError):
+        mn.eval("abs(x) = x")
+
+
+def test_variable_then_function_namespace_collision(mn):
+    mn.run("f = 5")
+    with pytest.raises(GrammarError):
+        mn.eval("f(x) = x^2")
+
+
+def test_function_then_variable_namespace_collision(mn):
+    mn.run("f(x) = x^2")
+    with pytest.raises(GrammarError):
+        mn.eval("f = 5")
+
+
+def test_user_function_redefinition_allowed(mn):
+    mn.run("f(x) = x^2")
+    mn.run("f(x) = x^3")
+    assert mn.eval("f(2)") == 8
+
+
+def test_user_function_call_inside_larger_expression(mn):
+    mn.run("f(x) = x + 1")
+    assert mn.eval("f(2) * 3") == 9
+

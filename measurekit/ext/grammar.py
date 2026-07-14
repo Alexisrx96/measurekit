@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 import operator
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
 from measurekit.domain.notation.lexer import parse_superscript
@@ -82,6 +83,15 @@ class Token(NamedTuple):
     type: str
     value: str
     pos: int
+
+
+@dataclass
+class UserFunction:
+    """Parsed definition of a user-defined MKML function."""
+
+    params: list[tuple[str, str | None]]  # (name, unit_symbol_or_None)
+    body_tokens: list[Token]
+
 
 
 class GrammarError(ValueError):
@@ -141,11 +151,17 @@ class _ExprParser:
         tokens: list[Token],
         resolve: Callable[[str], GrammarValue],
         make_quantity: Callable[..., GrammarValue],
+        functions: dict[str, UserFunction],
+        call_user_function: Callable[..., GrammarValue],
+        depth: int = 0,
     ) -> None:
         self._tokens = tokens
         self._i = 0
         self._resolve = resolve
         self._q = make_quantity
+        self._functions = functions
+        self._call_user_function = call_user_function
+        self._depth = depth
 
     def parse(self) -> GrammarValue:
         result = self._expr()
@@ -251,6 +267,14 @@ class _ExprParser:
             and self._tokens[self._i + 1].value == "("
         )
 
+    def _is_user_function_call(self, tok: Token) -> bool:
+        return (
+            tok.type == "IDENT"
+            and tok.value in self._functions
+            and self._i + 1 < len(self._tokens)
+            and self._tokens[self._i + 1].value == "("
+        )
+
     def _atom(self) -> GrammarValue:
         tok = self._peek()
         if tok is None:
@@ -266,6 +290,11 @@ class _ExprParser:
             lo, hi, fn = _FUNCTIONS[name]
             _check_arity(name, args, lo, hi)
             return fn(*args)
+        if self._is_user_function_call(tok):
+            name = tok.value
+            self._next()
+            args = self._call_args()
+            return self._call_user_function(name, args)
         if tok.value == "(":
             self._next()
             result = self._expr()
@@ -338,6 +367,40 @@ def _check_arity(
     )
 
 
+def _find_matching_paren(tokens: list[Token], open_idx: int) -> int:
+    """Index of the ')' matching the '(' at open_idx, or -1."""
+    depth = 0
+    for i in range(open_idx, len(tokens)):
+        if tokens[i].value == "(":
+            depth += 1
+        elif tokens[i].value == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _split_on_commas(tokens: list[Token]) -> list[list[Token]]:
+    """Splits a token list on top-level commas into sub-lists."""
+    if not tokens:
+        return []
+    parts: list[list[Token]] = []
+    current: list[Token] = []
+    depth = 0
+    for tok in tokens:
+        if tok.value == "(":
+            depth += 1
+        elif tok.value == ")":
+            depth -= 1
+        if depth == 0 and tok.type == "OP" and tok.value == ",":
+            parts.append(current)
+            current = []
+        else:
+            current.append(tok)
+    parts.append(current)
+    return parts
+
+
 # name -> (min_arity, max_arity, implementation). Dispatched from
 # _ExprParser._atom() whenever an IDENT token here is immediately followed
 # by "(". Delegates to Quantity's own dunder/bound methods wherever
@@ -380,6 +443,7 @@ class GrammarInterpreter:
         self._q = QuantityFactory(system)
         self.rel_tol = rel_tol
         self.env: dict[str, GrammarValue] = {}
+        self._functions: dict[str, UserFunction] = {}
 
     def __getitem__(self, name: str) -> GrammarValue:
         return self.env[name]
@@ -442,9 +506,8 @@ class GrammarInterpreter:
         end = tokens[-1].pos + len(tokens[-1].value)
         return tokens[:conv_idx], stmt[unit_start:end].strip()
 
-    @staticmethod
     def _split_assignment(
-        tokens: list[Token], stmt: str
+        self, tokens: list[Token], stmt: str
     ) -> tuple[list[Token], str | None]:
         """Strips a leading `name =` / `name ->`; returns tokens and name."""
         assign_idx = _top_level_index(tokens, "=")
@@ -457,14 +520,50 @@ class GrammarInterpreter:
             raise GrammarError(
                 f"Assignment target must be a single name in: {stmt!r}"
             )
-        if lhs_tokens[0].value in _FUNCTIONS:
-            raise GrammarError(
-                f"{lhs_tokens[0].value!r} is reserved in: {stmt!r}"
-            )
-        return tokens[assign_idx + 1 :], lhs_tokens[0].value
+        name = lhs_tokens[0].value
+        if name in _FUNCTIONS or name in self._functions:
+            raise GrammarError(f"{name!r} is reserved in: {stmt!r}")
+        return tokens[assign_idx + 1 :], name
+
+    def _try_define_function(self, tokens: list[Token], stmt: str) -> bool:
+        """Detects and stores `name(params) = body`; returns True if handled."""
+        if len(tokens) < 4 or tokens[0].type != "IDENT" or tokens[1].value != "(":
+            return False
+        close_idx = _find_matching_paren(tokens, 1)
+        if close_idx == -1:
+            raise GrammarError(f"Missing closing parenthesis in: {stmt!r}")
+        if close_idx + 1 >= len(tokens) or tokens[close_idx + 1].value != "=":
+            return False
+        name = tokens[0].value
+        if name in _FUNCTIONS:
+            raise GrammarError(f"{name!r} is reserved in: {stmt!r}")
+        if name in self.env:
+            raise GrammarError(f"{name!r} is already a variable in: {stmt!r}")
+        param_tokens = tokens[2:close_idx]
+        params = self._param_list(param_tokens, stmt)
+        body_tokens = tokens[close_idx + 2 :]
+        if not body_tokens:
+            raise GrammarError(f"Empty function body in: {stmt!r}")
+        self._functions[name] = UserFunction(params=params, body_tokens=body_tokens)
+        return True
+
+    def _param_list(
+        self, tokens: list[Token], stmt: str
+    ) -> list[tuple[str, str | None]]:
+        if not tokens:
+            return []
+        params: list[tuple[str, str | None]] = []
+        for part in _split_on_commas(tokens):
+            if len(part) != 1 or part[0].type != "IDENT":
+                raise GrammarError(f"Invalid parameter list in: {stmt!r}")
+            params.append((part[0].value, None))
+        return params
 
     def _eval_statement(self, stmt: str) -> GrammarValue | None:
         tokens = _tokenize(stmt)
+
+        if self._try_define_function(tokens, stmt):
+            return None
 
         eq_idx = _top_level_index(tokens, "==")
         if eq_idx != -1:
@@ -489,7 +588,25 @@ class GrammarInterpreter:
     def _eval_expr(self, tokens: list[Token]) -> GrammarValue:
         if not tokens:
             raise GrammarError("Empty expression")
-        return _ExprParser(tokens, self._resolve, self._q).parse()
+        return _ExprParser(
+            tokens, self._resolve, self._q, self._functions, self._call_user_function
+        ).parse()
+
+    def _call_user_function(
+        self, name: str, args: list[GrammarValue], depth: int = 0
+    ) -> GrammarValue:
+        fn = self._functions[name]
+        _check_arity(name, args, len(fn.params), len(fn.params))
+        scope = dict(zip((p[0] for p in fn.params), args, strict=True))
+
+        def resolve(ident: str) -> GrammarValue:
+            if ident in scope:
+                return scope[ident]
+            return self._resolve(ident)
+
+        return _ExprParser(
+            fn.body_tokens, resolve, self._q, self._functions, self._call_user_function
+        ).parse()
 
     def _resolve(self, name: str) -> GrammarValue:
         if name in self.env:
@@ -519,3 +636,4 @@ def evaluate(
         '9.0 kg·m²/s²'
     """
     return GrammarInterpreter(system=system, rel_tol=rel_tol).eval(source)
+
