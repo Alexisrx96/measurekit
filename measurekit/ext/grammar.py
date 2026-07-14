@@ -34,6 +34,9 @@ Example:
     >>> _ = mn.run("fact(n) = n <= 1 ? 1 : n * fact(n - 1)")
     >>> mn.eval("fact(5)")
     120
+    >>> _ = mn.run("double_len(x: m) = x * 2")
+    >>> mn.eval("double_len(3 m)")
+    Quantity(6.0, m)
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
+from measurekit.domain.exceptions import DimensionError
 from measurekit.domain.notation.lexer import parse_superscript
 
 if TYPE_CHECKING:
@@ -569,10 +573,37 @@ class GrammarInterpreter:
             return []
         params: list[tuple[str, str | None]] = []
         for part in _split_on_commas(tokens):
-            if len(part) != 1 or part[0].type != "IDENT":
+            if not part or part[0].type != "IDENT":
                 raise GrammarError(f"Invalid parameter list in: {stmt!r}")
-            params.append((part[0].value, None))
+            if len(part) == 1:
+                params.append((part[0].value, None))
+                continue
+            if len(part) == 3 and part[1].value == ":" and part[2].type == "IDENT":
+                self.system.get_unit(part[2].value)  # validates the unit exists
+                params.append((part[0].value, part[2].value))
+                continue
+            raise GrammarError(f"Invalid parameter list in: {stmt!r}")
         return params
+
+    def _bind_param(
+        self, name: str, unit_symbol: str | None, arg: GrammarValue
+    ) -> GrammarValue:
+        if unit_symbol is None:
+            return arg
+        expected = self.system.get_unit(unit_symbol)
+        actual_dim = getattr(arg, "unit", None)
+        if actual_dim is None:
+            raise DimensionError(
+                f"Parameter {name!r} expects a quantity with dimension "
+                f"{expected.dimension(self.system)!r}, got a bare number"
+            )
+        if actual_dim.dimension(self.system) != expected.dimension(self.system):
+            raise DimensionError(
+                f"Parameter {name!r} expects dimension "
+                f"{expected.dimension(self.system)!r}, "
+                f"got {actual_dim.dimension(self.system)!r}"
+            )
+        return arg
 
     def _eval_statement(self, stmt: str) -> GrammarValue | None:
         tokens = _tokenize(stmt)
@@ -617,7 +648,10 @@ class GrammarInterpreter:
             )
         fn = self._functions[name]
         _check_arity(name, args, len(fn.params), len(fn.params))
-        scope = dict(zip((p[0] for p in fn.params), args, strict=True))
+        scope = {
+            param_name: self._bind_param(param_name, unit_symbol, arg)
+            for (param_name, unit_symbol), arg in zip(fn.params, args, strict=True)
+        }
 
         def resolve(ident: str) -> GrammarValue:
             if ident in scope:

@@ -425,3 +425,41 @@ def test_recursion_custom_limit(mn):
             mn.system.settings["mkml_recursion_limit"] = original
 
 
+def test_typed_parameter_valid_dimension(mn):
+    mn.run("double_len(x: m) = x * 2")
+    result = mn.eval("double_len(3 m)")
+    assert math.isclose(result.to("m").magnitude, 6)
+
+
+def test_typed_parameter_auto_converts_compatible_unit(mn):
+    mn.run("double_len(x: m) = x * 2")
+    result = mn.eval("double_len(300 cm)")
+    assert math.isclose(result.to("m").magnitude, 6)
+
+
+def test_typed_parameter_incompatible_dimension_raises(mn):
+    mn.run("double_len(x: m) = x * 2")
+    with pytest.raises(DimensionError):
+        mn.eval("double_len(3 kg)")
+
+
+def test_typed_parameter_bare_number_raises(mn):
+    mn.run("double_len(x: m) = x * 2")
+    with pytest.raises(DimensionError):
+        mn.eval("double_len(3)")
+
+
+def test_untyped_parameter_accepts_anything(mn):
+    mn.run("identity(x) = x")
+    assert mn.eval("identity(5)") == 5
+    result = mn.eval("identity(3 kg)")
+    assert math.isclose(result.to("kg").magnitude, 3)
+
+
+def test_typed_and_untyped_parameters_mixed(mn):
+    mn.run("scale(x: m, k) = x * k")
+    result = mn.eval("scale(3 m, 2)")
+    assert math.isclose(result.to("m").magnitude, 6)
+
+
+
