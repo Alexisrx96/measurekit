@@ -749,13 +749,19 @@ class Quantity(
             )
         return f"Quantity({self.magnitude!r}, {unit_str})"
 
+    def _display_unit_str(self, use_alias: bool = False) -> str:
+        """Returns the unit's display string, or "" if dimensionless."""
+        if self.unit.is_dimensionless:
+            return ""
+        return self.unit.to_string(self.system, use_alias=use_alias)
+
     def __str__(self) -> str:
         """Returns a user-friendly string representation."""
-        unit_str = self.unit.to_string(self.system)
+        unit_str = self._display_unit_str()
         if self._has_uncertainty:
             unc_str = str(self.uncertainty)
-            return f"({self.magnitude} ± {unc_str}) {unit_str}"
-        return f"{self.magnitude} {unit_str}"
+            return f"({self.magnitude} ± {unc_str}) {unit_str}".rstrip()
+        return f"{self.magnitude} {unit_str}".rstrip()
 
     def __rich__(self) -> Any:
         """Rich console protocol for beautiful output."""
@@ -765,7 +771,7 @@ class Quantity(
             return self.__str__()
 
         # Unit string
-        unit_str = self.unit.to_string(self.system)
+        unit_str = self._display_unit_str()
 
         # Magnitude formatting
         mag_str = str(self.magnitude)
@@ -778,8 +784,9 @@ class Quantity(
             unc_str = str(self.uncertainty)
             text.append(f" ± {unc_str}", style="dim")
 
-        text.append(" ", style="none")
-        text.append(unit_str, style="bold blue")
+        if unit_str:
+            text.append(" ", style="none")
+            text.append(unit_str, style="bold blue")
 
         return text
 
@@ -789,7 +796,7 @@ class Quantity(
 
         try:
             f = Fraction(str(self.magnitude))
-            return f"{f.numerator}/{f.denominator} {unit_str}"
+            return f"{f.numerator}/{f.denominator} {unit_str}".rstrip()
         except (ValueError, TypeError):
             return None
 
@@ -799,12 +806,12 @@ class Quantity(
         """Formats magnitude (and uncertainty) using a Python format spec."""
         formatted_mag = format(self.magnitude, mag_fmt)
         if not self._has_uncertainty:
-            return f"{formatted_mag} {unit_str}"
+            return f"{formatted_mag} {unit_str}".rstrip()
         try:
             formatted_unc = format(self._numeric_std_dev, mag_fmt)
         except (TypeError, ValueError):
             formatted_unc = str(self._numeric_std_dev)
-        return f"({formatted_mag} ± {formatted_unc}) {unit_str}"
+        return f"({formatted_mag} ± {formatted_unc}) {unit_str}".rstrip()
 
     def __format__(self, format_spec: str) -> str:
         """Formats the quantity according to the specification."""
@@ -818,7 +825,7 @@ class Quantity(
             elif p != "frac":
                 mag_fmt = p
 
-        unit_str = self.unit.to_string(self.system, use_alias=use_alias)
+        unit_str = self._display_unit_str(use_alias=use_alias)
 
         if "frac" in parts:
             frac_result = self._format_as_fraction(unit_str)
@@ -831,10 +838,8 @@ class Quantity(
         # Default behavior (handles alias if present)
         if use_alias:
             if self._has_uncertainty:
-                return (
-                    f"({self.magnitude} ± {self._numeric_std_dev}) {unit_str}"
-                )
-            return f"{self.magnitude} {unit_str}"
+                return f"({self.magnitude} ± {self._numeric_std_dev}) {unit_str}".rstrip()
+            return f"{self.magnitude} {unit_str}".rstrip()
 
         return self.__str__()
 
@@ -847,12 +852,13 @@ class Quantity(
             >>> print(q.to_latex())
             10.0 \; \frac{m}{s^{2}}
         """
-        unit_latex = self.unit.to_latex()
+        unit_latex = "" if self.unit.is_dimensionless else self.unit.to_latex()
+        sep = " \\; " if unit_latex else ""
         if self._has_uncertainty:
             return (
-                f"({self.magnitude} \\pm {self.uncertainty}) \\; {unit_latex}"
+                f"({self.magnitude} \\pm {self.uncertainty}){sep}{unit_latex}"
             )
-        return f"{self.magnitude} \\; {unit_latex}"
+        return f"{self.magnitude}{sep}{unit_latex}"
 
     def _repr_latex_(self) -> str:
         """Returns LaTeX for Jupyter notebooks."""

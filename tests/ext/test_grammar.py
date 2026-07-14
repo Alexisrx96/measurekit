@@ -318,3 +318,195 @@ def test_log_function_wrong_dimension_raises(mn):
 def test_function_names_are_reserved_assignment_targets(mn, name):
     with pytest.raises(GrammarError):
         mn.eval(f"{name} = 5 m")
+
+
+def test_comparison_operators(mn):
+    assert mn.eval("3 < 5") is True
+    assert mn.eval("3 > 5") is False
+    assert mn.eval("3 <= 3") is True
+    assert mn.eval("4 >= 5") is False
+    assert mn.eval("3 != 4") is True
+
+
+def test_ternary_true_branch(mn):
+    assert mn.eval("1 < 2 ? 10 : 20") == 10
+
+
+def test_ternary_false_branch(mn):
+    assert mn.eval("1 > 2 ? 10 : 20") == 20
+
+
+def test_ternary_nested_false_branch(mn):
+    result = mn.eval("1 > 2 ? 1 : (2 > 3 ? 20 : 30)")
+    assert result == 30
+
+
+def test_ternary_with_quantities(mn):
+    result = mn.eval("5 m > 3 m ? 5 m : 3 m")
+    assert math.isclose(result.to("m").magnitude, 5)
+
+
+def test_ternary_inside_function_call_args(mn):
+    result = mn.eval("max(1 < 2 ? 5 : 1, 3)")
+    assert result == 5
+
+
+def test_user_function_basic_call(mn):
+    mn.run("f(x) = x^2")
+    assert mn.eval("f(3)") == 9
+
+
+def test_user_function_multi_param(mn):
+    mn.run("area(w, h) = w * h")
+    result = mn.eval("area(3 m, 4 m)")
+    assert math.isclose(result.to("m^2").magnitude, 12)
+
+
+def test_user_function_wrong_arity_raises(mn):
+    mn.run("f(x) = x^2")
+    with pytest.raises(GrammarError, match="f"):
+        mn.eval("f(1, 2)")
+
+
+def test_user_function_shadowing_builtin_raises(mn):
+    with pytest.raises(GrammarError):
+        mn.eval("abs(x) = x")
+
+
+def test_variable_then_function_namespace_collision(mn):
+    mn.run("f = 5")
+    with pytest.raises(GrammarError):
+        mn.eval("f(x) = x^2")
+
+
+def test_function_then_variable_namespace_collision(mn):
+    mn.run("f(x) = x^2")
+    with pytest.raises(GrammarError):
+        mn.eval("f = 5")
+
+
+def test_user_function_redefinition_allowed(mn):
+    mn.run("f(x) = x^2")
+    mn.run("f(x) = x^3")
+    assert mn.eval("f(2)") == 8
+
+
+def test_user_function_call_inside_larger_expression(mn):
+    mn.run("f(x) = x + 1")
+    assert mn.eval("f(2) * 3") == 9
+
+
+def test_recursion_factorial(mn):
+    mn.run("fact(n) = n <= 1 ? 1 : n * fact(n - 1)")
+    assert mn.eval("fact(5)") == 120
+
+
+def test_recursion_fibonacci(mn):
+    mn.run("fib(n) = n <= 1 ? n : fib(n - 1) + fib(n - 2)")
+    assert mn.eval("fib(10)") == 55
+
+
+def test_recursion_without_base_case_hits_limit(mn):
+    mn.run("loop(n) = loop(n + 1)")
+    with pytest.raises(GrammarError, match="recursion limit"):
+        mn.eval("loop(0)")
+
+
+def test_recursion_custom_limit(mn):
+    original = mn.system.settings.get("mkml_recursion_limit")
+    mn.system.settings["mkml_recursion_limit"] = "5"
+    try:
+        mn.run("loop(n) = loop(n + 1)")
+        with pytest.raises(GrammarError, match=r"recursion limit \(5\)"):
+            mn.eval("loop(0)")
+    finally:
+        if original is None:
+            mn.system.settings.pop("mkml_recursion_limit", None)
+        else:
+            mn.system.settings["mkml_recursion_limit"] = original
+
+
+def test_typed_parameter_valid_dimension(mn):
+    mn.run("double_len(x: m) = x * 2")
+    result = mn.eval("double_len(3 m)")
+    assert math.isclose(result.to("m").magnitude, 6)
+
+
+def test_typed_parameter_auto_converts_compatible_unit(mn):
+    mn.run("double_len(x: m) = x * 2")
+    result = mn.eval("double_len(300 cm)")
+    assert math.isclose(result.to("m").magnitude, 6)
+
+
+def test_typed_parameter_incompatible_dimension_raises(mn):
+    mn.run("double_len(x: m) = x * 2")
+    with pytest.raises(DimensionError):
+        mn.eval("double_len(3 kg)")
+
+
+def test_typed_parameter_bare_number_raises(mn):
+    mn.run("double_len(x: m) = x * 2")
+    with pytest.raises(DimensionError):
+        mn.eval("double_len(3)")
+
+
+def test_untyped_parameter_accepts_anything(mn):
+    mn.run("identity(x) = x")
+    assert mn.eval("identity(5)") == 5
+    result = mn.eval("identity(3 kg)")
+    assert math.isclose(result.to("kg").magnitude, 3)
+
+
+def test_typed_and_untyped_parameters_mixed(mn):
+    mn.run("scale(x: m, k) = x * k")
+    result = mn.eval("scale(3 m, 2)")
+    assert math.isclose(result.to("m").magnitude, 6)
+
+
+def test_let_binding_inside_function_body(mn):
+    mn.run("f(x) = let y = x^2 in y + 1")
+    assert mn.eval("f(3)") == 10
+
+
+def test_let_binding_nested(mn):
+    mn.run("f(x) = let a = x + 1 in let b = a * 2 in b")
+    assert mn.eval("f(3)") == 8
+
+
+def test_let_at_top_level_raises(mn):
+    with pytest.raises(
+        GrammarError, match="only valid inside a function body"
+    ):
+        mn.eval("let y = 5 in y + 1")
+
+
+def test_in_still_resolves_as_inches_outside_let(mn):
+    result = mn.eval("5 in")
+    assert math.isclose(result.to("in").magnitude, 5)
+
+
+def test_display_text_block_inline(mn):
+    results = mn.run("```Hello world```")
+    assert results == ["Hello world"]
+
+
+def test_display_text_block_multiline(mn):
+    results = mn.run("```\nLine one\nLine two\n```")
+    assert results == ["Line one\nLine two"]
+
+
+def test_display_text_block_with_hash_and_backtick_adjacent_chars(mn):
+    results = mn.run("```price is #5 and uses ` backtick```")
+    assert results == ["price is #5 and uses ` backtick"]
+
+
+def test_display_text_block_interleaved_with_statements(mn):
+    results = mn.run("x = 5 m\n```note```\nx => m")
+    assert results[0] is None
+    assert results[1] == "note"
+    assert math.isclose(results[2].magnitude, 5)
+
+
+def test_script_with_no_blocks_unaffected(mn):
+    results = mn.run("a = 1 m\nb = 2 m\na + b = ?")
+    assert math.isclose(results[-1].magnitude, 3)
