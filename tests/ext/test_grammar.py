@@ -394,3 +394,34 @@ def test_user_function_call_inside_larger_expression(mn):
     mn.run("f(x) = x + 1")
     assert mn.eval("f(2) * 3") == 9
 
+
+def test_recursion_factorial(mn):
+    mn.run("fact(n) = n <= 1 ? 1 : n * fact(n - 1)")
+    assert mn.eval("fact(5)") == 120
+
+
+def test_recursion_fibonacci(mn):
+    mn.run("fib(n) = n <= 1 ? n : fib(n - 1) + fib(n - 2)")
+    assert mn.eval("fib(10)") == 55
+
+
+def test_recursion_without_base_case_hits_limit(mn):
+    mn.run("loop(n) = loop(n + 1)")
+    with pytest.raises(GrammarError, match="recursion limit"):
+        mn.eval("loop(0)")
+
+
+def test_recursion_custom_limit(mn):
+    original = mn.system.settings.get("mkml_recursion_limit")
+    mn.system.settings["mkml_recursion_limit"] = "5"
+    try:
+        mn.run("loop(n) = loop(n + 1)")
+        with pytest.raises(GrammarError, match=r"recursion limit \(5\)"):
+            mn.eval("loop(0)")
+    finally:
+        if original is None:
+            mn.system.settings.pop("mkml_recursion_limit", None)
+        else:
+            mn.system.settings["mkml_recursion_limit"] = original
+
+

@@ -31,6 +31,9 @@ Example:
     True
     >>> mn.eval("1 < 2 ? 10 : 20")
     10
+    >>> _ = mn.run("fact(n) = n <= 1 ? 1 : n * fact(n - 1)")
+    >>> mn.eval("fact(5)")
+    120
 """
 
 from __future__ import annotations
@@ -204,7 +207,17 @@ class _ExprParser:
         self._next()
 
     def _discard_ternary(self) -> None:
-        self._ternary()
+        # ponytail: neuters user-function calls in the untaken ternary branch
+        # so e.g. `n <= 1 ? 1 : n * fact(n - 1)` doesn't recurse past its own
+        # base case just to parse the branch it isn't taking. A GrammarError
+        # from e.g. an unresolved variable in the untaken branch still
+        # propagates -- only recursive calls are stubbed, not evaluation.
+        real_call = self._call_user_function
+        self._call_user_function = lambda name, args, depth=0: 0
+        try:
+            self._ternary()
+        finally:
+            self._call_user_function = real_call
 
     def _peek(self) -> Token | None:
         return self._tokens[self._i] if self._i < len(self._tokens) else None
@@ -294,7 +307,7 @@ class _ExprParser:
             name = tok.value
             self._next()
             args = self._call_args()
-            return self._call_user_function(name, args)
+            return self._call_user_function(name, args, self._depth)
         if tok.value == "(":
             self._next()
             result = self._expr()
@@ -438,12 +451,14 @@ class GrammarInterpreter:
     def __init__(
         self, system: UnitSystem | None = None, rel_tol: float = 1e-9
     ) -> None:
+        from measurekit.application.context import get_active_system
         from measurekit.application.factories import QuantityFactory
 
         self._q = QuantityFactory(system)
         self.rel_tol = rel_tol
         self.env: dict[str, GrammarValue] = {}
         self._functions: dict[str, UserFunction] = {}
+        self.system = system if system is not None else get_active_system()
 
     def __getitem__(self, name: str) -> GrammarValue:
         return self.env[name]
@@ -595,6 +610,11 @@ class GrammarInterpreter:
     def _call_user_function(
         self, name: str, args: list[GrammarValue], depth: int = 0
     ) -> GrammarValue:
+        limit = int(self.system.get_setting("mkml_recursion_limit", "100"))
+        if depth >= limit:
+            raise GrammarError(
+                f"recursion limit ({limit}) exceeded calling {name!r}"
+            )
         fn = self._functions[name]
         _check_arity(name, args, len(fn.params), len(fn.params))
         scope = dict(zip((p[0] for p in fn.params), args, strict=True))
@@ -604,9 +624,20 @@ class GrammarInterpreter:
                 return scope[ident]
             return self._resolve(ident)
 
-        return _ExprParser(
-            fn.body_tokens, resolve, self._q, self._functions, self._call_user_function
-        ).parse()
+        try:
+            return _ExprParser(
+                fn.body_tokens,
+                resolve,
+                self._q,
+                self._functions,
+                self._call_user_function,
+                depth + 1,
+            ).parse()
+        except RecursionError as err:
+            raise GrammarError(
+                f"recursion limit ({limit}) exceeded calling {name!r}"
+            ) from err
+
 
     def _resolve(self, name: str) -> GrammarValue:
         if name in self.env:
