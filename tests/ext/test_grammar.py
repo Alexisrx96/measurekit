@@ -318,3 +318,33 @@ def test_log_function_wrong_dimension_raises(mn):
 def test_function_names_are_reserved_assignment_targets(mn, name):
     with pytest.raises(GrammarError):
         mn.eval(f"{name} = 5 m")
+
+def test_comparison_operators(mn):
+    assert mn.eval("3 < 5") is True
+    assert mn.eval("3 > 5") is False
+    assert mn.eval("3 <= 3") is True
+    assert mn.eval("4 >= 5") is False
+    assert mn.eval("3 != 4") is True
+
+
+def test_ternary_true_branch(mn):
+    assert mn.eval("1 < 2 ? 10 : 20") == 10
+
+
+def test_ternary_false_branch(mn):
+    assert mn.eval("1 > 2 ? 10 : 20") == 20
+
+
+def test_ternary_nested_false_branch(mn):
+    result = mn.eval("1 > 2 ? 1 : (2 > 3 ? 20 : 30)")
+    assert result == 30
+
+
+def test_ternary_with_quantities(mn):
+    result = mn.eval("5 m > 3 m ? 5 m : 3 m")
+    assert math.isclose(result.to("m").magnitude, 5)
+
+
+def test_ternary_inside_function_call_args(mn):
+    result = mn.eval("max(1 < 2 ? 5 : 1, 3)")
+    assert result == 5

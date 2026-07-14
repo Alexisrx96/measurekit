@@ -16,6 +16,8 @@ Supported statements::
     x = 500 N => kN          # assign converted
     stress == 250 Pa         # assertion -> bool
     g = 9.81 +/- 0.02 m/s^2  # uncertainty (also `±`)
+    3 < 5                    # comparison -> bool
+    1 < 2 ? 10 : 20          # ternary -> value
 
 Example:
     >>> from measurekit.ext.grammar import GrammarInterpreter
@@ -27,11 +29,14 @@ Example:
     ... ''')
     >>> mn.eval("stress == 250 Pa")
     True
+    >>> mn.eval("1 < 2 ? 10 : 20")
+    10
 """
 
 from __future__ import annotations
 
 import math
+import operator
 import re
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
@@ -54,7 +59,7 @@ _NUMBER_PAT = r"\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?"
 _IDENT_PAT = r"[^\W\d]\w*"
 _SUP_PAT = r"[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+"
 _SQRT_PAT = r"√"
-_OP_PAT = r"\+/-|±|==|=>|->|\*\*|[-+*/^()=?×÷,]"  # noqa: RUF001
+_OP_PAT = r"\+/-|±|<=|>=|!=|==|=>|->|\*\*|[-+*/^()=?<>×÷,:]"  # noqa: RUF001
 _OP_ALIASES = {"×": "*", "÷": "/"}  # noqa: RUF001
 _TOKEN_RE = re.compile(
     "|".join(
@@ -114,6 +119,16 @@ def _top_level_index(tokens: list[Token], op: str) -> int:
     return -1
 
 
+_COMPARISONS: dict[str, Callable[[Any, Any], bool]] = {
+    "<": operator.lt,
+    ">": operator.gt,
+    "<=": operator.le,
+    ">=": operator.ge,
+    "==": operator.eq,
+    "!=": operator.ne,
+}
+
+
 class _ExprParser:
     """Recursive-descent expression parser mirroring MKML precedence.
 
@@ -133,11 +148,47 @@ class _ExprParser:
         self._q = make_quantity
 
     def parse(self) -> GrammarValue:
-        result = self._sum()
+        result = self._expr()
         if self._i < len(self._tokens):
             tok = self._tokens[self._i]
             raise GrammarError(f"Unexpected token {tok.value!r} in expression")
         return result
+
+    def _expr(self) -> GrammarValue:
+        return self._ternary()
+
+    def _ternary(self) -> GrammarValue:
+        cond = self._comparison()
+        tok = self._peek()
+        if not (tok and tok.value == "?"):
+            return cond
+        self._next()
+        if cond:
+            true_val = self._ternary()
+            self._expect(":")
+            self._discard_ternary()
+            return true_val
+        self._discard_ternary()
+        self._expect(":")
+        return self._ternary()
+
+    def _comparison(self) -> GrammarValue:
+        result = self._sum()
+        tok = self._peek()
+        if tok and tok.value in _COMPARISONS:
+            self._next()
+            rhs = self._sum()
+            return _COMPARISONS[tok.value](result, rhs)
+        return result
+
+    def _expect(self, value: str) -> None:
+        tok = self._peek()
+        if tok is None or tok.value != value:
+            raise GrammarError(f"Expected {value!r}")
+        self._next()
+
+    def _discard_ternary(self) -> None:
+        self._ternary()
 
     def _peek(self) -> Token | None:
         return self._tokens[self._i] if self._i < len(self._tokens) else None
@@ -217,7 +268,7 @@ class _ExprParser:
             return fn(*args)
         if tok.value == "(":
             self._next()
-            result = self._sum()
+            result = self._expr()
             closing = self._peek()
             if closing is None or closing.value != ")":
                 raise GrammarError("Missing closing parenthesis")
@@ -246,10 +297,10 @@ class _ExprParser:
         if tok is not None and tok.value == ")":
             self._next()
             return args
-        args.append(self._sum())
+        args.append(self._expr())
         while (tok := self._peek()) and tok.value == ",":
             self._next()
-            args.append(self._sum())
+            args.append(self._expr())
         closing = self._peek()
         if closing is None or closing.value != ")":
             raise GrammarError("Missing closing parenthesis in function call")
