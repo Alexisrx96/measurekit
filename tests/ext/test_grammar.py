@@ -319,6 +319,7 @@ def test_function_names_are_reserved_assignment_targets(mn, name):
     with pytest.raises(GrammarError):
         mn.eval(f"{name} = 5 m")
 
+
 def test_comparison_operators(mn):
     assert mn.eval("3 < 5") is True
     assert mn.eval("3 > 5") is False
@@ -473,7 +474,9 @@ def test_let_binding_nested(mn):
 
 
 def test_let_at_top_level_raises(mn):
-    with pytest.raises(GrammarError, match="only valid inside a function body"):
+    with pytest.raises(
+        GrammarError, match="only valid inside a function body"
+    ):
         mn.eval("let y = 5 in y + 1")
 
 
@@ -507,8 +510,3 @@ def test_display_text_block_interleaved_with_statements(mn):
 def test_script_with_no_blocks_unaffected(mn):
     results = mn.run("a = 1 m\nb = 2 m\na + b = ?")
     assert math.isclose(results[-1].magnitude, 3)
-
-
-
-
-

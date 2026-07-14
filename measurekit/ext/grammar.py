@@ -107,7 +107,6 @@ class UserFunction:
     body_tokens: list[Token]
 
 
-
 class GrammarError(ValueError):
     """Raised when a statement cannot be parsed."""
 
@@ -294,7 +293,6 @@ class _ExprParser:
                     break
             result = result * self._power()
         return result
-
 
     def _unary(self) -> GrammarValue:
         if (tok := self._peek()) and tok.value == "-":
@@ -602,7 +600,11 @@ class GrammarInterpreter:
 
     def _try_define_function(self, tokens: list[Token], stmt: str) -> bool:
         """Detects and stores `name(params) = body`; returns True if handled."""
-        if len(tokens) < 4 or tokens[0].type != "IDENT" or tokens[1].value != "(":
+        if (
+            len(tokens) < 4
+            or tokens[0].type != "IDENT"
+            or tokens[1].value != "("
+        ):
             return False
         close_idx = _find_matching_paren(tokens, 1)
         if close_idx == -1:
@@ -619,7 +621,9 @@ class GrammarInterpreter:
         body_tokens = tokens[close_idx + 2 :]
         if not body_tokens:
             raise GrammarError(f"Empty function body in: {stmt!r}")
-        self._functions[name] = UserFunction(params=params, body_tokens=body_tokens)
+        self._functions[name] = UserFunction(
+            params=params, body_tokens=body_tokens
+        )
         return True
 
     def _param_list(
@@ -634,8 +638,14 @@ class GrammarInterpreter:
             if len(part) == 1:
                 params.append((part[0].value, None))
                 continue
-            if len(part) == 3 and part[1].value == ":" and part[2].type == "IDENT":
-                self.system.get_unit(part[2].value)  # validates the unit exists
+            if (
+                len(part) == 3
+                and part[1].value == ":"
+                and part[2].type == "IDENT"
+            ):
+                self.system.get_unit(
+                    part[2].value
+                )  # validates the unit exists
                 params.append((part[0].value, part[2].value))
                 continue
             raise GrammarError(f"Invalid parameter list in: {stmt!r}")
@@ -653,7 +663,9 @@ class GrammarInterpreter:
                 f"Parameter {name!r} expects a quantity with dimension "
                 f"{expected.dimension(self.system)!r}, got a bare number"
             )
-        if actual_dim.dimension(self.system) != expected.dimension(self.system):
+        if actual_dim.dimension(self.system) != expected.dimension(
+            self.system
+        ):
             raise DimensionError(
                 f"Parameter {name!r} expects dimension "
                 f"{expected.dimension(self.system)!r}, "
@@ -693,7 +705,11 @@ class GrammarInterpreter:
         if not tokens:
             raise GrammarError("Empty expression")
         return _ExprParser(
-            tokens, self._resolve, self._q, self._functions, self._call_user_function
+            tokens,
+            self._resolve,
+            self._q,
+            self._functions,
+            self._call_user_function,
         ).parse()
 
     def _call_user_function(
@@ -708,7 +724,9 @@ class GrammarInterpreter:
         _check_arity(name, args, len(fn.params), len(fn.params))
         scope = {
             param_name: self._bind_param(param_name, unit_symbol, arg)
-            for (param_name, unit_symbol), arg in zip(fn.params, args, strict=True)
+            for (param_name, unit_symbol), arg in zip(
+                fn.params, args, strict=True
+            )
         }
 
         def resolve(ident: str) -> GrammarValue:
@@ -729,7 +747,6 @@ class GrammarInterpreter:
             raise GrammarError(
                 f"recursion limit ({limit}) exceeded calling {name!r}"
             ) from err
-
 
     def _resolve(self, name: str) -> GrammarValue:
         if name in self.env:
@@ -759,4 +776,3 @@ def evaluate(
         '9.0 kg·m²/s²'
     """
     return GrammarInterpreter(system=system, rel_tol=rel_tol).eval(source)
-
