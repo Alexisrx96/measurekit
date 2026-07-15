@@ -39,15 +39,27 @@ def _get_sympy_parser():
     return _SYMPY_PARSER
 
 
+try:
+    from physure._core import parse_unit_expression as _rust_parse_unit_expr
+except ImportError:
+    _rust_parse_unit_expr = None
+
+
 def _native_parse(expression: str, entity_cls: type[T]) -> T:
-    """Parse using the pure-Python NotationParser (no sympy)."""
+    """Parse using the native Rust core parser (with pure-Python fallback)."""
+    if _rust_parse_unit_expr is not None:
+        try:
+            res = _rust_parse_unit_expr(expression)
+            if hasattr(res, "dimensions"):
+                return entity_cls(res.dimensions)
+        except Exception:
+            pass
+
     expr = expression.strip()
     expr = expr.replace("°", "deg")
     expr = _IMPLICIT_MUL.sub("*", expr)
     tokens = generate_tokens(expr)
     parser = NotationParser(tokens, entity_cls)
-    # ponytail: NotationParser is typed against the ExponentEntityProtocol,
-    # not generic over T; it always builds an instance of entity_cls though.
     return parser.parse()  # pyright: ignore[reportReturnType]
 
 
