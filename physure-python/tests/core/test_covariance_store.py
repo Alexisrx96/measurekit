@@ -3,13 +3,8 @@
 import numpy as np
 import pytest
 
-try:
-    from physure._core import CovarianceStore as RustCovarianceStore
-    from physure._core import PruningConfig
-
-    HAS_RUST = True
-except ImportError:
-    HAS_RUST = False
+from physure._core import CovarianceStore as RustCovarianceStore
+from physure._core import PruningConfig
 
 from physure.backends.numpy_backend import NumpyBackend
 from physure.domain.measurement.vectorized_uncertainty import (
@@ -21,7 +16,6 @@ from physure.domain.measurement.vectorized_uncertainty import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not HAS_RUST, reason="physure._core not available")
 class TestRustCovarianceStore:
     def setup_method(self):
         self.store = RustCovarianceStore()
