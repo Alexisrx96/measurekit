@@ -7,8 +7,6 @@ import functools
 import re
 from typing import TypeVar
 
-from physure.domain.notation.lexer import generate_tokens
-from physure.domain.notation.parsers import NotationParser
 from physure.domain.notation.protocols import ExponentEntityProtocol
 
 T = TypeVar("T", bound=ExponentEntityProtocol)
@@ -39,28 +37,18 @@ def _get_sympy_parser():
     return _SYMPY_PARSER
 
 
-try:
-    from physure._core import parse_unit_expression as _rust_parse_unit_expr
-except ImportError:
-    _rust_parse_unit_expr = None
+from physure._core import parse_unit_expression as _rust_parse_unit_expr
 
 
 def _native_parse(expression: str, entity_cls: type[T]) -> T:
-    """Parse using the native Rust core parser (with pure-Python fallback)."""
-    if _rust_parse_unit_expr is not None:
-        try:
-            res = _rust_parse_unit_expr(expression)
-            if hasattr(res, "dimensions"):
-                return entity_cls(res.dimensions)
-        except Exception:
-            pass
-
+    """Parse using the native Rust core parser."""
     expr = expression.strip()
     expr = expr.replace("°", "deg")
     expr = _IMPLICIT_MUL.sub("*", expr)
-    tokens = generate_tokens(expr)
-    parser = NotationParser(tokens, entity_cls)
-    return parser.parse()  # pyright: ignore[reportReturnType]
+    res = _rust_parse_unit_expr(expr)
+    if hasattr(res, "dimensions"):
+        return entity_cls(res.dimensions)
+    return res  # pyright: ignore[reportReturnType]
 
 
 @functools.lru_cache(maxsize=2048)
