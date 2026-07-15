@@ -18,8 +18,11 @@ from physure.domain.exceptions import DimensionError
 if TYPE_CHECKING:
     from typing_extensions import Self
 
-    from physure.domain.notation.protocols import ExponentEntityProtocol
-    from physure.domain.notation.typing import ExponentsDict
+from physure.domain.measurement.base_entity import (
+    BaseExponentEntity,
+    ExponentEntityProtocol,
+    ExponentsDict,
+)
 
 from physure._core import DimVector as _RustDimVector
 from physure._core import dim_vector_from_dict as _rust_dim_from_dict
@@ -69,8 +72,6 @@ def register_dimension(dimension: Dimension, name: str):
     """
     _DIMENSION_NAME_REGISTRY[dimension] = name
 
-
-from physure.domain.notation.base_entity import BaseExponentEntity
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 """Test suite for the base_entity module using pytest."""
 
-from physure.domain.notation.base_entity import BaseExponentEntity
+from physure.domain.measurement.base_entity import BaseExponentEntity
 
 
 def test_initialization():

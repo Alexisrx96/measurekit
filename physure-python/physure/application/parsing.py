@@ -7,7 +7,7 @@ import functools
 import re
 from typing import TypeVar
 
-from physure.domain.notation.protocols import ExponentEntityProtocol
+from physure.domain.measurement.base_entity import ExponentEntityProtocol
 
 T = TypeVar("T", bound=ExponentEntityProtocol)
 

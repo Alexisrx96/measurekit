@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from physure.domain.measurement.quantity import Quantity
     from physure.domain.measurement.system import UnitSystem
     from physure.domain.measurement.units import CompoundUnit
-    from physure.domain.notation.typing import ExponentsDict
+    from physure.domain.measurement.base_entity import ExponentsDict
 
 
 def _compute_rcond_val(

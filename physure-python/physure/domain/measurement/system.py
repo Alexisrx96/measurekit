@@ -23,7 +23,7 @@ from physure.domain.measurement.units import CompoundUnit
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from physure.domain.notation.typing import ExponentsDict
+    from physure.domain.measurement.base_entity import ExponentsDict
 
 from physure._core import DimVector as _RustDimVector
 from physure._core import UnitDefinition as _RustUnitDef

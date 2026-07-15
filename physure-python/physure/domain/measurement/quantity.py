@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from physure.core.protocols import BackendOps, Numeric
     from physure.domain.measurement.converters import UnitConverter
     from physure.domain.measurement.dimensions import Dimension
-    from physure.domain.notation.typing import ExponentsDict
+    from physure.domain.measurement.base_entity import ExponentsDict
 
 from physure.domain.exceptions import IncompatibleUnitsError
 from physure.domain.measurement.uncertainty import (

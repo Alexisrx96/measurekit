@@ -1,7 +1,7 @@
 """Test suite for unit parsing using the mandatory Rust core parser."""
 
 import pytest
-from physure.domain.notation.parsers import parse_unit_expression
+from physure._core import parse_unit_expression
 
 
 def test_parse_simple_units():

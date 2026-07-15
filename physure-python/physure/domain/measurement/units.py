@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from physure.domain.measurement.dimensions import Dimension
     from physure.domain.measurement.quantity import Quantity
     from physure.domain.measurement.system import UnitSystem
-    from physure.domain.notation.typing import ExponentsDict
+    from physure.domain.measurement.base_entity import ExponentsDict
 
 
 # --- Dependency Injection for System ---
@@ -148,7 +148,10 @@ from physure._core import RationalUnit
 IS_CORE_AVAILABLE = True
 
 
-from physure.domain.notation.base_entity import BaseExponentEntity
+from physure.domain.measurement.base_entity import (
+    BaseExponentEntity,
+    ExponentsDict,
+)
 
 
 @dataclass(frozen=True)
