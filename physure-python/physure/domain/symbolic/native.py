@@ -802,15 +802,5 @@ class PyExpr:
         return hash(repr(self.node))
 
 
-try:
-    # ponytail: the Rust Expr and PyExpr are structurally different types
-    # by design (Rust core is always optional, per CLAUDE.md); callers only
-    # ever see one or the other via this name.
-    from physure._core import (
-        Expr as Expr,  # pyright: ignore[reportAssignmentType]
-    )
-
-    IS_CORE_AVAILABLE = True
-except ImportError:
-    Expr = PyExpr  # pyright: ignore[reportConstantRedefinition]
-    IS_CORE_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
+from physure._core import Expr
+IS_CORE_AVAILABLE = True

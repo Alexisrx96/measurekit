@@ -3,9 +3,15 @@ use crate::error::PhysureResult;
 use super::ast::{Node, check_add_compat, flatten_add, flatten_mul};
 use super::compiler::CompiledExpr;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Expr {
     pub(crate) node: Node,
+}
+
+impl std::hash::Hash for Expr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        format!("{:?}", self.node).hash(state);
+    }
 }
 
 impl Expr {

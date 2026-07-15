@@ -14,6 +14,7 @@ pub use units::{RationalUnit, UnitRegistry, UnitConverter, DimVector, UnitDefini
 pub use quantity::Quantity;
 pub use covariance::{CovarianceStore, PruningConfig};
 pub use uncertainty::{UncertaintyBackend, UncertaintyValue, GaussianBackend, MonteCarloBackend, UnscentedBackend};
+pub use symbolic::Expr;
 
 /// Convert batch values in-place using factor.
 pub fn batch_to_si(data: &mut [f64], factor: f64) {

@@ -179,7 +179,10 @@ fn try_u_substitution(p: &Node, q: &Node, var: &str, coeff: f64) -> Option<(Node
 }
 
 fn try_integration_by_parts(u: &Node, dv: &Node, var: &str) -> Option<Node> {
-    // Check if u is polynomial in var and dv is integrable (sin, cos, exp)
+    // Only apply integration by parts when dv is Sin, Cos, Exp, or Pow to avoid infinite recursion loops.
+    if !matches!(dv, Node::Sin(_) | Node::Cos(_) | Node::Exp(_) | Node::Pow(..)) {
+        return None;
+    }
     if matches!(u, Node::Symbol(s) if s == var) || matches!(u, Node::Quantity(s, _) if s == var) {
         let v = dv.integrate_node(var).ok()?;
         let du = u.diff_node(var).ok()?;

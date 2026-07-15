@@ -30,7 +30,7 @@ use ::physure_core::{
     RationalUnit, UnitRegistry, Quantity, PruningConfig, CovarianceStore,
     GaussianBackend, MonteCarloBackend, UnscentedBackend, UncertaintyBackend, UncertaintyValue,
     PhysureResult, PhysureError,
-    DimVector, UnitConverter, UnitDefinition, UnitKind,
+    DimVector, UnitConverter, UnitDefinition, UnitKind, Expr,
 };
 
 // ── Unit cache (Python object interning) ───────────────────────────────────
@@ -947,6 +947,118 @@ fn dim_vector_from_dict(pairs: &Bound<'_, pyo3::types::PyDict>) -> PyResult<PyDi
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
 }
 
+// ── PyExpr ──────────────────────────────────────────────────────────────────
+/// Native Rust symbolic math AST wrapper (`physure._core.Expr`).
+#[pyclass(name = "Expr", module = "physure._core")]
+#[derive(Clone)]
+struct PyExpr(Expr);
+
+#[pymethods]
+impl PyExpr {
+    #[staticmethod]
+    fn number(v: f64) -> Self {
+        PyExpr(Expr::number(v))
+    }
+
+    #[staticmethod]
+    fn symbol(s: String) -> Self {
+        PyExpr(Expr::symbol(s))
+    }
+
+    #[staticmethod]
+    fn quantity(name: String, unit: &PyRationalUnit) -> Self {
+        PyExpr(Expr::quantity(name, &unit.0))
+    }
+
+    #[staticmethod]
+    fn sin(e: &PyExpr) -> Self {
+        PyExpr(Expr::sin(&e.0))
+    }
+
+    #[staticmethod]
+    fn cos(e: &PyExpr) -> Self {
+        PyExpr(Expr::cos(&e.0))
+    }
+
+    #[staticmethod]
+    fn ln(e: &PyExpr) -> Self {
+        PyExpr(Expr::ln(&e.0))
+    }
+
+    #[staticmethod]
+    fn exp(e: &PyExpr) -> Self {
+        PyExpr(Expr::exp(&e.0))
+    }
+
+    fn __add__(&self, other: &PyExpr) -> PyResult<PyExpr> {
+        self.0.add(&other.0)
+            .map(PyExpr)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    fn __sub__(&self, other: &PyExpr) -> PyResult<PyExpr> {
+        self.0.sub(&other.0)
+            .map(PyExpr)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    fn __mul__(&self, other: &PyExpr) -> PyExpr {
+        PyExpr(self.0.mul(&other.0))
+    }
+
+    fn __truediv__(&self, other: &PyExpr) -> PyExpr {
+        PyExpr(self.0.div(&other.0))
+    }
+
+    fn __pow__(&self, other: &PyExpr, _modulo: Option<&Bound<'_, PyAny>>) -> PyExpr {
+        PyExpr(self.0.pow(&other.0))
+    }
+
+    fn simplify(&self) -> PyExpr {
+        PyExpr(self.0.simplify())
+    }
+
+    fn factor(&self) -> PyExpr {
+        PyExpr(self.0.factor())
+    }
+
+    #[pyo3(signature = (var, n=1))]
+    fn diff(&self, var: &str, n: usize) -> PyResult<PyExpr> {
+        self.0.diff(var, n)
+            .map(PyExpr)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    fn integrate(&self, var: &str) -> PyResult<PyExpr> {
+        self.0.integrate(var)
+            .map(PyExpr)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    fn unit(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+        match self.0.unit() {
+            Ok(Some(u)) => get_cached_unit(py, u).map(Some),
+            Ok(None) => Ok(None),
+            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(e.to_string())),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __eq__(&self, other: &PyExpr) -> bool {
+        self.0 == other.0
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.0.hash(&mut h);
+        h.finish()
+    }
+}
+
 // ── Module Registration ──────────────────────────────────────────────────────
 #[pymodule(name = "_core")]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -957,6 +1069,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCovarianceStore>()?;
     m.add_class::<PyDimVector>()?;
     m.add_class::<PyUnitDefinition>()?;
+    m.add_class::<PyExpr>()?;
     m.add_function(wrap_pyfunction!(batch_to_si_inplace, m)?)?;
     m.add_function(wrap_pyfunction!(step_euler_inplace, m)?)?;
     m.add_function(wrap_pyfunction!(batch_scale_and_shift_inplace, m)?)?;
