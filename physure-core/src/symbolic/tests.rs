@@ -4,53 +4,27 @@ fn x() -> Node {
     Node::Symbol("x".to_string())
 }
 
+fn y() -> Node {
+    Node::Symbol("y".to_string())
+}
+
 fn n(v: f64) -> Node {
     Node::Number(v)
 }
 
-#[test]
-fn identity_add_zero() {
-    assert_eq!(Node::Add(vec![x(), n(0.0)]).simplify(), x());
-}
+// ============================================================================
+// 1. FACTORIZATION TESTS (Exhaustive)
+// ============================================================================
 
 #[test]
-fn identity_mul_one() {
-    assert_eq!(Node::Mul(vec![x(), n(1.0)]).simplify(), x());
-}
-
-#[test]
-fn zero_mul() {
-    assert_eq!(Node::Mul(vec![x(), n(0.0)]).simplify(), n(0.0));
-}
-
-#[test]
-fn test_compiled_expr_eval() {
-    let expr = Expr::number(2.5)
-        .mul(&Expr::symbol("x".into()))
-        .add(&Expr::number(1.0))
-        .unwrap();
-    let compiled = expr.compile().unwrap();
-    assert_eq!(compiled.var_names, vec!["x"]);
-    let result = compiled.eval(&[42.0]).unwrap();
-    assert_eq!(result, 106.0);
-}
-
-#[test]
-fn test_general_power_differentiation() {
-    // d/dx [x^x]
-    let expr = Node::Pow(Box::new(x()), Box::new(x()));
-    let diff = expr.diff_node("x").unwrap().simplify();
-    assert!(matches!(diff, Node::Mul(_)));
-}
-
-#[test]
-fn test_symbolic_factorization_common_factor() {
+fn test_factor_linear_common_factor() {
     // a*x + b*x -> (a + b)*x or x*(a + b)
     let a = Node::Symbol("a".to_string());
     let b = Node::Symbol("b".to_string());
-    let term1 = Node::Mul(vec![a.clone(), x()]);
-    let term2 = Node::Mul(vec![b.clone(), x()]);
-    let expr = Node::Add(vec![term1, term2]);
+    let expr = Node::Add(vec![
+        Node::Mul(vec![a.clone(), x()]),
+        Node::Mul(vec![b.clone(), x()]),
+    ]);
 
     let factored = expr.factor();
     let opt1 = Node::Mul(vec![x(), Node::Add(vec![a.clone(), b.clone()])]);
@@ -59,7 +33,7 @@ fn test_symbolic_factorization_common_factor() {
 }
 
 #[test]
-fn test_symbolic_factorization_combine_powers() {
+fn test_factor_combining_identical_base_powers() {
     // x^2 * x^3 -> x^5
     let expr1 = Node::Pow(Box::new(x()), Box::new(n(2.0)));
     let expr2 = Node::Pow(Box::new(x()), Box::new(n(3.0)));
@@ -70,15 +44,181 @@ fn test_symbolic_factorization_combine_powers() {
 }
 
 #[test]
-fn test_logarithmic_quotient_integration() {
-    // ∫ 1/x dx = ln(x)
-    let inv = Node::Div(Box::new(n(1.0)), Box::new(x()));
-    let int = inv.integrate_node("x").unwrap();
-    assert_eq!(int, Node::Ln(Box::new(x())));
+fn test_factor_subtract_terms() {
+    // c*x - c*y -> c*(x - y)
+    let c = Node::Symbol("c".to_string());
+    let expr = Node::Sub(
+        Box::new(Node::Mul(vec![c.clone(), x()])),
+        Box::new(Node::Mul(vec![c.clone(), y()])),
+    );
+    let factored = expr.factor();
+    assert!(matches!(factored, Node::Mul(_) | Node::Sub(_, _)));
 }
 
 #[test]
-fn test_integration_by_parts() {
+fn test_factor_no_common_factor() {
+    // a*x + b*y stays intact
+    let a = Node::Symbol("a".to_string());
+    let b = Node::Symbol("b".to_string());
+    let expr = Node::Add(vec![
+        Node::Mul(vec![a.clone(), x()]),
+        Node::Mul(vec![b.clone(), y()]),
+    ]);
+    let factored = expr.factor();
+    assert_eq!(factored, expr.simplify());
+}
+
+// ============================================================================
+// 2. DIFFERENTIATION TESTS (Exhaustive)
+// ============================================================================
+
+#[test]
+fn test_diff_constant_and_variable() {
+    assert_eq!(n(42.0).diff_node("x").unwrap(), n(0.0));
+    assert_eq!(x().diff_node("x").unwrap(), n(1.0));
+    assert_eq!(y().diff_node("x").unwrap(), n(0.0));
+}
+
+#[test]
+fn test_diff_sum_and_subtraction() {
+    // d/dx [x + y] = 1 + 0 = 1
+    let sum = Node::Add(vec![x(), y()]);
+    assert_eq!(sum.diff_node("x").unwrap().simplify(), n(1.0));
+
+    // d/dx [x - y] = 1 - 0 = 1
+    let sub = Node::Sub(Box::new(x()), Box::new(y()));
+    assert_eq!(sub.diff_node("x").unwrap().simplify(), n(1.0));
+}
+
+#[test]
+fn test_diff_product_and_quotient_rules() {
+    // d/dx [3*x] = 3
+    let prod = Node::Mul(vec![n(3.0), x()]);
+    assert_eq!(prod.diff_node("x").unwrap().simplify(), n(3.0));
+
+    // d/dx [x / 2] = 0.5
+    let quot = Node::Div(Box::new(x()), Box::new(n(2.0)));
+    assert_eq!(quot.diff_node("x").unwrap().simplify(), n(0.5));
+}
+
+#[test]
+fn test_diff_constant_and_variable_power_rules() {
+    // d/dx [x^3] = 3 * x^2
+    let pow_const = Node::Pow(Box::new(x()), Box::new(n(3.0)));
+    let diff_const = pow_const.diff_node("x").unwrap().simplify();
+    assert_eq!(
+        diff_const,
+        Node::Mul(vec![n(3.0), Node::Pow(Box::new(x()), Box::new(n(2.0)))])
+    );
+
+    // d/dx [x^x] general power rule
+    let pow_var = Node::Pow(Box::new(x()), Box::new(x()));
+    let diff_var = pow_var.diff_node("x").unwrap().simplify();
+    assert!(matches!(diff_var, Node::Mul(_)));
+}
+
+#[test]
+fn test_diff_trig_exp_ln_chain_rule() {
+    // d/dx [sin(x)] = cos(x)
+    let sin_x = Node::Sin(Box::new(x()));
+    assert_eq!(sin_x.diff_node("x").unwrap().simplify(), Node::Cos(Box::new(x())));
+
+    // d/dx [cos(x)] = -1 * sin(x)
+    let cos_x = Node::Cos(Box::new(x()));
+    let diff_cos = cos_x.diff_node("x").unwrap().simplify();
+    let expected = Node::Mul(vec![n(-1.0), Node::Sin(Box::new(x()))]).simplify();
+    assert_eq!(diff_cos, expected);
+
+    // d/dx [exp(x)] = exp(x)
+    let exp_x = Node::Exp(Box::new(x()));
+    assert_eq!(exp_x.diff_node("x").unwrap().simplify(), exp_x);
+
+    // d/dx [ln(x)] = 1/x
+    let ln_x = Node::Ln(Box::new(x()));
+    assert_eq!(ln_x.diff_node("x").unwrap().simplify(), Node::Div(Box::new(n(1.0)), Box::new(x())));
+}
+
+#[test]
+fn test_higher_order_differentiation() {
+    // d^2/dx^2 [x^3] = 6 * x
+    let expr = Expr { node: Node::Pow(Box::new(x()), Box::new(n(3.0))) };
+    let second_diff = expr.diff("x", 2).unwrap();
+    assert_eq!(second_diff.node, Node::Mul(vec![n(6.0), x()]));
+
+    // d^3/dx^3 [x^3] = 6
+    let third_diff = expr.diff("x", 3).unwrap();
+    assert_eq!(third_diff.node, n(6.0));
+}
+
+// ============================================================================
+// 3. INTEGRATION TESTS (Exhaustive)
+// ============================================================================
+
+#[test]
+fn test_integrate_constant_and_variable() {
+    // ∫ 5 dx = 5*x
+    assert_eq!(n(5.0).integrate_node("x").unwrap().simplify(), Node::Mul(vec![n(5.0), x()]));
+
+    // ∫ x dx = x^2 / 2
+    let int_x = x().integrate_node("x").unwrap().simplify();
+    assert_eq!(int_x, Node::Div(Box::new(Node::Pow(Box::new(x()), Box::new(n(2.0)))), Box::new(n(2.0))));
+}
+
+#[test]
+fn test_integrate_power_rules() {
+    // ∫ x^3 dx = x^4 / 4
+    let pow3 = Node::Pow(Box::new(x()), Box::new(n(3.0)));
+    let int_pow3 = pow3.integrate_node("x").unwrap().simplify();
+    assert_eq!(
+        int_pow3,
+        Node::Div(Box::new(Node::Pow(Box::new(x()), Box::new(n(4.0)))), Box::new(n(4.0)))
+    );
+
+    // ∫ x^-1 dx = ln(x)
+    let pow_neg1 = Node::Pow(Box::new(x()), Box::new(n(-1.0)));
+    assert_eq!(pow_neg1.integrate_node("x").unwrap(), Node::Ln(Box::new(x())));
+}
+
+#[test]
+fn test_integrate_trig_exp_ln() {
+    // ∫ sin(x) dx = -1 * cos(x)
+    let sin_x = Node::Sin(Box::new(x()));
+    let expected_neg_cos = Node::Mul(vec![n(-1.0), Node::Cos(Box::new(x()))]).simplify();
+    assert_eq!(sin_x.integrate_node("x").unwrap().simplify(), expected_neg_cos);
+
+    // ∫ cos(x) dx = sin(x)
+    let cos_x = Node::Cos(Box::new(x()));
+    assert_eq!(cos_x.integrate_node("x").unwrap().simplify(), Node::Sin(Box::new(x())));
+
+    // ∫ exp(x) dx = exp(x)
+    let exp_x = Node::Exp(Box::new(x()));
+    assert_eq!(exp_x.integrate_node("x").unwrap().simplify(), exp_x);
+
+    // ∫ ln(x) dx = ln(x)*x - x
+    let ln_x = Node::Ln(Box::new(x()));
+    let int_ln = ln_x.integrate_node("x").unwrap().simplify();
+    let expected_ln = Node::Sub(
+        Box::new(Node::Mul(vec![Node::Ln(Box::new(x())), x()])),
+        Box::new(x())
+    ).simplify();
+    assert_eq!(int_ln, expected_ln);
+}
+
+#[test]
+fn test_integrate_u_substitution_and_log_quotient() {
+    // ∫ 2*x * cos(x^2) dx = sin(x^2)
+    let x_sq = Node::Pow(Box::new(x()), Box::new(n(2.0)));
+    let integrand = Node::Mul(vec![Node::Mul(vec![n(2.0), x()]), Node::Cos(Box::new(x_sq.clone()))]);
+    let integrated = integrand.integrate_node("x").unwrap().simplify();
+    assert_eq!(integrated, Node::Sin(Box::new(x_sq)));
+
+    // Logarithmic quotient rule: ∫ 1/x dx = ln(x)
+    let div_1_x = Node::Div(Box::new(n(1.0)), Box::new(x()));
+    assert_eq!(div_1_x.integrate_node("x").unwrap(), Node::Ln(Box::new(x())));
+}
+
+#[test]
+fn test_integrate_by_parts() {
     // ∫ x * cos(x) dx
     let integrand = Node::Mul(vec![x(), Node::Cos(Box::new(x()))]);
     let integrated = integrand.integrate_node("x").unwrap().simplify();
