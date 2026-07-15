@@ -33,80 +33,10 @@ def _scipy() -> Any:
 
 _scipy_mod: Any = False
 
-try:
-    # ponytail: Rust core is always optional (CLAUDE.md); the fallback
-    # classes below are structurally different types by design, so
-    # pyright can't verify the two branches are interchangeable.
-    from physure._core import (
-        CovarianceStore as CoreStore,  # pyright: ignore[reportAssignmentType]
-    )
-    from physure._core import (
-        PruningConfig,  # pyright: ignore[reportAssignmentType]
-    )
-except ImportError:
-
-    @dataclass
-    class PruningConfig:
-        """Python fallback for the Rust covariance pruning config."""
-
-        max_age: int = 100
-        enabled: bool = False
-        corr_threshold: float = 1e-6
-
-    class CoreStore:
-        """Python fallback for CovarianceStore where Rust is missing."""
-
-        def __init__(self, config: PruningConfig | None = None) -> None:
-            self.config = config or PruningConfig()
-            self.matrix = None
-
-        def register_variable(self, _var_id: int, variance: Numeric) -> None:
-            """Appends a variance block to the covariance matrix."""
-            scipy = _scipy()
-            if self.matrix is None:
-                self.matrix = scipy.sparse.csr_matrix(variance)
-            else:
-                self.matrix = scipy.sparse.bmat(
-                    [[self.matrix, None], [None, variance]], format="csr"
-                )
-
-        def register_diagonal(
-            self, var_id: int, variance_diag: Numeric
-        ) -> None:
-            """Registers a diagonal variance vector."""
-            _ = len(variance_diag)  # pyright: ignore[reportArgumentType]
-            sp = _scipy().sparse.diags([variance_diag], [0], format="csr")
-            self.register_variable(var_id, sp)
-
-        def propagate(
-            self, out_id: int, input_ids: list[int], jacobians: list[Numeric]
-        ) -> None:
-            """Applies Jacobians to propagate covariance to the output."""
-            # Compute sizes from jacobians
-            out_size = jacobians[0].shape[0]
-            out_slice = slice(out_id, out_id + out_size)
-
-            in_slices = []
-            for i, i_id in enumerate(input_ids):
-                in_size = jacobians[i].shape[1]
-                in_slices.append(slice(i_id, i_id + in_size))
-
-            # Need a backend for propagate_affine
-            from physure.core.dispatcher import BackendManager
-
-            backend = BackendManager.get_backend(jacobians[0])
-
-            self.matrix = propagate_affine(
-                self.matrix, out_slice, in_slices, jacobians, backend
-            )
-
-        def get_covariance_block(
-            self, row_slice: slice, col_slice: slice
-        ) -> Any:
-            """Returns the covariance sub-matrix for the given slices."""
-            if self.matrix is None:
-                return None
-            return self.matrix[row_slice, col_slice]
+from physure._core import (
+    CovarianceStore as CoreStore,
+    PruningConfig,
+)
 
 
 if TYPE_CHECKING:
