@@ -82,7 +82,7 @@ docs = [
 # ── Maturin configuration ────────────────────────────────────────────────────
 # maturin builds the Rust extension from physure-python/
 [tool.maturin]
-python-source   = "python"           # Python shim lives in physure/python/
+python-source   = "."
 manifest-path   = "physure-python/Cargo.toml"
 module-name     = "physure._core"
 features        = ["pyo3/extension-module"]

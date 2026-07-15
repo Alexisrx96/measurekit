@@ -75,7 +75,7 @@ class PhysureDtype(ExtensionDtype):  # pyright: ignore[reportGeneralTypeIssues]
         """Construct from string like 'physure[m/s]'."""
         if string == "physure":
             return cls()
-        if string.startswith("physure[" and string.endswith("]"):
+        if string.startswith("physure[") and string.endswith("]"):
             unit = string[11:-1]
             return cls(unit=unit)
         raise TypeError(f"Cannot construct a PhysureDtype from {string}")

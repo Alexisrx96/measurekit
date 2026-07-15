@@ -594,8 +594,8 @@ fn to_backend(
 }
 
 // ── Module Registration ──────────────────────────────────────────────────────
-#[pymodule]
-fn physure_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "_core")]
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRationalUnit>()?;
     m.add_class::<PyUnitRegistry>()?;
     m.add_class::<PyQuantity>()?;
