@@ -22,6 +22,10 @@ impl CovarianceStore {
         }
     }
 
+    pub fn num_blocks(&self) -> usize {
+        self.blocks.len()
+    }
+
     pub fn get_block_internal(&self, id1: VariableID, id2: VariableID) -> Option<CsMat<f64>> {
         let key = if id1 <= id2 { (id1, id2) } else { (id2, id1) };
         let mat = self.blocks.get(&key)?;
