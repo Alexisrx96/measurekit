@@ -262,7 +262,13 @@ fn split_embedded_exponent(sym: &str) -> (String, Option<(i64, i64)>) {
         if bytes[i].is_ascii_digit() || (bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()) {
             let name = sym[..i].to_string();
             if let Ok(num) = sym[i..].parse::<i64>() {
-                return (name, Some((num, 1)));
+                // An embedded exponent of 0 is never a legitimate unit annotation (no real
+                // unit means "raised to the zero power"); treat the whole symbol as atomic
+                // instead, so registry aliases like "a0" (Bohr radius) aren't mis-split.
+                if num != 0 {
+                    return (name, Some((num, 1)));
+                }
+                break;
             }
         }
     }
@@ -304,5 +310,29 @@ mod tests {
         let dims = u.dimensions_map();
         assert_eq!(dims.get("m"), Some(&(2, 1)));
         assert_eq!(dims.get("s"), Some(&(-2, 1)));
+    }
+
+    #[test]
+    fn test_no_split_on_zero_exponent() {
+        let u = Parser::parse_expression("a0").unwrap();
+        let dims = u.dimensions_map();
+        assert_eq!(dims.get("a0"), Some(&(1, 1)));
+        assert_eq!(dims.len(), 1);
+
+        let u2 = Parser::parse_expression("tau0").unwrap();
+        let dims2 = u2.dimensions_map();
+        assert_eq!(dims2.get("tau0"), Some(&(1, 1)));
+        assert_eq!(dims2.len(), 1);
+
+        // Compound expressions must not silently drop the atomic symbol.
+        let u3 = Parser::parse_expression("a0/s").unwrap();
+        let dims3 = u3.dimensions_map();
+        assert_eq!(dims3.get("a0"), Some(&(1, 1)));
+        assert_eq!(dims3.get("s"), Some(&(-1, 1)));
+
+        let u4 = Parser::parse_expression("kg*a0").unwrap();
+        let dims4 = u4.dimensions_map();
+        assert_eq!(dims4.get("kg"), Some(&(1, 1)));
+        assert_eq!(dims4.get("a0"), Some(&(1, 1)));
     }
 }
