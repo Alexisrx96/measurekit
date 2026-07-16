@@ -60,6 +60,8 @@ impl UncertaintyBackend for GaussianBackend {
             "exp" => (m.exp(), (m.exp() * s).abs()),
             "log" => (m.ln(), (s / m).abs()),
             "abs" => (m.abs(), s),
+            "tan" => (m.tan(), ((1.0 + m.tan().powi(2)) * s).abs()),
+            "tanh" => (m.tanh(), ((1.0 - m.tanh().powi(2)) * s).abs()),
             _ => (m, s),
         };
         Ok(Box::new(GaussianBackend { mean: new_mean, std_dev: new_std }))

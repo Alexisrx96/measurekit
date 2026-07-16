@@ -62,6 +62,8 @@ impl UncertaintyBackend for MonteCarloBackend {
             "exp" => self.samples.mapv(|x| x.exp()),
             "log" => self.samples.mapv(|x| x.ln()),
             "abs" => self.samples.mapv(|x| x.abs()),
+            "tan" => self.samples.mapv(|x| x.tan()),
+            "tanh" => self.samples.mapv(|x| x.tanh()),
             _ => self.samples.clone(),
         };
         Ok(Box::new(MonteCarloBackend { samples: new_samples }))
