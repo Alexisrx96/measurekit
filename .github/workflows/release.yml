@@ -1,8 +1,9 @@
 # Release pipeline: push a tag `vX.Y.Z` to publish physure to PyPI.
 #
-# physure-core is a pure-Rust rlib with no PyO3 bindings — it's statically
-# linked into physure-python's compiled extension and is not an independently
-# installable Python package, so it is not published here.
+# physure-core is a pure-Rust rlib with no PyO3 bindings — it's not an
+# independently installable Python package, so it is not published here.
+# It has its own independent version and crates.io release flow: see
+# bump-core-release.yml / core-release.yml (tags `core-vX.Y.Z`).
 #
 # One-time setup (repo owner):
 #   1. PyPI: add a Trusted Publisher to the physure project: repo

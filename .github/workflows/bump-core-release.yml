@@ -1,16 +1,16 @@
-# Manually-triggered version bump: computes the next version, bumps
-# physure-python/physure/__init__.py, commits, tags `vX.Y.Z`, and pushes. The
-# tag push then triggers release.yml, which builds and publishes to PyPI.
+# Manually-triggered version bump for physure-core: bumps the workspace
+# version in Cargo.toml, commits, tags `core-vX.Y.Z`, and pushes. The tag
+# push then triggers core-release.yml, which publishes to crates.io.
 #
-# physure-core has its own independent version and release flow — see
-# bump-core-release.yml / core-release.yml (tags `core-vX.Y.Z`).
-name: Bump and Release
+# The physure Python wrapper has its own independent version and release
+# flow — see bump-release.yml / release.yml (tags `vX.Y.Z`).
+name: Bump and Release Core
 
 on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "physure version part to bump"
+        description: "physure-core version part to bump"
         required: true
         type: choice
         options: [patch, minor, major]
@@ -27,10 +27,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bump physure version
+      - name: Bump physure-core version
         id: bump
         run: |
-          current="$(grep -Po '(?<=__version__ = ")[^"]*' physure-python/physure/__init__.py)"
+          current="$(grep -Po '(?<=^version     = ")[^"]*' Cargo.toml)"
           IFS=. read -r major minor patch <<< "$current"
           case "${{ inputs.bump }}" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
@@ -38,15 +38,15 @@ jobs:
             patch) patch=$((patch + 1)) ;;
           esac
           new="$major.$minor.$patch"
-          sed -i "s/__version__ = \"$current\"/__version__ = \"$new\"/" physure-python/physure/__init__.py
+          sed -i "s/^version     = \"$current\"/version     = \"$new\"/" Cargo.toml
           echo "new=$new" >> "$GITHUB_OUTPUT"
 
       - name: Commit, tag, and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add physure-python/physure/__init__.py
-          git commit -m "chore: release v${{ steps.bump.outputs.new }}"
-          git tag "v${{ steps.bump.outputs.new }}"
+          git add Cargo.toml
+          git commit -m "chore: release core-v${{ steps.bump.outputs.new }}"
+          git tag "core-v${{ steps.bump.outputs.new }}"
           git push origin HEAD:${{ github.ref_name }}
-          git push origin "v${{ steps.bump.outputs.new }}"
+          git push origin "core-v${{ steps.bump.outputs.new }}"
