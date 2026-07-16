@@ -206,6 +206,8 @@ impl UncertaintyValue {
                     "exp" => (m.exp(), (m.exp() * s).abs()),
                     "log" => (m.ln(), (s / m).abs()),
                     "abs" => (m.abs(), s),
+                    "tan" => (m.tan(), ((1.0 + m.tan().powi(2)) * s).abs()),
+                    "tanh" => (m.tanh(), ((1.0 - m.tanh().powi(2)) * s).abs()),
                     _ => (m, s),
                 };
                 Ok(Self::Gaussian(GaussianBackend { mean: new_mean, std_dev: new_std }))
@@ -217,6 +219,8 @@ impl UncertaintyValue {
                     "exp" => m.samples.mapv(|x| x.exp()),
                     "log" => m.samples.mapv(|x| x.ln()),
                     "abs" => m.samples.mapv(|x| x.abs()),
+                    "tan" => m.samples.mapv(|x| x.tan()),
+                    "tanh" => m.samples.mapv(|x| x.tanh()),
                     _ => m.samples.clone(),
                 };
                 Ok(Self::MonteCarlo(MonteCarloBackend { samples: new_samples }))
@@ -228,6 +232,8 @@ impl UncertaintyValue {
                     "exp" => u.sigma_points.mapv(|x| x.exp()),
                     "log" => u.sigma_points.mapv(|x| x.ln()),
                     "abs" => u.sigma_points.mapv(|x| x.abs()),
+                    "tan" => u.sigma_points.mapv(|x| x.tan()),
+                    "tanh" => u.sigma_points.mapv(|x| x.tanh()),
                     _ => u.sigma_points.clone(),
                 };
                 Ok(Self::Unscented(UnscentedBackend { sigma_points: new_points, weights: u.weights.clone() }))
