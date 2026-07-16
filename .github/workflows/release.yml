@@ -1,10 +1,12 @@
-# Release pipeline: push a tag `vX.Y.Z` to publish physure and
-# physure-core to PyPI.
+# Release pipeline: push a tag `vX.Y.Z` to publish physure to PyPI.
+#
+# physure-core is a pure-Rust rlib with no PyO3 bindings — it's statically
+# linked into physure-python's compiled extension and is not an independently
+# installable Python package, so it is not published here.
 #
 # One-time setup (repo owner):
-#   1. PyPI: add a Trusted Publisher to BOTH projects (physure,
-#      physure-core): repo Alexisrx96/physure, workflow release.yml,
-#      environment pypi.
+#   1. PyPI: add a Trusted Publisher to the physure project: repo
+#      Alexisrx96/physure, workflow release.yml, environment pypi.
 #   2. GitHub: create the `pypi` environment (Settings -> Environments).
 name: Release
 
@@ -23,53 +25,11 @@ jobs:
       - name: Tag must match physure.__version__
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          version="$(grep -Po '(?<=__version__ = ")[^"]*' physure/__init__.py)"
+          version="$(grep -Po '(?<=__version__ = ")[^"]*' physure-python/physure/__init__.py)"
           if [ "$tag" != "$version" ]; then
             echo "Tag v$tag does not match __version__ $version" >&2
             exit 1
           fi
-
-  core-wheels:
-    needs: check-version
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64
-          - os: ubuntu-latest
-            target: aarch64
-          - os: windows-latest
-            target: x64
-          - os: macos-latest
-            target: universal2-apple-darwin
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
-        with:
-          working-directory: physure_core
-          target: ${{ matrix.target }}
-          args: --release --out dist
-          manylinux: auto
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: core-${{ matrix.os }}-${{ matrix.target }}
-          path: physure_core/dist
-
-  core-sdist:
-    needs: check-version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
-        with:
-          working-directory: physure_core
-          command: sdist
-          args: --out dist
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: core-sdist
-          path: physure_core/dist
 
   physure-dist:
     needs: check-version
@@ -78,13 +38,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
       - run: uv build --out-dir dist
+        working-directory: physure-python
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: physure-dist
-          path: dist
+          path: physure-python/dist
 
   publish:
-    needs: [core-wheels, core-sdist, physure-dist]
+    needs: [physure-dist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -92,19 +53,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: core-*
-          merge-multiple: true
-          path: dist-core
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
           name: physure-dist
           path: dist-py
-      # Two publish steps: trusted-publishing tokens are minted per project
-      - name: Publish physure-core
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-        with:
-          packages-dir: dist-core
-          skip-existing: true
       - name: Publish physure
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
