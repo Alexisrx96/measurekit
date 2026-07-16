@@ -68,14 +68,15 @@ impl Clone for TensorBackend {
 
 impl UncertaintyBackend for TensorBackend {
     fn mean(&self) -> f64 {
-        // For tensor backends, mean() is not a meaningful scalar.
-        // Use mean_object() via Python for full tensor access.
+        // For tensor backends, mean() is only meaningful for a single-element
+        // array. Multi-element magnitudes are not supported by this scalar
+        // uncertainty-propagation path; panic loudly rather than return NaN.
         Python::with_gil(|py| {
             self.value
                 .bind(py)
                 .call_method0("item")
                 .and_then(|v| v.extract::<f64>())
-                .unwrap_or(f64::NAN)
+                .expect("TensorBackend::mean: cannot extract a scalar via `.item()` — likely a multi-element magnitude, but could also indicate a non-numeric or unsupported value type; array-valued Rust uncertainty backends are not yet supported")
         })
     }
 
@@ -85,7 +86,7 @@ impl UncertaintyBackend for TensorBackend {
                 .bind(py)
                 .call_method0("item")
                 .and_then(|v| v.extract::<f64>())
-                .unwrap_or(0.0)
+                .expect("TensorBackend::std_dev: cannot extract a scalar via `.item()` — likely a multi-element magnitude, but could also indicate a non-numeric or unsupported value type; array-valued Rust uncertainty backends are not yet supported")
         })
     }
 
