@@ -460,6 +460,42 @@ impl PyQuantity {
         Ok(PyQuantity(Quantity::from_value(new_val, self.0.unit.clone())))
     }
 
+    fn sin(&self) -> PyResult<PyQuantity> {
+        let new_val = self.0.value.propagate_function("sin")
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
+    }
+
+    fn cos(&self) -> PyResult<PyQuantity> {
+        let new_val = self.0.value.propagate_function("cos")
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
+    }
+
+    fn tan(&self) -> PyResult<PyQuantity> {
+        let new_val = self.0.value.propagate_function("tan")
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
+    }
+
+    fn exp(&self) -> PyResult<PyQuantity> {
+        let new_val = self.0.value.propagate_function("exp")
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
+    }
+
+    fn log(&self) -> PyResult<PyQuantity> {
+        let new_val = self.0.value.propagate_function("log")
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
+    }
+
+    fn tanh(&self) -> PyResult<PyQuantity> {
+        let new_val = self.0.value.propagate_function("tanh")
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
+    }
+
     fn __repr__(&self) -> String {
         format!("Quantity({}, {})", self.0.value.mean(), self.0.unit.__repr__())
     }
