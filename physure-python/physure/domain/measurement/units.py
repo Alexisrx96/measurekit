@@ -145,7 +145,6 @@ def _resolve_unit_dim(unit_name: str, system: Any, Dimension: type) -> Any:
 
 
 from physure._core import RationalUnit
-IS_CORE_AVAILABLE = True
 
 
 from physure.domain.measurement.base_entity import (
