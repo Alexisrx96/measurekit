@@ -188,6 +188,14 @@ class ArithmeticMixin:
         new_core, new_unit = result
         return type(self).from_input(new_core, new_unit, self.system)
 
+    def _check_and_handle_rust_transcendental(
+        self, func_name: str
+    ) -> Quantity | None:
+        if not self._has_rust_operand(None):
+            return None
+        new_core = getattr(self._core_magnitude, func_name)()
+        return type(self).from_input(new_core, CompoundUnit({}), self.system)
+
     def _add_sub_array_path(
         self,
         other: Quantity,
@@ -861,6 +869,12 @@ class ArithmeticMixin:
                     f"Argument of {func_name}() must be dimensionless or "
                     f"an angle, got unit '{self.unit}'."
                 )
+
+        # 1b. Delegate to Rust if this quantity is Rust-wrapped (opt-in scalar path)
+        if (
+            rust_result := q._check_and_handle_rust_transcendental(func_name)
+        ) is not None:
+            return rust_result
 
         # 2. Get backend function
         op = getattr(self._backend, func_name)
