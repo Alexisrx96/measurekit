@@ -169,6 +169,26 @@ def test_get_unit_dimensionless_unit_has_empty_exponents(system):
     assert system.get_unit("one").exponents == {}
 
 
+def test_get_unit_digit_suffixed_alias_not_split_as_exponent():
+    """Regression: a0 (Bohr radius alias) and tau0 (atomic time alias) --
+    both registered with a trailing digit -- must not be mis-split into
+    base^0 by the native Rust parser's embedded-exponent heuristic when
+    they appear inside a compound expression.
+
+    Bare "a0"/"tau0" already worked (caught by the alias-table lookup
+    before the parser is ever reached); the bug only showed up for
+    compound expressions like "a0/s" or "kg*a0", which fall through to
+    parse_unit_string() and silently dropped the symbol with no
+    exception raised.
+    """
+    assert get_unit("a0").exponents == {"a0": 1}
+    assert get_unit("a0/s").exponents == {"a0": 1, "s": -1}
+    assert get_unit("kg*a0").exponents == {"kg": 1, "a0": 1}
+
+    assert get_unit("tau0").exponents == {"tau0": 1}
+    assert get_unit("tau0*s").exponents == {"tau0": 1, "s": 1}
+
+
 def test_unknown_unit_error_is_value_error():
     """Test that UnknownUnitError is also a ValueError."""
     err = UnknownUnitError("xyz")
