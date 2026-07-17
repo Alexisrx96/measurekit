@@ -234,15 +234,17 @@ class BackendMixin:
 
         return NotImplemented
 
-    def _torch_unwrap(self, obj: Any) -> Any:
+    @classmethod
+    def _torch_unwrap(cls, obj: Any) -> Any:
         """Recursively unwrap Quantity objects to their raw magnitudes."""
         if isinstance(obj, _q()):
             return obj.magnitude
         if isinstance(obj, (list, tuple)):
-            return type(obj)(self._torch_unwrap(x) for x in obj)
+            return type(obj)(cls._torch_unwrap(x) for x in obj)
         return obj
 
-    def _torch_arithmetic(self, func: Any, args: tuple[Any, ...]) -> Any:
+    @classmethod
+    def _torch_arithmetic(cls, func: Any, args: tuple[Any, ...]) -> Any:
         """Delegate torch arithmetic to Python operators."""
         import torch
 
@@ -258,8 +260,9 @@ class BackendMixin:
             return operator.pow(args[0], args[1])  # type: ignore
         return NotImplemented
 
+    @classmethod
     def _torch_unary_math(
-        self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+        cls, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> Any:
         """Handle torch unary math (sqrt, abs, trig)."""
         import torch
@@ -287,28 +290,26 @@ class BackendMixin:
         if not q.dimension.is_dimensionless:
             raise IncompatibleUnitsError(q.unit, CompoundUnit({}))
         res_mag = func(q.magnitude, **kwargs)
-        return type(self).from_input(res_mag, CompoundUnit({}), q.system)
+        return cls.from_input(res_mag, CompoundUnit({}), q.system)
 
+    @classmethod
     def _torch_fallback(
-        self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+        cls, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> Any:
         """Unwrap args, call func, and re-wrap the result with the first Quantity's unit."""
         import torch
 
-        unwrapped_args = tuple(self._torch_unwrap(arg) for arg in args)
-        unwrapped_kwargs = {
-            k: self._torch_unwrap(v) for k, v in kwargs.items()
-        }
+        unwrapped_args = tuple(cls._torch_unwrap(arg) for arg in args)
+        unwrapped_kwargs = {k: cls._torch_unwrap(v) for k, v in kwargs.items()}
         result = func(*unwrapped_args, **unwrapped_kwargs)
         source_q = next((arg for arg in args if isinstance(arg, _q())), None)
         if source_q is not None and isinstance(result, torch.Tensor):
-            return type(self).from_input(
-                result, source_q.unit, source_q.system
-            )
+            return cls.from_input(result, source_q.unit, source_q.system)
         return result
 
+    @classmethod
     def __torch_function__(
-        self,
+        cls,
         func: Any,
         types: tuple[type, ...],
         args: tuple[Any, ...] = (),
@@ -318,15 +319,15 @@ class BackendMixin:
         if kwargs is None:
             kwargs = {}
 
-        arith = self._torch_arithmetic(func, args)
+        arith = cls._torch_arithmetic(func, args)
         if arith is not NotImplemented:
             return arith
 
-        unary = self._torch_unary_math(func, args, kwargs)
+        unary = cls._torch_unary_math(func, args, kwargs)
         if unary is not NotImplemented:
             return unary
 
-        return self._torch_fallback(func, args, kwargs)
+        return cls._torch_fallback(func, args, kwargs)
 
     def to_device(self, device: str) -> Self:
         """Moves the quantity and its uncertainty to the specified device."""

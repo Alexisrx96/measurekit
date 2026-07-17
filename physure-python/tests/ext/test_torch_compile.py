@@ -48,18 +48,20 @@ def test_compile_quantity():
         # Relax fullgraph=True since we are running in pure Python fallback mode,
         # which inevitably introduces graph breaks (e.g., dynamic types, object creation).
 
-        # Suppress benign warning about Quantity.__new__ (C-extension base)
+        # Suppress benign warnings about tracing the Rust-backed C-extension
+        # constructors (Quantity.__new__, RationalUnit.__new__, DimVector.from_pairs)
+        # that Dynamo graph-breaks on but which don't affect correctness here.
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
-                message=".*Dynamo does not know how to trace the builtin.*Quantity.__new__.*",
+                message=".*Dynamo does not know how to trace the builtin.*",
             )
             opt_fn = torch.compile(
                 simple_fn, backend="aot_eager", fullgraph=False
             )
 
-        print("Running compiled function...")
-        res = opt_fn(a, b)
+            print("Running compiled function...")
+            res = opt_fn(a, b)
     except Exception:
         raise
 

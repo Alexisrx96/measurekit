@@ -359,7 +359,12 @@ class TorchBackend(BackendOps):
             dtype = torch.float64
         values = torch.ones(n, device=device, dtype=dtype)
         return torch.sparse_coo_tensor(
-            indices, values, (n, n), device=device, dtype=dtype
+            indices,
+            values,
+            (n, n),
+            device=device,
+            dtype=dtype,
+            check_invariants=False,
         ).coalesce()
 
     def diags(
@@ -510,7 +515,11 @@ class TorchBackend(BackendOps):
         final_values = torch.cat(all_values)
 
         return torch.sparse_coo_tensor(
-            final_indices, final_values, size=shape, dtype=torch.float64
+            final_indices,
+            final_values,
+            size=shape,
+            dtype=torch.float64,
+            check_invariants=False,
         ).coalesce()
 
     def sparse_bmat(
