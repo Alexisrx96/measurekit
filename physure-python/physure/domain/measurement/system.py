@@ -32,7 +32,6 @@ from physure._core import UnitRegistry as _RustUnitRegistry
 log = logging.getLogger(__name__)
 
 
-
 class UnitSystem(IUnitRepository):
     """Manages a self-contained system of dimensions, units, and config."""
 
@@ -115,7 +114,6 @@ class UnitSystem(IUnitRepository):
         # Prioritize short symbols (shortest alias length first)
         self.ALIASES[key].sort(key=len)
 
-
     def register_prefix(
         self,
         symbol: str,
@@ -174,11 +172,8 @@ class UnitSystem(IUnitRepository):
         self._register_unit_recipe_or_base(symbol, recipe, *aliases)
         self._register_rust_aliases(symbol, *aliases)
 
-        # Automatically register prefixed units
-        if allow_prefixes:
-            self._register_prefixed_units(
-                sorted_names, symbol, dimension, converter, name
-            )
+        # Prefixed variants (km, kilometer, ...) are no longer eagerly
+        # cross-produced here -- see get_unit()'s lazy decomposition.
 
     def _register_unit_recipe_or_base(
         self,
@@ -227,7 +222,6 @@ class UnitSystem(IUnitRepository):
         # ── Rust UnitDefinition registration (Fase 4) ───────────────────
         self._register_rust_unit_definition(symbol)
 
-
     def _register_rust_aliases(self, symbol: str, *aliases: str) -> None:
         """Registers all aliases in the Rust core registry."""
         if not self._core_registry:
@@ -245,7 +239,11 @@ class UnitSystem(IUnitRepository):
 
         try:
             # Build native DimVector from Dimension._vector
-            pairs = [(SI_ORDER[i], int(dim._vector[i])) for i in range(9) if dim._vector[i] != 0]
+            pairs = [
+                (SI_ORDER[i], int(dim._vector[i]))
+                for i in range(9)
+                if dim._vector[i] != 0
+            ]
             rust_dim = _RustDimVector.from_pairs(pairs)
 
             conv = unit_def.converter
@@ -253,103 +251,177 @@ class UnitSystem(IUnitRepository):
 
             if isinstance(conv, LinearConverter):
                 _RustUnitDef(
-                    symbol, rust_dim, "linear",
-                    scale=conv.scale, kind=kind_str,
+                    symbol,
+                    rust_dim,
+                    "linear",
+                    scale=conv.scale,
+                    kind=kind_str,
                     allow_prefixes=unit_def.allow_prefixes,
                     name=unit_def.name,
                 )
             elif hasattr(conv, "offset"):  # OffsetConverter
                 _RustUnitDef(
-                    symbol, rust_dim, "offset",
-                    scale=conv.scale, offset=conv.offset, kind=kind_str,
+                    symbol,
+                    rust_dim,
+                    "offset",
+                    scale=conv.scale,
+                    offset=conv.offset,
+                    kind=kind_str,
                     allow_prefixes=unit_def.allow_prefixes,
                     name=unit_def.name,
                 )
             elif hasattr(conv, "factor"):  # LogarithmicConverter
                 _RustUnitDef(
-                    symbol, rust_dim, "logarithmic",
-                    factor=conv.factor, reference=getattr(conv, "reference", 1.0),
-                    kind=kind_str, allow_prefixes=unit_def.allow_prefixes,
+                    symbol,
+                    rust_dim,
+                    "logarithmic",
+                    factor=conv.factor,
+                    reference=getattr(conv, "reference", 1.0),
+                    kind=kind_str,
+                    allow_prefixes=unit_def.allow_prefixes,
                     name=unit_def.name,
                 )
         except Exception as e:
-            log.debug("Could not register Rust UnitDef for '%s': %s", symbol, e)
+            log.debug(
+                "Could not register Rust UnitDef for '%s': %s", symbol, e
+            )
 
+    def _try_lazy_prefix(self, unit_expression: str) -> CompoundUnit | None:
+        """On-demand prefix decomposition.
 
-    def _register_prefixed_units(
+        Handles prefix-symbol+base-symbol (e.g. "km") or prefix-name+base-name
+        (e.g. "kilometer") only -- not every alias combination (kmeter,
+        kilometro, ...), since eagerly cross-producing prefixes x every alias
+        at system-build time was the ~5.5MB standing-memory cost this
+        replaces. Materializes the unit into the registries on first touch so
+        later lookups hit the fast UNIT_DIMENSIONS path instead of
+        re-running this.
+        """
+        for prefix_symbol, prefix_data in sorted(
+            self.PREFIX_REGISTRY.items(),
+            key=lambda kv: len(kv[0]),
+            reverse=True,
+        ):
+            if unit_expression.startswith(prefix_symbol):
+                base_key = unit_expression[len(prefix_symbol) :]
+                unit = self._materialize_prefixed(
+                    unit_expression,
+                    prefix_symbol,
+                    prefix_data,
+                    base_key,
+                    name_form=False,
+                )
+                if unit is not None:
+                    return unit
+
+        for prefix_symbol, prefix_data in sorted(
+            self.PREFIX_REGISTRY.items(),
+            key=lambda kv: len(kv[1]["name"]),
+            reverse=True,
+        ):
+            prefix_name = prefix_data["name"]
+            if unit_expression.startswith(prefix_name):
+                base_key = unit_expression[len(prefix_name) :]
+                unit = self._materialize_prefixed(
+                    unit_expression,
+                    prefix_symbol,
+                    prefix_data,
+                    base_key,
+                    name_form=True,
+                )
+                if unit is not None:
+                    return unit
+
+        return None
+
+    def _materialize_prefixed(
         self,
-        names: list[str],
-        base_symbol: str,
-        dimension: Dimension,
-        converter: UnitConverter,
-        base_name: str | None,
-    ) -> None:
-        """Helper to register all prefixed variants for a set of unit names."""
-        for unit_name in names:
-            if unit_name in self._PREFIX_BLOCKLIST:
-                continue
+        unit_expression: str,
+        prefix_symbol: str,
+        prefix_data: dict[str, Any],
+        base_key: str,
+        *,
+        name_form: bool,
+    ) -> CompoundUnit | None:
+        """Materializes `unit_expression`.
 
-            # Prefixes only make sense for linear units
-            if not isinstance(converter, LinearConverter):
-                continue
+        Applies only if it is exactly prefix+base-symbol or
+        prefix-name+base-name; returns None (no side effects) otherwise.
+        """
+        base_def = self._lookup_prefixable_base(base_key, name_form=name_form)
+        if base_def is None:
+            return None
+        self._ensure_prefixed_registered(base_def, prefix_symbol, prefix_data)
+        return CompoundUnit({unit_expression: 1})
 
-            self._apply_prefixes_to_unit(
-                unit_name, base_symbol, dimension, converter, base_name
-            )
+    def _lookup_prefixable_base(
+        self, base_key: str, *, name_form: bool
+    ) -> UnitDefinition | None:
+        """Base-unit lookup plus the "is this actually prefixable" guards."""
+        if not base_key or base_key in self._PREFIX_BLOCKLIST:
+            return None
+        base_def = self.UNIT_SYMBOL_REGISTRY.get(base_key)
+        if base_def is None or not base_def.allow_prefixes:
+            return None
+        if not isinstance(base_def.converter, LinearConverter):
+            return None
+        if base_key != (base_def.name if name_form else base_def.symbol):
+            return None  # exact symbol- or name-form only, not alias combos
+        return base_def
 
-    def _apply_prefixes_to_unit(
+    def _ensure_prefixed_registered(
         self,
-        unit_name: str,
-        base_symbol: str,
-        dimension: Dimension,
-        converter: LinearConverter,
-        base_name: str | None,
+        base_def: UnitDefinition,
+        prefix_symbol: str,
+        prefix_data: dict[str, Any],
     ) -> None:
-        """Applies all prefixes to a single unit name."""
-        for prefix_symbol, prefix_data in self.PREFIX_REGISTRY.items():
-            prefixed_symbol = prefix_symbol + unit_name
-            if prefixed_symbol in self.UNIT_SYMBOL_REGISTRY:
-                continue
+        """Materializes prefixed forms of `base_def` idempotently.
 
-            desc_name = (
-                base_name
-                if (base_name and unit_name == base_symbol)
-                else unit_name
-            )
-            prefixed_name = prefix_data["name"] + desc_name
-            prefixed_factor = prefix_data["factor"] * converter.scale
-            prefix_exact = prefix_data.get("exact")
-            prefixed_exact = (
-                prefix_exact * converter.exact
-                if prefix_exact is not None and converter.exact is not None
-                else None
-            )
+        Covers the symbol form (km) and, if distinct, the name form
+        (kilometer) of `base_def` prefixed by `prefix_data`.
+        """
+        prefixed_symbol = prefix_symbol + base_def.symbol
+        prefixed_name = (
+            prefix_data["name"] + base_def.name
+            if prefix_data["name"] and base_def.name
+            else None
+        )
+        converter = base_def.converter
+        prefix_exact = prefix_data.get("exact")
+        prefixed_factor = prefix_data["factor"] * converter.scale
+        prefixed_exact = (
+            prefix_exact * converter.exact
+            if prefix_exact is not None and converter.exact is not None
+            else None
+        )
 
+        if prefixed_symbol not in self.UNIT_SYMBOL_REGISTRY:
             self._create_prefixed_unit(
                 prefixed_symbol,
-                dimension,
+                base_def.dimension,
                 prefixed_factor,
                 prefixed_name,
                 prefixed_symbol,
                 exact=prefixed_exact,
             )
-
-            # Also name alias (e.g. kilometer)
-            if prefixed_name and prefixed_name != prefixed_symbol:
-                self._create_prefixed_unit(
-                    prefixed_name,
-                    dimension,
-                    prefixed_factor,
-                    prefixed_name,  # Name is same
-                    prefixed_symbol,  # Original symbol context
-                    exact=prefixed_exact,
-                )
-
-            # Rust Registration
             if self._core_registry:
                 self._register_prefixed_rust(
-                    unit_name, prefixed_symbol, prefixed_name
+                    base_def.symbol, prefixed_symbol, prefixed_name or ""
                 )
+
+        if (
+            prefixed_name
+            and prefixed_name != prefixed_symbol
+            and prefixed_name not in self.UNIT_SYMBOL_REGISTRY
+        ):
+            self._create_prefixed_unit(
+                prefixed_name,
+                base_def.dimension,
+                prefixed_factor,
+                prefixed_name,
+                prefixed_symbol,
+                exact=prefixed_exact,
+            )
 
     def _create_prefixed_unit(
         self,
@@ -422,6 +494,13 @@ class UnitSystem(IUnitRepository):
                     f"Failed to retrieve unit '{unit_expression}' from Rust: {e}"
                 )
                 # Fallback to parsing
+
+        # Lazy prefix decomposition (km, kilometer, ...): materializes the
+        # exact prefixed unit on first use instead of the eager prefix x
+        # base cross-product done at system-build time.
+        lazy_unit = self._try_lazy_prefix(unit_expression)
+        if lazy_unit is not None:
+            return lazy_unit
 
         # Parse as a compound expression
         result = cast(

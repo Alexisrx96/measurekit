@@ -126,6 +126,8 @@ def test_exact_factors_survive_prefixes():
     km = system.UNIT_SYMBOL_REGISTRY["km"].converter
     assert km.exact == Fraction(1000)
     # prefix * imperial scale: milli-foot = 3048/10^7 m exactly
+    # (materialize on demand -- prefixed units are no longer eagerly registered)
+    system.get_unit("mft")
     mft = system.UNIT_SYMBOL_REGISTRY["mft"].converter
     assert mft.exact == Fraction(3048, 10_000_000)
 

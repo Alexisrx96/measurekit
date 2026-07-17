@@ -18,12 +18,19 @@ class UnitRegistry:
         """Initializes the registry with empty cache and loaders."""
         self._registry: dict[str, Any] = {}
         self._lazy_loaders: dict[str, Any] = {}
+        # name -> scope module suffix, resolved to "physure.units.<scope>"
+        # only when actually accessed. See register_static.
+        self._static_index: dict[str, str] = {}
         self._discovered = False
 
     def clear(self) -> None:
         """Clears all registered units and loaders. Useful for test isolation."""
         self._registry.clear()
         self._lazy_loaders.clear()
+        # Rebind, don't .clear(): _static_index may be a shared reference to
+        # physure.units.UNIT_INDEX (see register_static), and clearing it in
+        # place would wipe that module's own lazy resolution too.
+        self._static_index = {}
         self._discovered = False
 
     def register(self, name: str, unit: Any) -> None:
@@ -39,9 +46,25 @@ class UnitRegistry:
 
     def register_lazy(self, name: str, loader_func: Callable[[], Any]) -> None:
         """Adds a lazy loader for a unit."""
-        if name in self._registry or name in self._lazy_loaders:
+        if (
+            name in self._registry
+            or name in self._lazy_loaders
+            or name in self._static_index
+        ):
             return
         self._lazy_loaders[name] = loader_func
+
+    def register_static(self, index: dict[str, str]) -> None:
+        """Registers a name -> "physure.units.<scope>" index in bulk.
+
+        Unlike register_lazy, this stores no per-entry closures and makes
+        no copy: `index` (typically `physure.units.UNIT_INDEX`) is kept by
+        reference, so this registry and `physure.units.__getattr__` share
+        the same ~5.5k-entry dict instead of each holding their own copy.
+        The `physure.units.<scope>` import + getattr only happens in
+        __getattr__, on the exact name actually requested.
+        """
+        self._static_index = index
 
     def discover_plugins(self) -> None:
         """Scans entry points for the group 'physure.units'.
@@ -60,8 +83,8 @@ class UnitRegistry:
                     and ep.name not in self._lazy_loaders
                 ):
                     self._lazy_loaders[ep.name] = ep
-        except Exception as e:
-            log.error(f"Error discovering unit plugins: {e}")
+        except Exception:
+            log.exception("Error discovering unit plugins")
 
         self._discovered = True
 
@@ -93,7 +116,20 @@ class UnitRegistry:
                 self._registry[name] = unit
                 return unit
             except Exception as e:
-                log.error(f"Failed to load unit plugin '{name}': {e}")
+                log.exception("Failed to load unit plugin '%s'", name)
+                raise AttributeError(
+                    f"Unit '{name}' failed to load: {e}"
+                ) from e
+
+        if name in self._static_index:
+            scope = self._static_index[name]
+            try:
+                module = importlib.import_module(f"physure.units.{scope}")
+                unit = getattr(module, name)
+                self._registry[name] = unit
+                return unit
+            except Exception as e:
+                log.exception("Failed to load core unit '%s'", name)
                 raise AttributeError(
                     f"Unit '{name}' failed to load: {e}"
                 ) from e
@@ -106,7 +142,9 @@ class UnitRegistry:
         if not self._discovered:
             self.discover_plugins()
         return sorted(
-            list(self._registry.keys()) + list(self._lazy_loaders.keys())
+            set(self._registry)
+            | set(self._lazy_loaders)
+            | set(self._static_index)
         )
 
     def __dir__(self) -> list[str]:
@@ -114,5 +152,7 @@ class UnitRegistry:
         if not self._discovered:
             self.discover_plugins()
         return sorted(
-            list(self._registry.keys()) + list(self._lazy_loaders.keys())
+            set(self._registry)
+            | set(self._lazy_loaders)
+            | set(self._static_index)
         )

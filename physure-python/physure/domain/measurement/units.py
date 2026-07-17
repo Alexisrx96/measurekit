@@ -136,6 +136,13 @@ def _resolve_unit_dim(unit_name: str, system: Any, Dimension: type) -> Any:
         return system.UNIT_DIMENSIONS[unit_name]
 
     base_unit = system.get_unit(unit_name)
+
+    # get_unit() may have just lazily materialized unit_name (e.g. a prefixed
+    # unit like "GeV") as a side effect, in which case it's now a real entry
+    # rather than the unresolved-fallback identity wrapper it looks like.
+    if unit_name in system.UNIT_DIMENSIONS:
+        return system.UNIT_DIMENSIONS[unit_name]
+
     if _is_identity_unit(base_unit, unit_name):
         _raise_unknown_unit(unit_name, system)
 
@@ -537,22 +544,11 @@ def _register_core_units() -> None:
         # This allows bootstrapping or running without generated units.
         return
 
-    # ponytail: this loader dynamically imports a generated unit-index module
-    # and getattr()s the requested symbol out of it, so the loaded value's
-    # real type is unknowable to the checker until import time — Any is the
-    # honest type here, not a gap in our own annotations.
-    def _make_loader(scope_module: str, unit_name: str) -> Callable[[], Any]:  # pyright: ignore[reportExplicitAny]
-        def loader() -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
-            # Dynamically import the scope module (e.g., physure.units.core)
-            module = __import__(  # pyright: ignore[reportAny]
-                f"physure.units.{scope_module}", fromlist=[unit_name]
-            )
-            return getattr(module, unit_name)  # pyright: ignore[reportAny]
-
-        return loader
-
-    for name, scope in UNIT_INDEX.items():
-        units.register_lazy(name, _make_loader(scope, name))
+    # ponytail: register the name -> scope map directly instead of building
+    # a closure per entry (was ~5.5k closures allocated for units nobody
+    # asked for). UnitRegistry.__getattr__ resolves the actual import only
+    # for the exact name requested.
+    units.register_static(UNIT_INDEX)
 
 
 # Register core units immediately (eager but lightweight)
@@ -605,9 +601,7 @@ for method_name in [
     "kind",
 ]:
     if hasattr(CompoundUnit, method_name):
-        setattr(
-            RationalUnit, method_name, getattr(CompoundUnit, method_name)
-        )
+        setattr(RationalUnit, method_name, getattr(CompoundUnit, method_name))
 
 # Arithmetic methods to wrap with Flyweight cache
 for op in [
