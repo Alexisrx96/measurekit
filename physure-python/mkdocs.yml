@@ -1,5 +1,5 @@
-site_name: Physure (deprecated → physure)
-site_description: "[DEPRECATED → physure] High-performance physical dimension handling and unit conversion engine with multi-backend support."
+site_name: physure
+site_description: "Unit-aware, dimension-correct computing for Python — Rust core, correlated uncertainty, torch.compile/jax.jit ready."
 repo_url: https://github.com/Alexisrx96/physure
 repo_name: Alexisrx96/physure
 edit_uri: edit/main/docs/
@@ -49,7 +49,6 @@ plugins:
 
 nav:
   - Home: index.md
-  - "⚠️ Migration Guide (→ physure)": migration.md
   - Tutorials:
       - Best Practices: tutorials/01_best_practices.ipynb
       - JAX Integration: tutorials/jax_tutorial.ipynb

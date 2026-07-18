@@ -2,171 +2,164 @@
 
 <div align="center">
 
-<h3><b>High-Performance Physical Dimension Engine</b></h3>
-<p><i>Rust-first. Zero-copy FFI. Successor to <code>physure</code>.</i></p>
+<h3><b>Unit-aware, dimension-correct computing for Python — powered by a Rust core</b></h3>
+<p><i>Units, dimensions, and correlated uncertainty tracked through every calculation, with zero overhead under <code>torch.compile</code> / <code>jax.jit</code>.</i></p>
 
 [![PyPI](https://img.shields.io/pypi/v/physure)](https://pypi.org/project/physure/)
+[![Python 3.10–3.14](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/physure/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/physure)](https://pypi.org/project/physure/)
+[![Rust core](https://img.shields.io/badge/core-Rust%20%F0%9F%A6%80-orange)](physure-core/)
 
 </div>
 
 ---
 
-## What is physure?
+## Why physure?
 
-**physure** *(physics + measure)* is a unit-aware, dimension-correct engine for physical quantities — built on a pure Rust core with zero-copy FFI bridges to Python.
+Most unit libraries make you choose between correctness and speed. **physure** *(physics + measure)* refuses the trade-off:
 
-Born as the successor to `physure`, physure drops the pure-Python fallback in favor of a **Rust-first** architecture: the compiled extension is the only backend.
+- **Correlated uncertainty propagation.** Full sparse-covariance tracking between quantities (GUM-style), not just independent error bars. If `x` and `y` share history, `x - y` knows it.
+- **Native-speed dimensional analysis.** Unit arithmetic runs in Rust (~50 ns per operation) with rational exponents — no floating-point drift in dimensions, zero-copy buffer FFI to NumPy.
+- **ML-ready.** `Quantity` wraps NumPy, PyTorch, and JAX arrays. Under `@physure.jit`, units are validated at trace time and *evaporate* at runtime: ~1.17× vs. raw compiled PyTorch.
+- **Static unit checking.** A mypy plugin narrows `Q_(3, "m/s")` to `Quantity[..., Literal["m/s"]]`, so unit mismatches can fail before your code even runs.
+- **Zero runtime dependencies.** `pip install physure` pulls in nothing else. NumPy/PyTorch/JAX/pandas support activates automatically when those packages are present.
 
-### Architecture
+## Quick start
 
+```python
+from physure import Q_
+
+d = Q_(10, "km")
+t = Q_(2, "hr")
+print((d / t).to("m/s"))    # 1.3888888888888888 m/s
+
+# Uncertainty propagates automatically — correlations included
+g = Q_(9.8, "m/s^2", uncertainty=0.02)
+m = Q_(2.5, "kg", uncertainty=0.001)
+E = m * g * Q_(12, "m")
+print(E.to("J"))            # (294.0 ± 0.61) J
 ```
-physure/                     # Cargo Workspace root
-├── physure-core/            # 🦀 Pure Rust physics engine (no FFI deps)
-└── physure-python/          # 🐍 PyO3 thin wrapper (zero-copy Buffer Protocol)
+
+Or straight from the command line — physure ships a unit-aware calculator and REPL:
+
+```bash
+$ python -m physure "500 N / 2 m^2 => kPa"
+0.25 kPa
 ```
 
-The core principle: **physure-core is the single source of truth**. All math lives in Rust. Python, and eventually WASM/Java, are thin translation layers.
+## Highlights
 
----
+### Units that vanish at compile time
+
+`@physure.jit` traces your function once, validates every dimension in Rust, then runs on raw tensors — dimensional safety with no per-call cost:
+
+```python
+from physure import Q_, jit
+
+@jit
+def kinetic_energy(mass, velocity):
+    return 0.5 * mass * velocity**2
+
+kinetic_energy(Q_(10.0, "kg"), Q_(5.0, "m/s"))   # 125.0 kg·m²/s²
+kinetic_energy(Q_(1.0, "m"), Q_(1.0, "s"))       # raises at trace time: incompatible units
+```
+
+Works with plain floats, NumPy arrays, PyTorch tensors (via `__torch_dispatch__` + `torch.compile`), and JAX (`jax.jit`).
+
+### Uncertainty done properly
+
+Choose the propagation mode globally or per-block:
+
+```python
+import physure
+
+physure.propagation_mode("correlated")     # full covariance (default: uncorrelated)
+
+with physure.uncertainty_mode("uncorrelated"):
+    ...                                    # scoped override
+```
+
+Backends include Gaussian (first-order), Monte Carlo, and Unscented Transform. Covariance lives in a sparse Rust store, so large lineages stay fast and memory stays flat.
+
+### Batteries included, loaded lazily
+
+Pandas ExtensionArray, pydantic validation, SymPy symbolic quantities, unit-aware `torch.nn` layers, Arrow IPC serialization, plotting helpers, and a physics-as-text DSL (`stress = 500 N / 2 m^2`) — each activates only when you use it. Cold import stays around **20 ms**.
+
+## How it compares
+
+| | physure | pint | astropy.units | unyt |
+|---|:---:|:---:|:---:|:---:|
+| Correlated uncertainty (covariance) | ✅ | — | — | — |
+| Built-in uncertainty propagation | ✅ | via `uncertainties` | limited | — |
+| Rust-accelerated core | ✅ | — | — | — |
+| `torch.compile` / `jax.jit` compatible | ✅ | — | — | — |
+| Static unit checking (mypy) | ✅ | — | — | — |
+| Runtime dependencies | none | none | astropy stack | numpy |
+| Ecosystem maturity | new | ✅ mature | ✅ mature | mature |
+
+If you need a battle-tested converter with a decade of integrations, pint and astropy are excellent. physure is for when you also need **uncertainty you can defend** and **units inside compiled ML code**.
+
+## Performance
+
+| Benchmark | Result |
+|---|---|
+| Cold import | ~21 ms |
+| Unit multiply/divide (Rust core) | ~54 ns |
+| Scalar add with dimension check | ~40 ns |
+| 10⁶-element tensor op, `@torch.compile` | 1.17× vs. pure PyTorch |
+| Covariance propagation (sparse blocks) | ~7 µs |
+
+Full methodology and reproduction steps: [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Installation
 
 ```bash
-pip install physure           # Rust-compiled wheel
-pip install "physure[numpy]"  # + NumPy/SciPy/Numba
-pip install "physure[torch]"  # + PyTorch backend
-pip install "physure[all]"    # All backends
+pip install physure            # Rust-compiled wheel, no other dependencies
+pip install "physure[numpy]"   # + NumPy/SciPy/Numba acceleration
+pip install "physure[torch]"   # + PyTorch backend
+pip install "physure[jax]"     # + JAX backend
+pip install "physure[all]"     # everything
 ```
 
-### Building from Source
+### From source
 
 ```bash
 git clone https://github.com/Alexisrx96/physure
 cd physure
-
-# Install Rust (if needed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Build the Rust extension and install in dev mode
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust, if needed
 maturin develop --release
-
-# Install Python dev dependencies
 uv sync --group dev
 ```
 
----
-
-## Quick Start
-
-```python
-from physure import Q_
-
-# Classic physure syntax
-d = Q_(10, "km")
-t = Q_(2, "hr")
-v = d / t
-print(v.to("m/s"))   # 1.3888... m/s
-
-# With uncertainty propagation
-from physure import Quantity, units, create_default_system
-
-sys = create_default_system()
-m = Quantity(9.8, sys.get_unit("m/s^2"), uncertainty=0.02)
-print(m)   # Quantity(9.8 ± 0.02 m/s²)
-```
-
-### Zero-Copy Batch Operations (New in v0.2.0)
-
-```python
-import numpy as np
-from physure import batch_to_si_inplace, step_euler_inplace
-
-# Convert 1M values to SI — Rust writes directly to NumPy memory
-positions = np.random.rand(1_000_000).astype(np.float64)
-batch_to_si_inplace(positions, factor=1000.0)  # km → m, in-place, zero copies
-
-# Physics step: Euler integration
-vel = np.ones(1_000_000, dtype=np.float64)
-step_euler_inplace(positions, vel, dt=0.016)   # 60 FPS step
-```
-
----
-
-## Migrating from physure
-
-`physure` is a **drop-in replacement**. The API is identical.
-
-```bash
-pip uninstall physure
-pip install physure
-```
-
-```python
-# Before
-import physure
-from physure import Q_
-
-# After — one line change
-import physure
-from physure import Q_
-```
-
-See the full [Migration Guide](MIGRATION.md).
-
----
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| **Rust Core** | All physics math in `physure-core`. Zero PyO3 in the engine. |
-| **Zero-Copy FFI** | Buffer Protocol (`bytearray`, `memoryview`, `ndarray`) — no data copies |
-| **Uncertainty Propagation** | Gaussian, Monte Carlo, and Unscented Transform backends |
-| **Multi-Backend** | NumPy, PyTorch, JAX — `Quantity` wraps any array type |
-| **JIT Compilation** | `torch.compile` / `jax.jit` — units evaporate at compile time |
-| **Grammar Interpreter** | Physics-as-text DSL: `stress = 500 N / 2 m^2` |
-| **REPL** | `python -m physure` — interactive unit-aware calculator |
-| **Symbolic Math** | SymPy/SymEngine integration via `physure.ext.symbolic` |
-
----
-
-## Workspace Structure
+## Architecture
 
 ```
-physure/
-├── Cargo.toml               # Workspace orchestrator
-├── pyproject.toml           # Python package (maturin)
-│
-├── physure-core/            # 🦀 Pure physics engine
-│   ├── Cargo.toml           # No PyO3/WASM/JNI — hard rule
-│   └── src/
-│       ├── lib.rs           # Public API: RationalUnit, Quantity, etc.
-│       ├── units.rs         # Dimensional analysis (rational exponents)
-│       ├── uncertainty.rs   # Gaussian/MC/Unscented backends
-│       ├── quantity.rs      # Physical quantity with propagation
-│       ├── covariance.rs    # Sparse covariance store
-│       ├── math.rs          # Numerical utilities
-│       ├── serialization.rs # Arrow IPC serialization
-│       └── symbolic.rs      # Symbolic expression engine
-│
-├── physure-python/          # 🐍 PyO3 thin wrapper
-│   ├── Cargo.toml           # Depends on physure-core
-│   ├── src/lib.rs           # All #[pyclass] / #[pymethods] live here
-│   └── python/physure/      # Python shim
-│       └── __init__.py      # Hard import of _core (no fallback)
-│
-└── physure/                 # Python package sources (application layer)
-    ├── domain/              # Quantity, units, uncertainty Python layer
-    ├── application/         # Factories, startup, context
-    ├── backends/            # NumPy, PyTorch, JAX adapters
-    ├── ext/                 # Grammar, IO, pandas, numba, chemistry
-    └── nn/                  # Neural network integration
+physure/                     # Cargo workspace root
+├── physure-core/            # 🦀 Pure Rust physics engine — no FFI deps
+│   └── src/                 #    units, quantity, covariance, uncertainty,
+│                            #    symbolic, Arrow serialization
+└── physure-python/          # 🐍 PyO3 bindings + Python application layer
+    └── physure/
+        ├── domain/          # Quantity, units, dimensions, uncertainty
+        ├── application/     # Q_ factory, unit-system context, startup
+        ├── backends/        # NumPy / PyTorch / JAX adapters
+        ├── _jit/            # tracing + compile-time dimension checks
+        ├── ext/             # grammar DSL, IO, pandas, numba
+        └── nn/              # unit-aware neural network layers
 ```
 
----
+The rule: **physure-core is the single source of truth**. All math lives in Rust; Python is a thin, zero-copy translation layer.
+
+## Documentation
+
+- [Unit reference](physure-python/docs/UNITS.md) — every unit, prefix, and constant
+- [Tutorials](physure-python/docs/tutorials/) and [examples](physure-python/examples/) — including a unit-checked [PINN notebook](physure-python/examples/pinn_harmonic_oscillator.ipynb)
+- [torch.compile integration](physure-python/docs/torch_compile_integration.md)
+
+## Contributing
+
+Issues and PRs are welcome. The quality bar is enforced in CI: ruff clean, tests green on Python 3.10–3.14 with ≥ 80 % coverage, and zero new SonarQube violations. See [CLAUDE.md](CLAUDE.md) for the full development guide.
 
 ## License
 
-**MIT License** — Irvin Torres
+[MIT](LICENSE) — Irvin Torres
