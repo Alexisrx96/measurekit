@@ -1,75 +1,74 @@
-# Physure Core 🦀
+# physure 🦀
 
-[![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org/)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![crates.io](https://img.shields.io/crates/v/physure)](https://crates.io/crates/physure)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Alexisrx96/physure/blob/main/LICENSE)
 
-The high-performance core engine for **Physure**, providing robust unit management, physical quantities with uncertainty propagation, and seamless Python integration.
+**Pure Rust physics engine: dimensional analysis with rational exponents, physical quantities, and uncertainty propagation.**
 
-## ✨ Key Features
+This crate is the core of the [physure](https://github.com/Alexisrx96/physure) project. It contains all the math and none of the FFI — no PyO3, no wasm-bindgen, no JNI. The [`physure` Python package](https://pypi.org/project/physure/) statically links this crate; future WASM/Java wrappers will do the same.
 
-- **🎯 Exact Unit Representation**: Uses rational exponents to eliminate floating-point errors in dimensional analysis.
-- **🎲 Uncertainty Propagation**: Deep support for GUM-compliant uncertainty handling, including Gaussian, Monte Carlo, and Unscented transforms.
-- **📊 Optimized Data Structures**: Built on `ndarray` and `nalgebra` for high-performance numerical operations.
-- **🚀 Python Bindings**: Native-speed performance for Python users via PyO3 and Maturin.
-- **📦 Arrow Support**: Direct serialization to Apache Arrow for efficient data interchange.
+## Features
 
-## 🛠 Tech Stack
+- **Exact dimensional analysis** — `RationalUnit` tracks dimension exponents as rationals, so `sqrt(m²)` is exactly `m`, never `m^0.9999`.
+- **Uncertainty propagation** — Gaussian (first-order), Monte Carlo, and Unscented Transform backends, GUM-style.
+- **Sparse covariance store** — track correlations between thousands of quantities with flat memory.
+- **Symbolic expressions** — a small compiled expression engine (stack-evaluated, ~14 ns/eval).
+- **Arrow IPC serialization** — cross-language data interchange.
 
-- **Rust**: The memory-safe, high-performance base.
-- **PyO3 & Maturin**: Powering the Python interface.
-- **Num-Rational**: For precise unit arithmetic.
-- **Apache Arrow**: For cross-language data handling.
-- **Ndarray & Nalgebra**: For advanced mathematical operations.
+## Usage
 
-## 🚀 Getting Started
+```toml
+[dependencies]
+physure = "0.2"
+```
 
-### Prerequisites
+```rust
+use physure::{Quantity, RationalUnit};
 
-- [Rust](https://www.rust-lang.org/tools/install) (stable)
-- [Python 3.10+](https://www.python.org/downloads/)
-- [Maturin](https://github.com/PyO3/maturin)
+let metre = RationalUnit::new_from_dimensions([("m".to_string(), (1, 1))]);
+let second = RationalUnit::new_from_dimensions([("s".to_string(), (1, 1))]);
 
-### Installation
+// 10.0 ± 0.1 m  /  2.0 ± 0.05 s  ->  5 m/s with propagated uncertainty
+let d = Quantity::new_scalar(10.0, 0.1, metre.clone(), None, None);
+let t = Quantity::new_scalar(2.0, 0.05, second, None, None);
+let v = d.div(&t).expect("compatible dimensions");
+assert_eq!(v.value.mean(), 5.0);
 
-For development and local testing:
+// Dimension mismatches are errors, not silent wrong answers
+assert!(d.add(&v).is_err());
+
+// Rational exponents stay exact: sqrt(m^2) == m
+let side = metre.mul(&metre).pow(num_rational::Rational64::new(1, 2));
+assert_eq!(side, metre);
+```
+
+Run the full tour with `cargo run --example quickstart`.
+
+## Performance
+
+Criterion micro-benchmarks (see [BENCHMARKS.md](https://github.com/Alexisrx96/physure/blob/main/BENCHMARKS.md)):
+
+| Operation | Time |
+|---|---|
+| Unit multiply / divide | ~54 ns |
+| Scalar add with dimension check | ~40 ns |
+| Compiled symbolic eval | ~14 ns |
+| Sparse covariance propagation | ~7 µs |
 
 ```bash
-# Clone the repository
-git clone https://github.com/Alexisrx96/physure.git
-cd physure/physure_core
-
-# Build and install the develop version
-maturin develop
+cargo bench
 ```
 
-## 📖 Quick Example (Python)
+## Development
 
-```python
-from physure_core import Quantity, RationalUnit
-
-# Define units (e.g., meters)
-meter = RationalUnit({"m": 1})
-
-# Create quantities with uncertainty
-length = Quantity(10.0, unit=meter, uncertainty=0.1)
-width = Quantity(5.0, unit=meter, uncertainty=0.05)
-
-# Automatic unit and uncertainty propagation
-area = length * width
-
-print(f"Area: {area.mean} ± {area.std_dev} {area.unit}")
-# Output: Area: 50.0 ± 0.7071... m^2
+```bash
+git clone https://github.com/Alexisrx96/physure
+cd physure
+cargo test -p physure
 ```
 
-## 🏗 Project Structure
+The crate lives in the `physure-core/` directory of the workspace; the directory name is historical, the package name is `physure`.
 
-- `src/units.rs`: Rational unit system and registry.
-- `src/quantity.rs`: Physical quantity implementation with backends.
-- `src/uncertainty.rs`: Uncertainty propagation logic (Gaussian, MC, etc.).
-- `src/covariance.rs`: Advanced covariance management.
-- `src/serialization.rs`: Arrow and memory serialization.
+## License
 
-## 📄 License
-
-This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
+[MIT](https://github.com/Alexisrx96/physure/blob/main/LICENSE) — Irvin Torres

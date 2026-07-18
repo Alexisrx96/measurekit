@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use physure_core::{Quantity, RationalUnit, CovarianceStore, PruningConfig, symbolic::Expr};
+use physure::{Quantity, RationalUnit, CovarianceStore, PruningConfig, symbolic::Expr};
 use ndarray::ArrayD;
 
 fn bench_units(c: &mut Criterion) {

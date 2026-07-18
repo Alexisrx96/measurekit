@@ -9,7 +9,7 @@
 //   4. Registers the Python module (physure._core).
 //
 // HARD RULE: No physics math lives here. All computation delegates to
-//            physure_core::*. This is strictly a translation layer.
+//            physure::*. This is strictly a translation layer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -26,7 +26,7 @@ use std::sync::{Mutex, OnceLock};
 use num_rational::Rational64;
 use num_traits::FromPrimitive;
 
-use ::physure_core::{
+use ::physure::{
     RationalUnit, UnitRegistry, Quantity, PruningConfig, CovarianceStore,
     GaussianBackend, MonteCarloBackend, UnscentedBackend, UncertaintyBackend, UncertaintyValue,
     PhysureResult, PhysureError,
@@ -621,7 +621,7 @@ fn batch_to_si_inplace(py: Python<'_>, buf: PyBuffer<f64>, factor: f64) -> PyRes
         let ptr = slice.as_ptr() as *mut f64;
         std::slice::from_raw_parts_mut(ptr, slice.len())
     };
-    ::physure_core::batch_to_si(data, factor);
+    ::physure::batch_to_si(data, factor);
     Ok(())
 }
 
@@ -644,7 +644,7 @@ fn step_euler_inplace(
         let ptr = vel_slice.as_ptr() as *const f64;
         std::slice::from_raw_parts(ptr, vel_slice.len())
     };
-    ::physure_core::step_euler(pos, vel, dt);
+    ::physure::step_euler(pos, vel, dt);
     Ok(())
 }
 
@@ -661,14 +661,14 @@ fn batch_scale_and_shift_inplace(
         let ptr = slice.as_ptr() as *mut f64;
         std::slice::from_raw_parts_mut(ptr, slice.len())
     };
-    ::physure_core::batch_scale_and_shift(data, scale, shift);
+    ::physure::batch_scale_and_shift(data, scale, shift);
     Ok(())
 }
 
 /// Parse unit string expression directly via native Rust parser.
 #[pyfunction]
 fn parse_unit_expression(py: Python<'_>, expr: &str) -> PyResult<PyObject> {
-    let unit = ::physure_core::units::Parser::parse_expression(expr)
+    let unit = ::physure::units::Parser::parse_expression(expr)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     get_cached_unit(py, unit)
 }
@@ -676,7 +676,7 @@ fn parse_unit_expression(py: Python<'_>, expr: &str) -> PyResult<PyObject> {
 /// Evaluate dual number auto-differentiation operation in native Rust.
 #[pyfunction]
 fn eval_dual_number(val: f64, der: f64, op: &str) -> PyResult<(f64, f64)> {
-    let d = ::physure_core::math::DualNumber { value: val, derivative: der };
+    let d = ::physure::math::DualNumber { value: val, derivative: der };
     let res = match op {
         "sin" => d.sin(),
         "cos" => d.cos(),
@@ -701,8 +701,8 @@ fn propagate_hessian_uncertainty(
     let cov_slice = covariance.as_slice().unwrap();
     let shape = hessian.shape();
 
-    let mean_out = ::physure_core::math::HessianPropagation::propagate_mean_slices(f_mean, h_slice, cov_slice, shape[0], shape[1]);
-    let var_out = ::physure_core::math::HessianPropagation::propagate_variance_slices(j_slice, h_slice, cov_slice, shape[0], shape[1]);
+    let mean_out = ::physure::math::HessianPropagation::propagate_mean_slices(f_mean, h_slice, cov_slice, shape[0], shape[1]);
+    let var_out = ::physure::math::HessianPropagation::propagate_variance_slices(j_slice, h_slice, cov_slice, shape[0], shape[1]);
 
     Ok((mean_out, var_out))
 }
@@ -760,7 +760,7 @@ fn to_backend(
 #[pyfunction]
 fn to_arrow_record_batch(py: Python<'_>, quantities: Vec<PyRef<'_, PyQuantity>>) -> PyResult<PyObject> {
     let raw: Vec<Quantity> = quantities.iter().map(|q| q.0.clone()).collect();
-    let bytes = ::physure_core::serialization::quantities_to_arrow(&raw)
+    let bytes = ::physure::serialization::quantities_to_arrow(&raw)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(pyo3::types::PyBytes::new(py, &bytes).into_py_any(py)?)
 }

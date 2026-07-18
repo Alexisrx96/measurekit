@@ -6,7 +6,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 [package]
-name        = "physure-core"
+name        = "physure"
 description = "Pure Rust physics engine. No FFI dependencies. Single source of truth."
 version.workspace    = true
 edition.workspace    = true
@@ -16,7 +16,7 @@ homepage.workspace   = true
 authors.workspace    = true
 
 [lib]
-name       = "physure_core"
+name       = "physure"
 # rlib: used by physure-python (statically linked into the .so)
 # No cdylib here — FFI wrappers declare their own crate-type.
 crate-type = ["rlib"]

@@ -1,9 +1,9 @@
-use physure_core::math::{DualNumber, Interval, HessianPropagation};
-use physure_core::units::{RationalUnit, UnitRegistry};
-use physure_core::uncertainty::{UncertaintyValue, GaussianBackend};
-use physure_core::covariance::{CovarianceStore, PruningConfig};
-use physure_core::symbolic::{Expr, CompiledExpr};
-use physure_core::error::PhysureError;
+use physure::math::{DualNumber, Interval, HessianPropagation};
+use physure::units::{RationalUnit, UnitRegistry};
+use physure::uncertainty::{UncertaintyValue, GaussianBackend};
+use physure::covariance::{CovarianceStore, PruningConfig};
+use physure::symbolic::{Expr, CompiledExpr};
+use physure::error::PhysureError;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -126,7 +126,7 @@ fn test_dual_number_nan_inf_safety() {
 fn test_compiled_expr_stack_underflow_and_division_by_zero() {
     // Malformed bytecode stack underflow check
     let malformed = CompiledExpr {
-        instructions: vec![physure_core::symbolic::Instruction::Add],
+        instructions: vec![physure::symbolic::Instruction::Add],
         var_names: vec![],
     };
     assert!(matches!(malformed.eval(&[]), Err(PhysureError::Generic(_))));

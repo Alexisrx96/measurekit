@@ -22,7 +22,7 @@ description = "High-performance physical dimension engine — Rust-first, zero-c
 
 # ── Shared dependency versions ─────────────────────────────────────────────
 [workspace.dependencies]
-physure-core  = { path = "physure-core" }
+physure       = { path = "physure-core" }
 num-rational  = "0.4"
 num-traits    = "0.2"
 ndarray       = "0.15"
