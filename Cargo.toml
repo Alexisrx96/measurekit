@@ -35,6 +35,8 @@ chrono        = "0.4"
 sprs          = "0.11"
 smallvec      = "1.13"
 criterion     = "0.5"
+# abi3-py311 is the floor: pyo3::buffer::PyBuffer (zero-copy FFI) only exists in
+# the limited API from Python 3.11. Must match requires-python in pyproject.toml.
 pyo3          = { version = "0.25", features = ["extension-module", "abi3-py311"] }
 numpy         = "0.25"
 

@@ -6,7 +6,7 @@
 <p><i>Units, dimensions, and correlated uncertainty tracked through every calculation, with zero overhead under <code>torch.compile</code> / <code>jax.jit</code>.</i></p>
 
 [![PyPI](https://img.shields.io/pypi/v/physure)](https://pypi.org/project/physure/)
-[![Python 3.10–3.14](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/physure/)
+[![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/physure/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust core](https://img.shields.io/badge/core-Rust%20%F0%9F%A6%80-orange)](physure-core/)
 
@@ -158,7 +158,7 @@ The rule: **physure-core is the single source of truth**. All math lives in Rust
 
 ## Contributing
 
-Issues and PRs are welcome. The quality bar is enforced in CI: ruff clean, tests green on Python 3.10–3.14 with ≥ 80 % coverage, and zero new SonarQube violations. See [CLAUDE.md](CLAUDE.md) for the full development guide.
+Issues and PRs are welcome. The quality bar is enforced in CI: ruff clean, tests green on Python 3.11–3.14 with ≥ 80 % coverage, and zero new SonarQube violations. See [CLAUDE.md](CLAUDE.md) for the full development guide.
 
 ## License
 

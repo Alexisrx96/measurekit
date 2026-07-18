@@ -7,7 +7,7 @@ name        = "physure"
 version     = "0.2.0"
 description = "High-performance physical dimension engine. Rust-first, zero-copy FFI. Successor to physure."
 readme      = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license     = { text = "MIT" }
 authors     = [
     { name = "Irvin Torres", email = "irvinrx1996@hotmail.com" }
@@ -23,7 +23,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

@@ -13,6 +13,7 @@ license.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
 authors.workspace    = true
+publish     = false   # PyO3 binding crate — ships to PyPI via maturin, never to crates.io
 
 [lib]
 name       = "physure_core"  # The compiled .so will be named physure._core
