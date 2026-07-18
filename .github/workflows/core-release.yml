@@ -44,3 +44,20 @@ jobs:
         run: cargo publish -p physure
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  # Permanent GitHub Release pinned to the core tag.
+  github-release:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "physure crate $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
