@@ -73,7 +73,7 @@ _NUMBER_PAT = r"\d+\.?\d*(?:[eE]\s*[+-]?\s*\d+)?|\.\d+(?:[eE]\s*[+-]?\s*\d+)?"
 _IDENT_PAT = r"[^\W\d]\w*"
 _SUP_PAT = r"[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+"
 _SQRT_PAT = r"√"
-_OP_PAT = r"\+/-|±|<=|>=|!=|==|=>|->|\*\s*\*|\*\*|[-+*/^()=?<>×÷,:|]"  # noqa: RUF001
+_OP_PAT = r"\+/-|±|<=|>=|!=|==|=>|->|≈|\*\s*\*|\*\*|[-+*/^()=?<>×÷,:|]"  # noqa: RUF001
 
 _OP_ALIASES = {"×": "*", "÷": "/"}  # noqa: RUF001
 _TOKEN_RE = re.compile(
@@ -158,6 +158,21 @@ def _top_level_index(tokens: list[Token], op: str) -> int:
     return -1
 
 
+def _approx_eq(a: Any, b: Any, rel_tol: float = 0.1, abs_tol: float = 1e-5) -> bool:
+    a_mag = getattr(a, "magnitude", a)
+    b_mag = getattr(b, "magnitude", b)
+    if hasattr(a, "to") and hasattr(b, "unit"):
+        try:
+            b_converted = b.to(a.unit)
+            b_mag = b_converted.magnitude
+        except Exception:
+            return False
+    try:
+        return math.isclose(float(a_mag), float(b_mag), rel_tol=rel_tol, abs_tol=abs_tol)
+    except Exception:
+        return False
+
+
 _COMPARISONS: dict[str, Callable[[Any, Any], bool]] = {
     "<": operator.lt,
     ">": operator.gt,
@@ -165,6 +180,7 @@ _COMPARISONS: dict[str, Callable[[Any, Any], bool]] = {
     ">=": operator.ge,
     "==": operator.eq,
     "!=": operator.ne,
+    "≈": _approx_eq,
 }
 
 
@@ -511,7 +527,141 @@ _FUNCTIONS: dict[str, tuple[int, float, Callable[..., GrammarValue]]] = {
     "exp": (1, 1, lambda x: _transcendental(x, "exp")),
     "log": (1, 1, lambda x: _transcendental(x, "log")),
     "ln": (1, 1, lambda x: _transcendental(x, "log")),
+    "linspace": (2, 3, lambda *a: _linspace_fn(*a)),
+    "plot": (1, 3, lambda *a: _plot_fn(*a)),
 }
+
+
+def _linspace_fn(start: GrammarValue, stop: GrammarValue, num: GrammarValue = 50) -> Any:
+    import numpy as np
+    from physure.domain.measurement.quantity import Quantity
+
+    start_mag = getattr(start, "magnitude", start)
+    stop_mag = getattr(stop, "magnitude", stop)
+    unit = getattr(start, "unit", getattr(stop, "unit", None))
+    system = getattr(start, "system", getattr(stop, "system", None))
+
+    arr = np.linspace(float(start_mag), float(stop_mag), int(num))
+    if unit is not None:
+        return Quantity.from_input(arr, unit, system)
+    return arr
+
+
+def _format_unit_str(unit_raw: str) -> str:
+    u = str(unit_raw).strip()
+    if u in ("1", "", "None"):
+        return ""
+    aliases = {
+        "kg·m/s²": "N",
+        "kg*m/s^2": "N",
+        "kg·m³/(A·s³)": "N/C",
+        "A·s": "C",
+    }
+    return aliases.get(u, u)
+
+
+def _draw_ascii_plot(x: Any, y: Any, title: str = "Plot", x_unit: str = "", y_unit: str = "") -> str:
+    import numpy as np
+
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    if len(x_arr) == 0 or len(y_arr) == 0:
+        return f"📊 {title}: [No data points]"
+
+    width = 46
+    height = 8
+
+    x_grid = np.linspace(x_arr.min(), x_arr.max(), width)
+    y_grid = np.interp(x_grid, x_arr, y_arr)
+
+    y_min, y_max = y_grid.min(), y_grid.max()
+    y_span = (y_max - y_min) if (y_max != y_min) else 1.0
+
+    fmt_x = _format_unit_str(x_unit)
+    fmt_y = _format_unit_str(y_unit)
+
+    lines = []
+    lines.append(f"  📊 {title}")
+    lines.append(f"  {y_max:.3e} {fmt_y}".strip().rjust(18) + " ┐")
+
+    for r in range(height - 1, -1, -1):
+        y_level = y_min + (r / (height - 1)) * y_span
+        row_chars = []
+        for c in range(width):
+            val = y_grid[c]
+            diff = abs(val - y_level) / y_span
+            if diff < (1.0 / (2 * height)):
+                row_chars.append("█")
+            elif val > y_level:
+                row_chars.append("░")
+            else:
+                row_chars.append(" ")
+        lines.append("                   │ " + "".join(row_chars))
+
+    lines.append(f"  {y_min:.3e} {fmt_y}".strip().rjust(18) + " └" + "─" * width)
+    x_min_str = f"{x_arr.min():.3e} {fmt_x}".strip()
+    x_max_str = f"{x_arr.max():.3e} {fmt_x}".strip()
+    lines.append("                     " + x_min_str + " " * max(1, width - len(x_min_str) - len(x_max_str) + 12) + x_max_str)
+
+    return "\n".join(lines)
+
+
+def _plot_fn(*args: Any, **kwargs: Any) -> Any:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import io, base64
+    import numpy as np
+
+    x_val = args[0] if len(args) >= 2 else None
+    y_val = args[1] if len(args) >= 2 else args[0]
+
+    y_mag = getattr(y_val, "magnitude", y_val)
+    y_unit = _format_unit_str(getattr(y_val, "unit", ""))
+    y_arr = np.asarray(y_mag, dtype=float)
+
+    if x_val is not None:
+        x_mag = getattr(x_val, "magnitude", x_val)
+        x_unit = _format_unit_str(getattr(x_val, "unit", ""))
+        x_arr = np.asarray(x_mag, dtype=float)
+    else:
+        x_arr = np.arange(len(y_arr))
+        x_unit = ""
+
+    title = str(kwargs.get("title", "Physure Live Plot"))
+    ascii_plot = _draw_ascii_plot(x_arr, y_arr, title=title, x_unit=x_unit, y_unit=y_unit)
+
+    fig, ax = plt.subplots(figsize=(6.5, 3.8))
+    ax.plot(x_arr, y_arr, color="#4ec9b0", linewidth=2.5)
+    ax.fill_between(x_arr, y_arr, color="#4ec9b0", alpha=0.12)
+
+    x_label_str = f"x ({x_unit})" if x_unit else "x"
+    y_label_str = f"y ({y_unit})" if y_unit else "y"
+
+    ax.set_xlabel(x_label_str, color="#cccccc", fontsize=9.5)
+    ax.set_ylabel(y_label_str, color="#cccccc", fontsize=9.5)
+
+    ax.set_title(title, color="#569cd6", fontsize=11, fontweight="bold", pad=12)
+    ax.grid(True, linestyle=":", alpha=0.35, color="#666666")
+    ax.tick_params(colors="#cccccc", labelsize=8.5)
+
+    for spine in ax.spines.values():
+        spine.set_color("#444444")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    fig.patch.set_facecolor("#1e1e1e")
+    ax.set_facecolor("#252526")
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=140)
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode("utf-8")
+    plt.close(fig)
+
+    b64_tag = f"[PLOT_IMAGE:data:image/png;base64,{b64}]"
+    return f"{ascii_plot}\n{b64_tag}"
 
 
 def _format_sig_figs(val: GrammarValue, sig_figs: int) -> GrammarValue:
@@ -584,13 +734,28 @@ class GrammarInterpreter:
                 text = text[1:]
             if text.endswith("\n"):
                 text = text[:-1]
-            results.append(text)
+            results.append(self._interpolate_text(text))
             current_line += match.group(0).count("\n")
             pos = match.end()
 
         tail = source[pos:]
         results.extend(self._run_segment(tail, start_line_num=current_line))
         return results
+
+    def _interpolate_text(self, text: str) -> str:
+        def replacer(m: re.Match[str]) -> str:
+            expr = m.group(1).strip()
+            try:
+                res_list = self._run_segment(expr)
+                if res_list:
+                    val = res_list[-1]
+                    if val is not None:
+                        return str(val)
+            except Exception as e:
+                return f"{{ERR: {e}}}"
+            return m.group(0)
+
+        return re.sub(r"\{([^}]+)\}", replacer, text)
 
     def _run_segment(
         self, segment: str, start_line_num: int = 1

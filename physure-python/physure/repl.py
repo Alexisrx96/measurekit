@@ -24,7 +24,11 @@ _BANNER = (
 def _print_results(results: list[Any]) -> None:
     for result in results:
         if result is not None:
-            print(result)
+            s = str(result)
+            lines = [line for line in s.split('\n') if not line.startswith('[PLOT_IMAGE:')]
+            clean_str = '\n'.join(lines).rstrip()
+            if clean_str:
+                print(clean_str)
 
 
 def _run_source(source: str) -> int:
