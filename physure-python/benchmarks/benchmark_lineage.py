@@ -1,6 +1,6 @@
 import time
 
-import physure as mk
+import physure as ps
 
 
 def benchmark_lineage(n):

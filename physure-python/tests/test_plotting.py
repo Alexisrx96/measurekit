@@ -6,18 +6,18 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
-import physure as mk
+import physure as ps
 from physure import Q_
 
 
 def test_plot_imports():
     """Ensure plotting functions are lazily exposed at package and class levels."""
-    assert hasattr(mk, "plot")
-    assert hasattr(mk, "plot_slices")
-    assert hasattr(mk, "plot_interactive")
-    assert hasattr(mk, "plot_parallel_coordinates")
-    assert hasattr(mk, "plot_pairplot")
-    assert hasattr(mk, "plot_covariance")
+    assert hasattr(ps, "plot")
+    assert hasattr(ps, "plot_slices")
+    assert hasattr(ps, "plot_interactive")
+    assert hasattr(ps, "plot_parallel_coordinates")
+    assert hasattr(ps, "plot_pairplot")
+    assert hasattr(ps, "plot_covariance")
 
     q = Q_(10, "m")
     assert hasattr(q, "plot")
@@ -101,12 +101,12 @@ def test_plot_parallel_coordinates_and_pairplot():
     data_dict = {"Length": x1, "Mass": x2, "Time": x3}
 
     # Parallel Coordinates
-    ax_parallel = mk.plot_parallel_coordinates(data_dict, target=target)
+    ax_parallel = ps.plot_parallel_coordinates(data_dict, target=target)
     assert ax_parallel is not None
     plt.close(ax_parallel.figure)
 
     # Corner Plot (Pairplot)
-    axes_corner = mk.plot_pairplot(data_dict)
+    axes_corner = ps.plot_pairplot(data_dict)
     assert axes_corner is not None
     plt.close(axes_corner[0, 0].figure)
 
@@ -114,7 +114,7 @@ def test_plot_parallel_coordinates_and_pairplot():
 def test_plot_covariance_matrix():
     """Verify covariance/correlation plot on Quantities with correlated uncertainties."""
     # Use correlated uncertainty mode
-    with mk.uncertainty_mode("correlated"):
+    with ps.uncertainty_mode("correlated"):
         # Create an independent array with standard deviations (as NumPy array)
         q = Q_(
             np.array([10.0, 20.0, 30.0]),

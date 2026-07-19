@@ -4,7 +4,7 @@ import time
 import numpy as np
 import psutil
 
-import physure as mk
+import physure as ps
 
 
 def get_memory_usage():

@@ -10,7 +10,7 @@ if root not in sys.path:
     sys.path.insert(0, root)
 # physure._core injection removed
 
-import physure as mk
+import physure as ps
 from physure import Q_
 
 
@@ -31,7 +31,7 @@ def test_uncertainty_context_manager():
     assert math.isclose(y.uncertainty, 20.0)
 
     print("\nTesting Monte Carlo Mode via context manager...")
-    with mk.uncertainty_mode("monte_carlo", samples=50000):
+    with ps.uncertainty_mode("monte_carlo", samples=50000):
         x = Q_(10.0, "m", uncertainty=1.0)
         y = x**2
         val = get_val(y)
@@ -48,7 +48,7 @@ def test_uncertainty_context_manager():
             assert math.isclose(val, 100.0)
 
     print("\nTesting Unscented Mode via context manager...")
-    with mk.uncertainty_mode("unscented"):
+    with ps.uncertainty_mode("unscented"):
         x = Q_(10.0, "m", uncertainty=1.0)
         y = x**2
         val = get_val(y)
@@ -61,7 +61,7 @@ def test_uncertainty_context_manager():
             assert math.isclose(val, 100.0)
 
     print("\nTesting Transcendental functions via Gaussian core...")
-    with mk.uncertainty_mode("gaussian"):
+    with ps.uncertainty_mode("gaussian"):
         x = Q_(math.pi / 2, "", uncertainty=0.1)
         y = x.sin()
         val = get_val(y)

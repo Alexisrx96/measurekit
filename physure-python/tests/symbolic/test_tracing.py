@@ -1,11 +1,11 @@
-import physure as mk
+import physure as ps
 from physure.application.tracing.context import trace_formulas
 
 
 def test_symbolic_tracing_basic():
     with trace_formulas() as trace:
-        m = mk.Q_(10, "kg", symbol="m")
-        a = mk.Q_(5, "m/s^2", symbol="a")
+        m = ps.Q_(10, "kg", symbol="m")
+        a = ps.Q_(5, "m/s^2", symbol="a")
         f = m * a
 
         # Verify the math works
@@ -22,8 +22,8 @@ def test_symbolic_tracing_basic():
 
 def test_symbolic_tracing_complex():
     with trace_formulas() as trace:
-        x = mk.Q_(2, "m", symbol="x")
-        y = mk.Q_(3, "m", symbol="y")
+        x = ps.Q_(2, "m", symbol="x")
+        y = ps.Q_(3, "m", symbol="y")
         z = (x + y) * x / y
 
         latex = trace.get_equation(z)
@@ -36,8 +36,8 @@ def test_symbolic_tracing_complex():
 def test_zero_overhead_active():
     # Outside context manager, creating quantities should not crash
     # and should not register anything anywhere global.
-    m = mk.Q_(10, "kg", symbol="m")
-    a = mk.Q_(5, "m/s^2", symbol="a")
+    m = ps.Q_(10, "kg", symbol="m")
+    a = ps.Q_(5, "m/s^2", symbol="a")
     f = m * a
     assert f.magnitude == 50
 
@@ -45,8 +45,8 @@ def test_zero_overhead_active():
 def test_affine_trace():
     # Phase 3 requirement: reflect Affine Logic
     with trace_formulas() as trace:
-        t1 = mk.Q_(273.15, "kelvin", symbol="T_1")
-        t2 = mk.Q_(373.15, "kelvin", symbol="T_2")
+        t1 = ps.Q_(273.15, "kelvin", symbol="T_1")
+        t2 = ps.Q_(373.15, "kelvin", symbol="T_2")
         dt = t2 - t1
 
         latex = trace.get_equation(dt)

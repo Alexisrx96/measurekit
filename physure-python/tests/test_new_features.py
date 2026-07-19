@@ -1,6 +1,6 @@
 import math
 
-import physure as mk
+import physure as ps
 from physure import Q_, propagation_mode
 
 
@@ -46,7 +46,7 @@ def test_new_units():
 
 
 def test_constants():
-    system = mk.get_current_system()
+    system = ps.get_current_system()
 
     # Check speed of light
     c = system.get_constant("speed_of_light_in_vacuum")

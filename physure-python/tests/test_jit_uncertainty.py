@@ -9,7 +9,7 @@ sys.path.insert(0, root)
 # core_path injection removed to avoid loading potentially broken artifacts
 
 
-import physure as mk
+import physure as ps
 from physure import Q_, jit
 
 
@@ -28,7 +28,7 @@ def test_jit_uncertainty():
     print("Testing JIT with Uncertainty Modes...")
 
     print("\n[JIT + Gaussian]")
-    with mk.uncertainty_mode("gaussian"):
+    with ps.uncertainty_mode("gaussian"):
         m = Q_(10.0, "kg", uncertainty=0.1)
         v = Q_(2.0, "m/s", uncertainty=0.2)
         e = calculate_energy(m, v)
@@ -42,7 +42,7 @@ def test_jit_uncertainty():
         assert math.isclose(e.uncertainty, math.sqrt(0.04 + 16))
 
     print("\n[JIT + Monte Carlo]")
-    with mk.uncertainty_mode("monte_carlo", samples=10000):
+    with ps.uncertainty_mode("monte_carlo", samples=10000):
         m = Q_(10.0, "kg", uncertainty=0.1)
         v = Q_(2.0, "m/s", uncertainty=0.2)
         e = calculate_energy(m, v)
@@ -63,7 +63,7 @@ def test_jit_uncertainty():
             assert math.isclose(val, 20.0, abs_tol=0.01)
 
     print("\n[JIT + Unscented]")
-    with mk.uncertainty_mode("unscented"):
+    with ps.uncertainty_mode("unscented"):
         m = Q_(10.0, "kg", uncertainty=0.1)
         v = Q_(2.0, "m/s", uncertainty=0.2)
         e = calculate_energy(m, v)
