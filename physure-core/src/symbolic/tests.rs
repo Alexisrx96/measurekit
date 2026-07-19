@@ -224,3 +224,13 @@ fn test_integrate_by_parts() {
     let integrated = integrand.integrate_node("x").unwrap().simplify();
     assert!(matches!(integrated, Node::Sub(_, _)) || matches!(integrated, Node::Add(_)));
 }
+
+#[test]
+fn test_add_bare_number_to_dimensioned_quantity_fails() {
+    use crate::units::RationalUnit;
+    let m = RationalUnit::base("m");
+    let q = Expr::quantity("5".to_string(), &m);
+    let num = Expr::number(2.0);
+    assert!(q.add(&num).is_err());
+}
+

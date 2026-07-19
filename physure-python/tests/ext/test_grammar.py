@@ -121,7 +121,7 @@ def test_invalid_assignment_target(mn):
 
 def test_unclosed_paren(mn):
     with pytest.raises(GrammarError):
-        mn.eval("(2 + 3 m")
+        mn.eval("(2 m + 3 m")
 
 
 def test_one_shot_evaluate():

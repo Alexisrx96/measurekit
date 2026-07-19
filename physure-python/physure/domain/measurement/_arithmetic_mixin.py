@@ -1144,10 +1144,24 @@ class ArithmeticMixin:
         self._record_op(op, other, res)
         return res
 
+    def _reject_bare_number_add_sub(
+        self, other: Quantity | Numeric
+    ) -> None:
+        """A bare number carries no unit: '5 m + 2' must raise, never
+        silently assume the 2 is metres. Only a dimensionless quantity
+        may absorb bare numbers additively."""
+        if isinstance(other, _q()) or self.dimension.is_dimensionless:
+            return
+        if isinstance(other, (int, float, complex)) or self._backend.is_array(
+            other
+        ):
+            raise IncompatibleUnitsError(self.unit, CompoundUnit({}))
+
     def _add_sub_impl(
         self, other: Quantity | Numeric, is_add: bool
     ) -> Quantity:
         op = "add" if is_add else "sub"
+        self._reject_bare_number_add_sub(other)
         rust_res = self._check_and_handle_rust_propagation(other, op)
         if rust_res is not None:
             return rust_res
@@ -1186,6 +1200,7 @@ class ArithmeticMixin:
 
     def __rsub__(self, other: Quantity | Numeric) -> Quantity:
         """Right subtraction."""
+        self._reject_bare_number_add_sub(other)
         rust_res = self._check_and_handle_rust_propagation(other, "rsub")
         if rust_res is not None:
             return rust_res

@@ -22,7 +22,8 @@ pub enum Node {
 impl Node {
     pub fn infer_unit(&self) -> PhysureResult<Option<RationalUnit>> {
         match self {
-            Node::Number(_) | Node::Symbol(_) => Ok(None),
+            Node::Number(_) => Ok(Some(RationalUnit::dimensionless())),
+            Node::Symbol(_) => Ok(None),
             Node::Quantity(_, u) => Ok(Some(u.clone())),
             Node::Add(terms) => {
                 let mut result: Option<RationalUnit> = None;

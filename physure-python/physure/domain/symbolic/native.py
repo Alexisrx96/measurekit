@@ -140,8 +140,8 @@ def _add_like_unit(nodes: tuple[Node, ...]) -> CompoundUnit | None:
     return result
 
 
-def _infer_unit_none(node: Node) -> CompoundUnit | None:
-    return None
+def _infer_unit_number(node: Number) -> CompoundUnit | None:
+    return CompoundUnit({})
 
 
 def _infer_unit_quantity(node: Quantity) -> CompoundUnit | None:
@@ -198,9 +198,13 @@ def _infer_unit_transcendental(
     return None
 
 
+def _infer_unit_symbol(node: Symbol) -> CompoundUnit | None:
+    return None
+
+
 _INFER_UNIT_DISPATCH: dict[type, Callable[[Any], CompoundUnit | None]] = {
-    Number: _infer_unit_none,
-    Symbol: _infer_unit_none,
+    Number: _infer_unit_number,
+    Symbol: _infer_unit_symbol,
     Quantity: _infer_unit_quantity,
     Add: _infer_unit_add,
     Sub: _infer_unit_sub,
