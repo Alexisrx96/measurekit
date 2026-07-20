@@ -491,11 +491,23 @@ impl PyQuantity {
         Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
     }
 
+    fn sqrt(&self) -> PyResult<PyQuantity> {
+        let new_q = self.0.sqrt()
+            .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
+        Ok(PyQuantity(new_q))
+    }
+
+    #[pyo3(signature = (other, rel_tol = 0.1, abs_tol = 1e-5))]
+    fn approx_eq(&self, other: &PyQuantity, rel_tol: f64, abs_tol: f64) -> bool {
+        self.0.approx_eq(&other.0, rel_tol, abs_tol)
+    }
+
     fn tanh(&self) -> PyResult<PyQuantity> {
         let new_val = self.0.value.propagate_function("tanh")
             .map_err(|e| pyo3::exceptions::PyArithmeticError::new_err(e.to_string()))?;
         Ok(PyQuantity(Quantity::from_value(new_val, RationalUnit::dimensionless())))
     }
+
 
     fn __repr__(&self) -> String {
         format!("Quantity({}, {})", self.0.value.mean(), self.0.unit.__repr__())

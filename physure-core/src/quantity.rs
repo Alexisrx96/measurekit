@@ -74,4 +74,21 @@ impl Quantity {
         let new_unit = self.unit.pow(exp_r);
         Ok(Quantity { value: new_value, unit: new_unit })
     }
+
+    pub fn sqrt(&self) -> PhysureResult<Quantity> {
+        self.pow(0.5)
+    }
+
+    pub fn approx_eq(&self, other: &Quantity, rel_tol: f64, abs_tol: f64) -> bool {
+        if self.unit.id != other.unit.id && self.unit.dimensions != other.unit.dimensions {
+            return false;
+        }
+        let self_mag = self.value.mean();
+        let other_mag = other.value.mean();
+        let diff = (self_mag - other_mag).abs();
+        let tol = abs_tol.max(rel_tol * self_mag.abs().max(other_mag.abs()));
+        diff <= tol
+    }
 }
+
+

@@ -143,6 +143,26 @@ _PLOT_ATTRS = {
     "plot_pairplot",
     "plot_covariance",
 }
+_HELPER_ATTRS = {
+    "approx_eq",
+    "linspace",
+    "sqrt",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "sinh",
+    "cosh",
+    "tanh",
+    "exp",
+    "log",
+    "log10",
+    "pi",
+    "e",
+}
 
 
 def _load_io(name: str) -> Any:
@@ -151,10 +171,17 @@ def _load_io(name: str) -> Any:
     return save_state if name == "save_state" else load_state
 
 
+def _load_helpers(name: str) -> Any:
+    import physure.ext.helpers as helpers
+
+    return getattr(helpers, name)
+
+
 def _load_q(name: str) -> Any:
     from physure.application.factories import QuantityFactory
 
     return QuantityFactory()
+
 
 
 def _load_quantity(name: str) -> Any:
@@ -283,6 +310,8 @@ for _attr in ("equivalencies", "spectral", "thermodynamic"):
     _ATTR_LOADERS[_attr] = _load_equivalencies
 for _attr in _PLOT_ATTRS:
     _ATTR_LOADERS[_attr] = _load_plotting
+for _attr in _HELPER_ATTRS:
+    _ATTR_LOADERS[_attr] = _load_helpers
 del _attr
 
 
@@ -332,15 +361,28 @@ __all__ = [
     "Uncertainty",
     "UnitNotFoundError",
     "UnknownUnitError",
+    "acos",
+    "approx_eq",
+    "asin",
+    "atan",
+    "atan2",
+    "cos",
+    "cosh",
     "create_default_system",
     "create_system",
     "default_system",
+    "e",
     "equivalencies",
+    "exp",
     "get_active_system",
     "get_current_system",
     "get_unit",
     "jit",
+    "linspace",
     "load_state",
+    "log",
+    "log10",
+    "pi",
     "plot",
     "plot_covariance",
     "plot_interactive",
@@ -348,9 +390,15 @@ __all__ = [
     "plot_parallel_coordinates",
     "plot_slices",
     "save_state",
+    "sin",
+    "sinh",
+    "sqrt",
     "spectral",
     "system_context",
+    "tan",
+    "tanh",
     "thermodynamic",
     "uncertainty_mode",
     "units",
 ]
+
