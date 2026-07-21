@@ -8,6 +8,7 @@ pub mod covariance;
 pub mod math;
 pub mod serialization;
 pub mod symbolic;
+pub mod phs;
 
 pub use error::{PhysureError, PhysureResult};
 pub use units::{RationalUnit, UnitRegistry, UnitConverter, DimVector, UnitDefinition, UnitKind};
@@ -15,6 +16,7 @@ pub use quantity::Quantity;
 pub use covariance::{CovarianceStore, PruningConfig};
 pub use uncertainty::{UncertaintyBackend, UncertaintyValue, GaussianBackend, MonteCarloBackend, UnscentedBackend};
 pub use symbolic::Expr;
+pub use phs::{PhsLexer, PhsToken, TokenKind, PhsInterpreter, PhsValue, eval_phs};
 
 /// Convert batch values in-place using factor.
 pub fn batch_to_si(data: &mut [f64], factor: f64) {

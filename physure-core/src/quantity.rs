@@ -13,6 +13,32 @@ pub struct Quantity {
     pub unit: RationalUnit,
 }
 
+impl std::fmt::Debug for Quantity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Quantity")
+            .field("mean", &self.value.mean())
+            .field("unit", &self.unit)
+            .finish()
+    }
+}
+
+impl PartialEq for Quantity {
+    fn eq(&self, other: &Self) -> bool {
+        self.unit == other.unit && (self.value.mean() - other.value.mean()).abs() < 1e-9
+    }
+}
+
+impl std::fmt::Display for Quantity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let unit_str = self.unit.__repr__();
+        if unit_str.is_empty() {
+            write!(f, "{}", self.value.mean())
+        } else {
+            write!(f, "{} {}", self.value.mean(), unit_str)
+        }
+    }
+}
+
 impl Quantity {
     pub fn new_scalar(mean: f64, std_dev: f64, unit: RationalUnit, mode: Option<&str>, samples: Option<usize>) -> Self {
         let value = match mode {
@@ -35,7 +61,7 @@ impl Quantity {
     }
 
     pub fn add(&self, other: &Quantity) -> PhysureResult<Quantity> {
-        if self.unit != other.unit {
+        if self.unit != other.unit && self.unit.dimensions != other.unit.dimensions {
             return Err(PhysureError::UnitMismatch {
                 expected: self.unit.__repr__(),
                 actual: other.unit.__repr__(),
@@ -46,7 +72,7 @@ impl Quantity {
     }
 
     pub fn sub(&self, other: &Quantity) -> PhysureResult<Quantity> {
-        if self.unit != other.unit {
+        if self.unit != other.unit && self.unit.dimensions != other.unit.dimensions {
             return Err(PhysureError::UnitMismatch {
                 expected: self.unit.__repr__(),
                 actual: other.unit.__repr__(),

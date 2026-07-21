@@ -86,3 +86,35 @@ def test_python_dash_m_entry_point():
     )
     assert result.returncode == 0
     assert "1000" in result.stdout
+
+
+def test_phs_file_execution(tmp_path, capsys):
+    script_file = tmp_path / "calculation.phs"
+    script_file.write_text(
+        "force = 500 N\narea = 2 m^2\nforce / area => kPa\n", encoding="utf-8"
+    )
+
+    assert main([str(script_file)]) == 0
+    captured = capsys.readouterr()
+    assert "0.25 kPa" in captured.out or "0.25" in captured.out
+
+
+def test_phs_missing_file(capsys):
+    assert main(["nonexistent_file.phs"]) == 1
+    captured = capsys.readouterr()
+    assert "not found" in captured.err
+
+
+def test_cli_run_subcommand(tmp_path, monkeypatch, capsys):
+    from physure import cli
+
+    script_file = tmp_path / "test.phs"
+    script_file.write_text(
+        "dist = 100 m\ntime = 10 s\ndist / time => m/s\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr("sys.argv", ["physure", "run", str(script_file)])
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+    assert excinfo.value.code == 0
+    assert "10" in capsys.readouterr().out

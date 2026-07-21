@@ -125,8 +125,35 @@ impl Expr {
         self.node.infer_unit()
     }
 
+    pub fn parse(input: &str) -> PhysureResult<Expr> {
+        let node = super::parser::SymbolicParser::parse_str(input)?;
+        Ok(Expr { node })
+    }
+
+    pub fn to_phs_string(&self) -> String {
+        self.node.to_phs_string()
+    }
+
+    pub fn diff_str(input: &str, var: &str) -> PhysureResult<String> {
+        let expr = Self::parse(input)?;
+        let diffed = expr.diff(var, 1)?;
+        Ok(diffed.to_phs_string())
+    }
+
+    pub fn integrate_str(input: &str, var: &str) -> PhysureResult<String> {
+        let expr = Self::parse(input)?;
+        let integrated = expr.integrate(var)?;
+        Ok(integrated.to_phs_string())
+    }
+
+    pub fn solve_str(eq_input: &str, target: &str) -> PhysureResult<String> {
+        let expr = Self::parse(eq_input)?;
+        let solved = expr.node.solve_equation(target)?;
+        Ok(solved.to_phs_string())
+    }
+
     fn __repr__(&self) -> String {
-        format!("{:?}", self.node)
+        self.to_phs_string()
     }
 
     fn __eq__(&self, other: &Expr) -> bool {

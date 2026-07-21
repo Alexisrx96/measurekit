@@ -9,6 +9,7 @@ resolver = "2"
 members  = [
     "physure-core",
     "physure-python",
+    "physure-lsp",
 ]
 
 [workspace.package]
@@ -23,6 +24,8 @@ description = "High-performance physical dimension engine — Rust-first, zero-c
 # ── Shared dependency versions ─────────────────────────────────────────────
 [workspace.dependencies]
 physure       = { path = "physure-core" }
+tower-lsp     = "0.20"
+tokio         = { version = "1", features = ["full"] }
 num-rational  = "0.4"
 num-traits    = "0.2"
 ndarray       = "0.15"

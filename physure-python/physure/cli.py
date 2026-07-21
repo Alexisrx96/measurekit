@@ -17,17 +17,27 @@ def main():
 
     # repl command
     repl_parser = subparsers.add_parser(
-        "repl", help="Interactive unit-aware calculator (MNML syntax)."
+        "repl", help="Interactive unit-aware calculator (PHS syntax)."
     )
     repl_parser.add_argument(
         "expression",
         nargs="*",
-        help="Evaluate this expression and exit instead of starting a REPL.",
+        help="Evaluate this expression or file and exit instead of starting a REPL.",
+    )
+
+    # run command
+    run_parser = subparsers.add_parser(
+        "run", help="Run a .phs script file or PHS expression."
+    )
+    run_parser.add_argument(
+        "expression",
+        nargs="+",
+        help="Path to .phs file or expression to execute.",
     )
 
     args = parser.parse_args()
 
-    if args.command == "repl":
+    if args.command in ("repl", "run"):
         from physure.repl import main as repl_main
 
         sys.exit(repl_main(args.expression))
@@ -43,6 +53,11 @@ def main():
             print(f"Error generating types: {e}", file=sys.stderr)
             sys.exit(1)
     else:
+        if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+            from physure.repl import main as repl_main
+
+            sys.exit(repl_main(sys.argv[1:]))
+
         parser.print_help()
 
 

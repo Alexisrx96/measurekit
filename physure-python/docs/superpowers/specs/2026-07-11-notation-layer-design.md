@@ -2,20 +2,19 @@
 
 ## Naming
 
-The language implemented by `physure/ext/grammar.py` is now **Physure Meta-Lang (MKML)**,
-file extension `.mkml` — its own identity, not MeasureNote's MNML. MKML is inspired by MNML but is
-deliberately a different (currently smaller, and now diverging) grammar with its own zero-dep,
-fast-parse design goals. Docstrings and comments in `ext/grammar.py` that currently say "MNML"
-should say "MKML" going forward; this spec and its phases use MKML terminology throughout.
+The language implemented by `physure/ext/grammar.py` is **Physure Meta-Lang (MKML)**,
+file extension `.mkml` or `.phs` — its own identity. MKML is
+deliberately a different grammar with its own zero-dep,
+fast-parse design goals. Docstrings and comments in `ext/grammar.py`
+use MKML / PHS terminology throughout.
 
 ## Context
 
 `physure/ext/grammar.py` (MKML expression grammar) and `physure/ext/chemistry/{species,reaction}.py`
 (chemical formula/reaction parsing) are hand-rolled, zero-dependency, regex-tokenized
-recursive-descent parsers. MeasureNote's MNML grammar (`../MeasureNote/python/measurenote_core/grammar.lark`)
-covers a much larger surface (functions, derivatives, integrals, vectors, blocks, `let`, `solve`,
-typed function defs) via Lark, but pays for it with an external dependency and a `Lark(...)`
-grammar rebuild on every `MNMLParser()` instantiation — incompatible with physure's zero-deps
+recursive-descent parsers. The grammar
+covers functions, derivatives, integrals, vectors, blocks, `let`, `solve`,
+typed function defs without external dependencies, maintaining physure's zero-deps
 and fast-startup invariants (CLAUDE.md).
 
 This is Phase 1 of a 4-phase effort:

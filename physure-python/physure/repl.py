@@ -1,13 +1,13 @@
-"""Unit-aware terminal calculator speaking MNML.
+"""Unit-aware terminal calculator speaking PHS.
 
 Three entry modes, in order of precedence:
 
 - ``python -m physure "500 N / 2 m^2 => kPa"`` — evaluate and exit.
-- ``python -m physure < notes.mnml`` — evaluate piped statements.
+- ``python -m physure < notes.phs`` — evaluate piped statements.
 - ``python -m physure`` — interactive REPL.
 
 Also available as the ``physure repl`` CLI subcommand. Syntax is the
-MeasureNote meta-language implemented in :mod:`physure.ext.grammar`.
+Physure Script (PHS) language implemented in :mod:`physure.ext.grammar`.
 """
 
 from __future__ import annotations
@@ -36,7 +36,11 @@ def _print_results(results: list[Any]) -> None:
 
 
 def _run_source(source: str) -> int:
+    from physure.application.context import get_current_system
     from physure.ext.grammar import GrammarInterpreter
+
+    # Ensure UnitSystem is loaded for fast, deterministic evaluation
+    get_current_system()
 
     try:
         _print_results(GrammarInterpreter().run(source))
@@ -89,9 +93,29 @@ def _repl() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point: expression args > piped stdin > interactive REPL."""
+    """Entry point: file path (.phs) > expression args > piped stdin > interactive REPL."""
+    from pathlib import Path
+
     args = sys.argv[1:] if argv is None else argv
     if args:
+        path_candidate = (
+            Path(args[0]) if len(args) == 1 else Path(" ".join(args))
+        )
+        if path_candidate.is_file():
+            try:
+                source = path_candidate.read_text(encoding="utf-8")
+            except OSError as e:
+                print(
+                    f"error reading file '{path_candidate}': {e}",
+                    file=sys.stderr,
+                )
+                return 1
+            return _run_source(source)
+
+        if len(args) == 1 and args[0].endswith(".phs"):
+            print(f"error: file '{args[0]}' not found.", file=sys.stderr)
+            return 1
+
         return _run_source(" ".join(args))
     if not sys.stdin.isatty():
         return _run_source(sys.stdin.read())

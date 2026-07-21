@@ -38,6 +38,10 @@ smallvec.workspace     = true
 name = "core_benchmarks"
 harness = false
 
+[[bin]]
+name = "phs"
+path = "src/bin/phs.rs"
+
 [dev-dependencies]
 # Unit tests live here — lightweight test helpers only
 approx = "0.5"

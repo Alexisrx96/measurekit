@@ -594,7 +594,7 @@ git commit -m "feat: add sqrt prefix operator (√, sqrt(...)) to MKML"
 
 ---
 
-### Task 7: Rename MNML → MKML in `grammar.py` docs/comments
+### Task 7: Update `grammar.py` docs/comments
 
 **Files:**
 - Modify: `physure/ext/grammar.py:1-30` (module docstring), `:112-116` (`_ExprParser` docstring), `:226-231` (`GrammarInterpreter` docstring)
@@ -606,9 +606,9 @@ This is a pure documentation/naming change — no behavior changes, no new tests
 Lines 1-3, from:
 
 ```python
-"""MNML grammar extension: evaluate MeasureNote-style engineering notes.
+"""MKML grammar extension: evaluate Physure-style engineering notes.
 
-Implements the core of the MeasureNote Meta-Language (MNML) as a
+Implements the core of the Physure Meta-Lang (MKML) as a
 ```
 
 to:
@@ -624,7 +624,7 @@ Implements the core of the Physure Meta-Lang (MKML) as a
 Line 112, from:
 
 ```python
-    """Recursive-descent expression parser mirroring MNML precedence.
+    """Recursive-descent expression parser mirroring MKML precedence.
 ```
 
 to:
@@ -638,7 +638,7 @@ to:
 Line 226, from:
 
 ```python
-    """Stateful interpreter for MNML statements.
+    """Stateful interpreter for MKML statements.
 ```
 
 to:
@@ -656,7 +656,7 @@ Expected: all PASS (docstring-only change; no example text was altered)
 
 ```bash
 git add physure/ext/grammar.py
-git commit -m "docs: rename MNML to MKML in grammar.py docstrings"
+git commit -m "docs: update grammar.py docstrings"
 ```
 
 ---

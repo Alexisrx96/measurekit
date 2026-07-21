@@ -234,3 +234,15 @@ fn test_add_bare_number_to_dimensioned_quantity_fails() {
     assert!(q.add(&num).is_err());
 }
 
+#[test]
+fn test_symbolic_string_parsing_and_solving() {
+    let diff_res = Expr::diff_str("x^3", "x").unwrap();
+    assert_eq!(diff_res, "3 * x^2");
+
+    let int_res = Expr::integrate_str("3 * x^2", "x").unwrap();
+    assert_eq!(int_res, "x^3");
+
+    let solve_res = Expr::solve_str("2 * x + 10 = 0", "x").unwrap();
+    assert_eq!(solve_res, "-5");
+}
+

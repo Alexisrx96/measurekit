@@ -202,10 +202,21 @@ fn simplify_mul(factors: Vec<Node>) -> Node {
     }
     let mut collected: Vec<(Node, f64)> = Vec::new();
     for f in rest {
-        if let Some(entry) = collected.iter_mut().find(|(n, _)| *n == f) {
+        let f_clean = if let Node::Div(num, denom) = f {
+            if let Node::Number(d) = *denom {
+                const_prod /= d;
+                *num
+            } else {
+                Node::Div(num, denom)
+            }
+        } else {
+            f
+        };
+
+        if let Some(entry) = collected.iter_mut().find(|(n, _)| *n == f_clean) {
             entry.1 += 1.0;
         } else {
-            collected.push((f, 1.0));
+            collected.push((f_clean, 1.0));
         }
     }
     let mut out_factors: Vec<Node> = collected

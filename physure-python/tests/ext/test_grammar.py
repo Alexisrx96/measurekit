@@ -783,3 +783,60 @@ f(x) =
 
 def test_is_close_without_units(mn):
     assert mn.eval("5 == 5") is True
+
+
+def test_array_literal_and_units(mn):
+    import numpy as np
+
+    res = mn.eval("[1, 2, 3] m/s")
+    assert str(res.unit) == "m/s"
+    np.testing.assert_array_equal(res.magnitude, np.array([1, 2, 3]))
+
+    res_bare = mn.eval("[10, 20, 30]")
+    np.testing.assert_array_equal(res_bare, np.array([10, 20, 30]))
+
+
+def test_if_else_expression(mn):
+    assert mn.eval("if 3 > 2 then 10 else 20") == 10
+    assert mn.eval("if 1 > 2 { 10 } else { 20 }") == 20
+    mn.run("x = 5 m")
+    assert mn.eval("if x > 2 m then 100 else 200") == 100
+
+
+def test_sigma_uncertainty_assertion(mn):
+    mn.run("g = 9.81 +/- 0.05 m/s^2")
+    assert mn.eval("g == 9.80 m/s^2 +/- 2 sigma") is True
+    assert mn.eval("g == 9.00 m/s^2 +/- 2 sigma") is False
+    assert mn.eval("g == 9.80 m/s^2 ± 2σ") is True  # noqa: RUF001
+
+
+def test_symbolic_solve_in_grammar(mn):
+    res_sym = mn.eval('solve("P * V = n * R * T", "T")')
+    assert "P*V/(R*n)" in res_sym.replace(
+        " ", ""
+    ) or "P*V/(n*R)" in res_sym.replace(" ", "")
+
+    mn.run("force = 500 N")
+    mn.run("a = 2 m/s^2")
+    m = mn.eval('solve("force = m * a", "m")')
+    assert math.isclose(m.to("kg").magnitude, 250.0)
+
+
+def test_calculus_functions(mn):
+    import numpy as np
+
+    assert mn.eval('deriv("x^3", "x")') == "3*x**2"
+    assert mn.eval('integral("3 * x^2", "x")') == "x**3"
+
+    mn.run("t = [0, 1, 2, 3] s")
+    mn.run("x = [0, 5, 20, 45] m")
+    v = mn.eval("gradient(x, t)")
+    assert str(v.unit) == "m/s"
+    np.testing.assert_array_equal(
+        v.magnitude, np.array([5.0, 10.0, 20.0, 25.0])
+    )
+
+    mn.run("F = [10, 15, 20, 25] N")
+    mn.run("pos = [0, 2, 4, 6] m")
+    w = mn.eval("trapz(F, pos)")
+    assert math.isclose(w.to("J").magnitude, 105.0)

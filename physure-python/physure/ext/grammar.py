@@ -68,27 +68,7 @@ if TYPE_CHECKING:
 else:
     GrammarValue = Any
 
-# The tokenizer regex, built from one small pattern per token kind.
-_NUMBER_PAT = r"\d+\.?\d*(?:[eE]\s*[+-]?\s*\d+)?|\.\d+(?:[eE]\s*[+-]?\s*\d+)?"
-_IDENT_PAT = r"[^\W\d]\w*"
-_SUP_PAT = r"[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+"
-_SQRT_PAT = r"√"
-_OP_PAT = r"\+/-|±|<=|>=|!=|==|=>|->|≈|\*\s*\*|\*\*|[-+*/^()=?<>×÷,:|]"  # noqa: RUF001
-
 _OP_ALIASES = {"×": "*", "÷": "/"}  # noqa: RUF001
-_TOKEN_RE = re.compile(
-    "|".join(
-        (
-            f"(?P<NUMBER>{_NUMBER_PAT})",
-            f"(?P<IDENT>{_IDENT_PAT})",
-            f"(?P<SUP>{_SUP_PAT})",
-            f"(?P<SQRT>{_SQRT_PAT})",
-            f"(?P<OP>{_OP_PAT})",
-            r"(?P<WS>[ \t]+)",
-            r"(?P<BAD>.)",
-        )
-    )
-)
 _TEXT_BLOCK_RE = re.compile(r"```(.*?)```", re.DOTALL)
 
 
@@ -126,22 +106,20 @@ class GrammarError(PhysureError, ValueError):
 
 
 def _tokenize(stmt: str) -> list[Token]:
+    from physure._core import tokenize_phs_expression
+
+    try:
+        raw_tokens = tokenize_phs_expression(stmt)
+    except ValueError as err:
+        raise GrammarError(str(err)) from err
+
     tokens = []
-    for m in _TOKEN_RE.finditer(stmt):
-        kind = m.lastgroup or "BAD"
-        if kind == "WS":
-            continue
-        if kind == "BAD":
-            raise GrammarError(
-                f"Unexpected character {m.group()!r} at column {m.start()} "
-                f"in: {stmt!r}"
-            )
-        value = m.group()
+    for kind, val, pos in raw_tokens:
         if kind == "OP":
-            value = _OP_ALIASES.get(value, value)
-            if value.replace(" ", "") == "**":
-                value = "**"
-        tokens.append(Token(kind, value, m.start()))
+            val = _OP_ALIASES.get(val, val)
+            if val.replace(" ", "") == "**":
+                val = "**"
+        tokens.append(Token(kind, val, pos))
     return tokens
 
 
@@ -203,6 +181,8 @@ class _ExprParser:
         functions: dict[str, UserFunction],
         call_user_function: Callable[..., GrammarValue],
         depth: int = 0,
+        env: dict[str, GrammarValue] | None = None,
+        system: UnitSystem | None = None,
     ) -> None:
         self._tokens = tokens
         self._i = 0
@@ -211,6 +191,8 @@ class _ExprParser:
         self._functions = functions
         self._call_user_function = call_user_function
         self._depth = depth
+        self.env = env
+        self.system = system
 
     def parse(self) -> GrammarValue:
         result = self._expr()
@@ -223,7 +205,39 @@ class _ExprParser:
         tok = self._peek()
         if tok and tok.type == "IDENT" and tok.value == "let":
             return self._let_expr()
+        if tok and tok.type == "IDENT" and tok.value == "if":
+            return self._if_expr()
         return self._ternary()
+
+    def _if_expr(self) -> GrammarValue:
+        self._next()  # consume "if"
+        cond = self._expr()
+        tok = self._peek()
+        if tok and tok.type == "IDENT" and tok.value == "then":
+            self._next()
+
+        tok = self._peek()
+        if tok and tok.value == "{":
+            self._next()
+            true_val = self._expr()
+            self._expect("}")
+        else:
+            true_val = self._expr()
+
+        tok = self._peek()
+        if tok and tok.type == "IDENT" and tok.value == "else":
+            self._next()
+            tok_else = self._peek()
+            if tok_else and tok_else.value == "{":
+                self._next()
+                false_val = self._expr()
+                self._expect("}")
+            else:
+                false_val = self._expr()
+        else:
+            raise GrammarError("Expected 'else' in if expression")
+
+        return true_val if cond else false_val
 
     def _let_expr(self) -> GrammarValue:
         self._next()  # consume "let"
@@ -318,16 +332,33 @@ class _ExprParser:
         return result
 
     def _implicit(self) -> GrammarValue:
+        import numpy as np
+
         result = self._unary()
-        # Adjacency is multiplication: `500 N`, `2 m^2`, `3 (x + y)`.
+        # Adjacency is multiplication: `500 N`, `2 m^2`, `3 (x + y)`, `[1, 2] m`.
         while (tok := self._peek()) and (
-            tok.type in ("NUMBER", "IDENT") or tok.value == "("
+            tok.type in ("NUMBER", "IDENT") or tok.value in ("(", "[")
         ):
             if tok.value == "in" and self._i + 1 < len(self._tokens):
                 nxt = self._tokens[self._i + 1]
-                if nxt.type in ("NUMBER", "IDENT") or nxt.value in ("(", "-"):
+                if nxt.type in ("NUMBER", "IDENT") or nxt.value in (
+                    "(",
+                    "[",
+                    "-",
+                ):
                     break
-            result = result * self._power()
+            elif tok.type == "IDENT" and tok.value in (
+                "then",
+                "else",
+                "let",
+                "if",
+            ):
+                break
+            rhs = self._power()
+            if isinstance(result, np.ndarray) and hasattr(rhs, "unit"):
+                result = self._q(result * rhs.magnitude, rhs.unit)
+            else:
+                result = result * rhs
         return result
 
     def _unary(self) -> GrammarValue:
@@ -378,12 +409,50 @@ class _ExprParser:
             return self._atom_user_call(tok)
         if tok.value == "(":
             return self._atom_group()
+        if tok.value == "[":
+            return self._atom_array()
+        if tok.type == "STRING":
+            self._next()
+            return tok.value
         if tok.type == "NUMBER":
             return self._atom_number(tok)
         if tok.type == "IDENT":
             self._next()
             return self._resolve(tok.value)
         raise GrammarError(f"Unexpected token {tok.value!r}")
+
+    def _atom_array(self) -> GrammarValue:
+        import numpy as np
+
+        from physure.domain.measurement.quantity import Quantity
+
+        self._next()  # consume "["
+        elems: list[GrammarValue] = []
+        tok = self._peek()
+        if tok is not None and tok.value == "]":
+            self._next()
+            return np.array([])
+
+        elems.append(self._expr())
+        while (tok := self._peek()) and tok.value == ",":
+            self._next()
+            elems.append(self._expr())
+
+        closing = self._peek()
+        if closing is None or closing.value != "]":
+            raise GrammarError("Missing closing bracket ']' in array literal")
+        self._next()
+
+        if any(isinstance(e, Quantity) for e in elems):
+            units = [e.unit for e in elems if isinstance(e, Quantity)]
+            target_unit = units[0]
+            mags = [
+                e.to(target_unit).magnitude if isinstance(e, Quantity) else e
+                for e in elems
+            ]
+            return Quantity.from_input(np.array(mags), target_unit)
+
+        return np.array(elems)
 
     def _atom_sqrt(self) -> GrammarValue:
         self._next()
@@ -396,6 +465,10 @@ class _ExprParser:
         args = self._call_args()
         lo, hi, fn = _FUNCTIONS[name]
         _check_arity(name, args, lo, hi)
+        if name == "solve":
+            return _solve_fn(*args, env=self.env, system=self.system)
+        if name in ("gradient", "trapz"):
+            return fn(*args, system=self.system)
         return fn(*args)
 
     def _atom_user_call(self, tok: Token) -> GrammarValue:
@@ -533,7 +606,210 @@ _FUNCTIONS: dict[str, tuple[int, float, Callable[..., GrammarValue]]] = {
     "ln": (1, 1, lambda x: _transcendental(x, "log")),
     "linspace": (2, 3, lambda *a: _linspace_fn(*a)),
     "plot": (1, 3, lambda *a: _plot_fn(*a)),
+    "solve": (2, 2, lambda *a: _solve_fn(*a)),
+    "deriv": (2, 2, lambda *a: _deriv_fn(*a)),
+    "diff": (2, 2, lambda *a: _deriv_fn(*a)),
+    "integral": (2, 2, lambda *a: _integral_fn(*a)),
+    "integrate": (2, 2, lambda *a: _integral_fn(*a)),
+    "gradient": (
+        2,
+        2,
+        lambda y, x, system=None: _gradient_fn(y, x, system=system),
+    ),
+    "trapz": (2, 2, lambda y, x, system=None: _trapz_fn(y, x, system=system)),
 }
+
+
+def _deriv_fn(expr: Any, var: Any) -> str:
+    expr_s = str(expr)
+    var_s = str(getattr(var, "symbol", getattr(var, "name", var)))
+    if hasattr(var, "unit") and hasattr(var.unit, "__repr__"):
+        var_s = var.unit.__repr__()
+
+    try:
+        from physure._core import diff_symbolic
+
+        return diff_symbolic(expr_s, var_s)
+    except Exception:
+        pass
+
+    try:
+        import sympy as sp
+
+        sp_expr = sp.sympify(expr_s)
+        sp_var = sp.Symbol(var_s)
+        res = sp.diff(sp_expr, sp_var)
+        return str(res)
+    except Exception as err:
+        raise GrammarError(
+            f"Cannot compute derivative of {expr_s!r} with respect to {var_s!r}"
+        ) from err
+
+
+def _integral_fn(expr: Any, var: Any) -> str:
+    expr_s = str(expr)
+    var_s = str(getattr(var, "symbol", getattr(var, "name", var)))
+    if hasattr(var, "unit") and hasattr(var.unit, "__repr__"):
+        var_s = var.unit.__repr__()
+
+    try:
+        from physure._core import integrate_symbolic
+
+        return integrate_symbolic(expr_s, var_s)
+    except Exception:
+        pass
+
+    try:
+        import sympy as sp
+
+        sp_expr = sp.sympify(expr_s)
+        sp_var = sp.Symbol(var_s)
+        res = sp.integrate(sp_expr, sp_var)
+        return str(res)
+    except Exception as err:
+        raise GrammarError(
+            f"Cannot compute integral of {expr_s!r} with respect to {var_s!r}"
+        ) from err
+
+
+def _gradient_fn(y: Any, x: Any, system: Any = None) -> Any:
+    import numpy as np
+
+    y_arr = getattr(y, "magnitude", y)
+    x_arr = getattr(x, "magnitude", x)
+
+    y_arr = np.asarray(y_arr, dtype=float)
+    x_arr = np.asarray(x_arr, dtype=float)
+
+    grad = np.gradient(y_arr, x_arr)
+
+    y_unit = getattr(y, "unit", None)
+    x_unit = getattr(x, "unit", None)
+
+    if y_unit is not None and x_unit is not None:
+        from physure.domain.measurement.quantity import Quantity
+
+        res_unit = y_unit / x_unit
+        return Quantity(grad, res_unit, system=system)
+    elif y_unit is not None:
+        from physure.domain.measurement.quantity import Quantity
+
+        return Quantity(grad, y_unit, system=system)
+    return grad
+
+
+def _trapz_fn(y: Any, x: Any, system: Any = None) -> Any:
+    import numpy as np
+
+    y_arr = getattr(y, "magnitude", y)
+    x_arr = getattr(x, "magnitude", x)
+
+    y_arr = np.asarray(y_arr, dtype=float)
+    x_arr = np.asarray(x_arr, dtype=float)
+
+    if hasattr(np, "trapezoid"):
+        val = np.trapezoid(y_arr, x_arr)
+    elif hasattr(np, "trapz"):
+        val = np.trapz(y_arr, x_arr)
+    else:
+        try:
+            import scipy.integrate as sci_int
+
+            val = sci_int.trapezoid(y_arr, x_arr)
+        except Exception:
+            val = float(
+                np.sum(0.5 * (y_arr[1:] + y_arr[:-1]) * np.diff(x_arr))
+            )
+
+    y_unit = getattr(y, "unit", None)
+    x_unit = getattr(x, "unit", None)
+
+    if y_unit is not None and x_unit is not None:
+        from physure.domain.measurement.quantity import Quantity
+
+        res_unit = y_unit * x_unit
+        return Quantity(val, res_unit, system=system)
+    elif y_unit is not None:
+        from physure.domain.measurement.quantity import Quantity
+
+        return Quantity(val, y_unit, system=system)
+    return val
+
+
+def _solve_fn(
+    eq: Any,
+    target: Any,
+    env: dict[str, Any] | None = None,
+    system: Any = None,
+) -> GrammarValue:
+    import sympy as sp
+
+    target_str = str(
+        getattr(target, "symbol", getattr(target, "name", target))
+    )
+    if hasattr(target, "unit") and hasattr(target.unit, "__repr__"):
+        target_str = target.unit.__repr__()
+
+    eq_str = str(eq)
+
+    if "==" in eq_str:
+        lhs_s, rhs_s = eq_str.split("==", 1)
+    elif "=" in eq_str:
+        lhs_s, rhs_s = eq_str.split("=", 1)
+    else:
+        lhs_s, rhs_s = eq_str, "0"
+
+    lhs_s = lhs_s.strip()
+    rhs_s = rhs_s.strip()
+
+    substitutions = {}
+    known_quantities = {}
+    if env:
+        for k, v in env.items():
+            if k != target_str and (k in lhs_s or k in rhs_s):
+                if hasattr(v, "unit"):
+                    known_quantities[k] = v
+                    substitutions[sp.Symbol(k)] = sp.Symbol(f"__val_{k}__")
+                elif isinstance(v, (int, float)):
+                    substitutions[sp.Symbol(k)] = v
+
+    try:
+        lhs_sp = sp.sympify(lhs_s)
+        rhs_sp = sp.sympify(rhs_s)
+    except Exception as err:
+        raise GrammarError(
+            f"Cannot parse equation for solving: {eq_str!r}"
+        ) from err
+
+    if substitutions:
+        lhs_sp = lhs_sp.xreplace(substitutions)
+        rhs_sp = rhs_sp.xreplace(substitutions)
+
+    target_sp = sp.Symbol(target_str)
+    solutions = sp.solve(sp.Eq(lhs_sp, rhs_sp), target_sp)
+
+    if not solutions:
+        raise GrammarError(
+            f"No solution found for {target_str!r} in: {eq_str!r}"
+        )
+
+    sol_sp = solutions[0]
+
+    if known_quantities:
+        expr_str = str(sol_sp)
+        for k in known_quantities:
+            expr_str = expr_str.replace(f"__val_{k}__", f"__q_{k}__")
+
+        from physure.ext.grammar import GrammarInterpreter
+
+        sub_interp = GrammarInterpreter(system=system)
+        for k, v in known_quantities.items():
+            sub_interp[f"__q_{k}__"] = v
+        res = sub_interp.eval(expr_str)
+        if res is not None:
+            return res
+
+    return str(sol_sp)
 
 
 def _linspace_fn(
@@ -1114,6 +1390,40 @@ class GrammarInterpreter:
             )
         return arg
 
+    @staticmethod
+    def _split_sigma_spec(
+        tokens: list[Token],
+    ) -> tuple[list[Token], float | None]:
+        if not tokens:
+            return tokens, None
+        if (
+            len(tokens) >= 3
+            and tokens[-1].value.lower() in ("sigma", "σ")  # noqa: RUF001
+            and tokens[-3].value in ("+/-", "±")
+        ):
+            try:
+                k = float(tokens[-2].value)
+                return tokens[:-3], k
+            except ValueError:
+                pass
+        if (
+            len(tokens) >= 2
+            and tokens[-1].value.lower() in ("sigma", "σ")  # noqa: RUF001
+            and tokens[-2].value in ("+/-", "±")
+        ):
+            return tokens[:-2], 1.0
+        if len(tokens) >= 2 and tokens[-2].value in ("+/-", "±"):
+            val = tokens[-1].value.lower()
+            for s in ("sigma", "σ"):  # noqa: RUF001
+                if val.endswith(s):
+                    num_part = val[: -len(s)]
+                    try:
+                        k = float(num_part)
+                        return tokens[:-2], k
+                    except ValueError:
+                        pass
+        return tokens, None
+
     def _eval_statement(self, stmt: str) -> GrammarValue | None:
         tokens = _tokenize(stmt)
 
@@ -1121,12 +1431,6 @@ class GrammarInterpreter:
             return None
         if tokens and tokens[0].type == "IDENT" and tokens[0].value == "let":
             raise GrammarError("'let' is only valid inside a function body")
-
-        eq_idx = _top_level_index(tokens, "==")
-        if eq_idx != -1:
-            lhs = self._eval_expr(tokens[:eq_idx])
-            rhs = self._eval_expr(tokens[eq_idx + 1 :])
-            return self._is_close(lhs, rhs)
 
         # Trailing `= ?` -> return the value even when assigning.
         tokens, want_value = self._strip_value_query(tokens)
@@ -1136,7 +1440,15 @@ class GrammarInterpreter:
         tokens, target_unit = self._split_conversion(tokens, stmt)
         tokens, name = self._split_assignment(tokens, stmt)
 
-        value = self._eval_expr(tokens)
+        eq_idx = _top_level_index(tokens, "==")
+        if eq_idx != -1:
+            lhs = self._eval_expr(tokens[:eq_idx])
+            rhs_tokens, sigma_k = self._split_sigma_spec(tokens[eq_idx + 1 :])
+            rhs = self._eval_expr(rhs_tokens)
+            value = self._is_close(lhs, rhs, sigma_k=sigma_k)
+        else:
+            value = self._eval_expr(tokens)
+
         if target_unit is not None:
             value = self._apply_target_unit(value, target_unit)
 
@@ -1181,6 +1493,8 @@ class GrammarInterpreter:
             self._q,
             self._functions,
             self._call_user_function,
+            env=self.env,
+            system=self.system,
         ).parse()
 
     def _call_user_function(
@@ -1292,15 +1606,16 @@ class GrammarInterpreter:
             self._call_user_function,
             depth,
         ).parse()
+        rhs_tokens, sigma_k = self._split_sigma_spec(tokens[eq_idx + 1 :])
         rhs = _ExprParser(
-            tokens[eq_idx + 1 :],
+            rhs_tokens,
             resolve_fn,
             self._q,
             self._functions,
             self._call_user_function,
             depth,
         ).parse()
-        return self._is_close(lhs, rhs)
+        return self._is_close(lhs, rhs, sigma_k=sigma_k)
 
     def _resolve(self, name: str) -> GrammarValue:
         if name in self.env:
@@ -1309,13 +1624,23 @@ class GrammarInterpreter:
         # suggestions) propagates if the unit system doesn't know them.
         return self._q(1, name)
 
-    def _is_close(self, lhs: GrammarValue, rhs: GrammarValue) -> bool:
-        # ponytail: scalar isclose; no uncertainty-overlap test yet — add a
-        # sigma-based comparison if assertions on uncertain values need it.
+    def _is_close(
+        self,
+        lhs: GrammarValue,
+        rhs: GrammarValue,
+        sigma_k: float | None = None,
+    ) -> bool:
         if hasattr(lhs, "to") and hasattr(rhs, "unit"):
-            lhs = lhs.to(rhs.unit)
+            rhs = rhs.to(lhs.unit)
         a = getattr(lhs, "magnitude", lhs)
         b = getattr(rhs, "magnitude", rhs)
+        if sigma_k is not None:
+            a_unc = float(getattr(lhs, "std_dev", 0.0) or 0.0)
+            b_unc = float(getattr(rhs, "std_dev", 0.0) or 0.0)
+            combined_unc = math.sqrt(a_unc**2 + b_unc**2)
+            if combined_unc == 0.0:
+                return math.isclose(a, b, rel_tol=self.rel_tol)
+            return abs(a - b) <= sigma_k * combined_unc
         return math.isclose(a, b, rel_tol=self.rel_tol)
 
 

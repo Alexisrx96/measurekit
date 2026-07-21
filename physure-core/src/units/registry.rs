@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::units::rational::RationalUnit;
 
 /// A registry to hold unit definitions, ensuring state isolation.
+#[derive(Clone, Debug, PartialEq)]
 pub struct UnitRegistry {
     pub base_units: HashMap<String, RationalUnit>,
     pub derived_units: HashMap<String, RationalUnit>,
@@ -106,6 +107,20 @@ impl UnitRegistry {
         reg.register_alias("second".into(), "s".into());
         reg.register_alias("seconds".into(), "s".into());
         reg.register_alias("gram".into(), "g".into());
+        reg.register_alias("cm".into(), "m".into());
+        reg.register_alias("km".into(), "m".into());
+        reg.register_alias("mm".into(), "m".into());
+        reg.register_alias("nm".into(), "m".into());
+        reg.register_alias("h".into(), "s".into());
+        reg.register_alias("min".into(), "s".into());
+        reg.register_alias("ms".into(), "s".into());
+        reg.register_alias("ns".into(), "s".into());
+        reg.register_alias("nN".into(), "N".into());
+        reg.register_alias("kN".into(), "N".into());
+        reg.register_alias("nC".into(), "C".into());
+        reg.register_alias("uC".into(), "C".into());
+        reg.register_alias("µC".into(), "C".into());
+        reg.register_alias("pC".into(), "C".into());
 
         reg
     }

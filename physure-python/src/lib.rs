@@ -1108,6 +1108,59 @@ impl PyExpr {
     }
 }
 
+#[pyfunction]
+fn tokenize_phs_expression(_py: Python<'_>, stmt: &str) -> PyResult<Vec<(String, String, usize)>> {
+    let lexer = ::physure::phs::PhsLexer::new(stmt);
+    let tokens = lexer.tokenize()
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+    let result = tokens.into_iter().map(|t| {
+        let kind_str = match t.kind {
+            ::physure::phs::TokenKind::Number(_) => "NUMBER",
+            ::physure::phs::TokenKind::Ident(_) => "IDENT",
+            ::physure::phs::TokenKind::StringLiteral(_) => "STRING",
+            ::physure::phs::TokenKind::Op(_) => "OP",
+            ::physure::phs::TokenKind::Sup(_) => "SUP",
+            ::physure::phs::TokenKind::Sqrt => "SQRT",
+        };
+        (kind_str.to_string(), t.value, t.pos)
+    }).collect();
+
+    Ok(result)
+}
+
+#[pyfunction]
+fn evaluate_phs_native(py: Python<'_>, source: &str) -> PyResult<Vec<PyObject>> {
+    let results = ::physure::eval_phs(source)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+    let mut py_results = Vec::new();
+    for res in results {
+        let obj = match res {
+            ::physure::PhsValue::None => py.None(),
+            ::physure::PhsValue::Number(n) => n.into_py_any(py)?,
+            ::physure::PhsValue::Bool(b) => b.into_py_any(py)?,
+            ::physure::PhsValue::String(s) => s.into_py_any(py)?,
+            ::physure::PhsValue::Quantity(q) => PyQuantity(q).into_py_any(py)?,
+            ::physure::PhsValue::Vector(v) => {
+                let items: PyResult<Vec<PyObject>> = v.into_iter().map(|item| {
+                    match item {
+                        ::physure::PhsValue::None => Ok(py.None()),
+                        ::physure::PhsValue::Number(n) => n.into_py_any(py),
+                        ::physure::PhsValue::Bool(b) => b.into_py_any(py),
+                        ::physure::PhsValue::String(s) => s.into_py_any(py),
+                        ::physure::PhsValue::Quantity(q) => PyQuantity(q).into_py_any(py),
+                        ::physure::PhsValue::Vector(_) => Ok(py.None()),
+                    }
+                }).collect();
+                items?.into_py_any(py)?
+            }
+        };
+        py_results.push(obj);
+    }
+    Ok(py_results)
+}
+
 // ── Module Registration ──────────────────────────────────────────────────────
 #[pymodule(name = "_core")]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1128,6 +1181,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(to_arrow_record_batch, m)?)?;
     m.add_function(wrap_pyfunction!(convert_units_inplace, m)?)?;
     m.add_function(wrap_pyfunction!(dim_vector_from_dict, m)?)?;
+    m.add_function(wrap_pyfunction!(tokenize_phs_expression, m)?)?;
+    m.add_function(wrap_pyfunction!(evaluate_phs_native, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
