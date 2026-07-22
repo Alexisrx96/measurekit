@@ -13,16 +13,16 @@ impl RichRenderer {
     pub fn render_variable_card(name: &str, val: &PhsValue) {
         match val {
             PhsValue::Quantity(q) => {
-                println!("\x1b[32m├─▸ \x1b[1;37m{:<20}\x1b[0m = \x1b[1;33m{}\x1b[0m", name, q.to_string());
+                println!("\x1b[1;36m{:<24}\x1b[0m = \x1b[1;33m{}\x1b[0m", name, q.to_string());
             }
             PhsValue::Number(n) => {
-                println!("\x1b[32m├─▸ \x1b[1;37m{:<20}\x1b[0m = \x1b[1;33m{}\x1b[0m", name, n);
+                println!("\x1b[1;36m{:<24}\x1b[0m = \x1b[1;33m{}\x1b[0m", name, n);
             }
             PhsValue::Plot(PlotData { ascii, .. }) => {
                 println!("\n{}", ascii);
             }
             _ => {
-                println!("\x1b[32m├─▸ \x1b[1;37m{:<20}\x1b[0m = {}", name, val);
+                println!("\x1b[1;36m{:<24}\x1b[0m = {}", name, val);
             }
         }
     }
