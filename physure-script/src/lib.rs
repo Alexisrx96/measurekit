@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod lexer;
 pub mod parser;
+pub mod resolver;
 
 pub use ast::{Expr, Program, Statement};
 pub use lexer::{PhsLexer, PhsToken, TokenKind};
