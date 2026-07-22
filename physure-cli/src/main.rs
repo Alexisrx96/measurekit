@@ -1,13 +1,20 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::process;
 use physure_script::{parse_phs, transpile, PhsInterpreter, PhsValue, Target};
 
+mod rich;
+mod tui;
+mod web;
+
+use rich::RichRenderer;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("PhysureScript (PHS) CLI");
-        eprintln!("Usage: phs <script.phs>");
+        eprintln!("PhysureScript (PHS) Visual CLI v0.2.4");
+        eprintln!("Usage: phs <script.phs> [--tui | --web]");
         eprintln!("       phs transpile <script.phs> --target <rust|python|java>");
         process::exit(1);
     }
@@ -32,6 +39,9 @@ fn main() {
         return;
     }
 
+    let is_tui = args.iter().any(|a| a == "--tui");
+    let is_web = args.iter().any(|a| a == "--web");
+
     let input_arg = &args[1];
     let code = if let Ok(content) = fs::read_to_string(input_arg) {
         content
@@ -51,11 +61,24 @@ fn main() {
     };
 
     let mut interp = PhsInterpreter::new();
+    let mut vars_map = HashMap::new();
+
+    if !is_tui && !is_web {
+        RichRenderer::render_header(input_arg);
+    }
+
     for stmt in stmts {
         match interp.run_statement(&stmt) {
             Ok(val) => {
                 if val != PhsValue::None {
-                    println!("{}", val);
+                    if let physure_script::Statement::Assign { ref name, .. } = stmt {
+                        vars_map.insert(name.clone(), val.clone());
+                        if !is_tui && !is_web {
+                            RichRenderer::render_variable_card(name, &val);
+                        }
+                    } else if !is_tui && !is_web {
+                        println!("{}", val);
+                    }
                 }
             }
             Err(e) => {
@@ -63,5 +86,17 @@ fn main() {
                 process::exit(1);
             }
         }
+    }
+
+    if is_tui {
+        if let Err(e) = tui::run_tui(&code, &vars_map) {
+            eprintln!("TUI Error: {}", e);
+        }
+    } else if is_web {
+        if let Err(e) = web::start_web_server(&code, &vars_map) {
+            eprintln!("Web Visualizer Error: {}", e);
+        }
+    } else {
+        RichRenderer::render_summary_box(&vars_map);
     }
 }

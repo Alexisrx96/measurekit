@@ -336,25 +336,25 @@ mod tests {
 
     #[test]
     fn test_no_split_on_zero_exponent() {
-        let u = Parser::parse_expression("a0").unwrap();
+        let u = Parser::parse_expression("sym0").unwrap();
         let dims = u.dimensions_map();
-        assert_eq!(dims.get("a0"), Some(&(1, 1)));
+        assert_eq!(dims.get("sym0"), Some(&(1, 1)));
         assert_eq!(dims.len(), 1);
 
-        let u2 = Parser::parse_expression("tau0").unwrap();
+        let u2 = Parser::parse_expression("dummy0").unwrap();
         let dims2 = u2.dimensions_map();
-        assert_eq!(dims2.get("tau0"), Some(&(1, 1)));
+        assert_eq!(dims2.get("dummy0"), Some(&(1, 1)));
         assert_eq!(dims2.len(), 1);
 
         // Compound expressions must not silently drop the atomic symbol.
-        let u3 = Parser::parse_expression("a0/s").unwrap();
+        let u3 = Parser::parse_expression("sym0/s").unwrap();
         let dims3 = u3.dimensions_map();
-        assert_eq!(dims3.get("a0"), Some(&(1, 1)));
+        assert_eq!(dims3.get("sym0"), Some(&(1, 1)));
         assert_eq!(dims3.get("s"), Some(&(-1, 1)));
 
-        let u4 = Parser::parse_expression("kg*a0").unwrap();
+        let u4 = Parser::parse_expression("kg*sym0").unwrap();
         let dims4 = u4.dimensions_map();
         assert_eq!(dims4.get("kg"), Some(&(1, 1)));
-        assert_eq!(dims4.get("a0"), Some(&(1, 1)));
+        assert_eq!(dims4.get("sym0"), Some(&(1, 1)));
     }
 }
