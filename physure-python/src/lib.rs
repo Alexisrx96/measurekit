@@ -1186,6 +1186,7 @@ impl PyInterpreter {
                                 ::physure_script::PhsValue::Sigma(k) => k.into_py_any(py)?,
                                 ::physure_script::PhsValue::SigmaBound(q, _) => PyQuantity(q.clone()).into_py_any(py)?,
                                 ::physure_script::PhsValue::Vector(_) => py.None(),
+                                ::physure_script::PhsValue::Plot(p) => p.ascii.clone().into_py_any(py)?,
                             }
                         } else {
                             py.None()
@@ -1200,6 +1201,7 @@ impl PyInterpreter {
                 ::physure_script::PhsValue::Quantity(q) => PyQuantity(q).into_py_any(py)?,
                 ::physure_script::PhsValue::Sigma(k) => k.into_py_any(py)?,
                 ::physure_script::PhsValue::SigmaBound(q, _) => PyQuantity(q).into_py_any(py)?,
+                ::physure_script::PhsValue::Plot(p) => p.ascii.into_py_any(py)?,
                 ::physure_script::PhsValue::Vector(v) => {
                     let items: PyResult<Vec<PyObject>> = v.into_iter().map(|item| {
                         match item {
@@ -1210,6 +1212,7 @@ impl PyInterpreter {
                             ::physure_script::PhsValue::Quantity(q) => PyQuantity(q).into_py_any(py),
                             ::physure_script::PhsValue::Sigma(k) => k.into_py_any(py),
                             ::physure_script::PhsValue::SigmaBound(q, _) => PyQuantity(q).into_py_any(py),
+                            ::physure_script::PhsValue::Plot(p) => p.ascii.into_py_any(py),
                             ::physure_script::PhsValue::Vector(_) => Ok(py.None()),
                         }
                     }).collect();
@@ -1277,6 +1280,7 @@ fn evaluate_phs_native(py: Python<'_>, source: &str) -> PyResult<Vec<PyObject>> 
             ::physure_script::PhsValue::Quantity(q) => PyQuantity(q).into_py_any(py)?,
             ::physure_script::PhsValue::Sigma(k) => k.into_py_any(py)?,
             ::physure_script::PhsValue::SigmaBound(q, _) => PyQuantity(q).into_py_any(py)?,
+            ::physure_script::PhsValue::Plot(p) => p.ascii.into_py_any(py)?,
             ::physure_script::PhsValue::Vector(v) => {
                 let items: PyResult<Vec<PyObject>> = v.into_iter().map(|item| {
                     match item {
@@ -1287,6 +1291,7 @@ fn evaluate_phs_native(py: Python<'_>, source: &str) -> PyResult<Vec<PyObject>> 
                         ::physure_script::PhsValue::Quantity(q) => PyQuantity(q).into_py_any(py),
                         ::physure_script::PhsValue::Sigma(k) => k.into_py_any(py),
                         ::physure_script::PhsValue::SigmaBound(q, _) => PyQuantity(q).into_py_any(py),
+                        ::physure_script::PhsValue::Plot(p) => p.ascii.into_py_any(py),
                         ::physure_script::PhsValue::Vector(_) => Ok(py.None()),
                     }
                 }).collect();

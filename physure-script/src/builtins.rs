@@ -384,12 +384,13 @@ pub fn eval_builtin(name: &str, args: &[PhsValue], interpreter: &mut PhsInterpre
 
             let ascii_plot = draw_ascii_plot(&x_arr, &y_arr, &title, &x_unit, &y_unit);
             let svg_plot = draw_svg_plot(&x_arr, &y_arr, &title, &x_unit, &y_unit);
-            let result_str = if svg_plot.is_empty() {
-                ascii_plot
-            } else {
-                format!("{}\n[PLOT_IMAGE:data:image/svg+xml;utf8,{}]", ascii_plot, svg_plot)
-            };
-            Ok(Some(PhsValue::String(result_str)))
+            Ok(Some(PhsValue::Plot(crate::value::PlotData {
+                title,
+                x_unit,
+                y_unit,
+                ascii: ascii_plot,
+                svg: svg_plot,
+            })))
         }
         _ => Ok(None),
     }

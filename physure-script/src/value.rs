@@ -2,6 +2,15 @@ use std::fmt;
 use physure_core::quantity::Quantity;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PlotData {
+    pub title: String,
+    pub x_unit: String,
+    pub y_unit: String,
+    pub ascii: String,
+    pub svg: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum PhsValue {
     None,
     Number(f64),
@@ -11,6 +20,7 @@ pub enum PhsValue {
     Vector(Vec<PhsValue>),
     Sigma(f64),
     SigmaBound(Quantity, f64),
+    Plot(PlotData),
 }
 
 impl fmt::Display for PhsValue {
@@ -27,6 +37,7 @@ impl fmt::Display for PhsValue {
             }
             PhsValue::Sigma(k) => write!(f, "{}σ", physure_core::quantity::format_float(*k)),
             PhsValue::SigmaBound(q, k) => write!(f, "{} ± {}σ", q, physure_core::quantity::format_float(*k)),
+            PhsValue::Plot(p) => write!(f, "{}", p.ascii),
         }
     }
 }

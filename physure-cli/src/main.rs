@@ -7,10 +7,12 @@ use physure_script::{parse_phs, transpile, PhsInterpreter, PhsValue, Target};
 mod html;
 mod protocol;
 mod rich;
+mod step;
 mod tui;
 mod web;
 
 use rich::RichRenderer;
+use step::ExecutionStep;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -78,12 +80,23 @@ fn main() {
 
     let mut interp = PhsInterpreter::new();
     let mut vars_map = HashMap::new();
+    let mut steps = Vec::new();
 
     if !is_tui && !is_web && !is_view {
         RichRenderer::render_header(raw_input);
     }
 
     for stmt in stmts {
+        let (label, expr_code, is_disp) = match &stmt {
+            physure_script::Statement::Assign { name, expr } => (name.clone(), format!("{:?}", expr), false),
+            physure_script::Statement::AssignAndQuery { name, expr } => (format!("{}?", name), format!("{:?}", expr), false),
+            physure_script::Statement::Query { expr } => ("query".to_string(), format!("{:?}", expr), false),
+            physure_script::Statement::DisplayText(txt) => ("doc".to_string(), txt.clone(), true),
+            physure_script::Statement::ExprStmt(expr) => ("eval".to_string(), format!("{:?}", expr), false),
+            physure_script::Statement::FnDef { name, .. } => (format!("fn {}", name), "def".to_string(), false),
+            physure_script::Statement::Assert { .. } => ("assert".to_string(), "assert".to_string(), false),
+        };
+
         match interp.run_statement(&stmt) {
             Ok(val) => {
                 if val != PhsValue::None {
@@ -93,8 +106,15 @@ fn main() {
                             RichRenderer::render_variable_card(name, &val);
                         }
                     } else if !is_tui && !is_web && !is_view {
-                        println!("{}", val);
+                        RichRenderer::render_variable_card(&label, &val);
                     }
+
+                    steps.push(ExecutionStep {
+                        label,
+                        expr_code,
+                        value: val,
+                        is_display_text: is_disp,
+                    });
                 }
             }
             Err(e) => {
@@ -105,15 +125,15 @@ fn main() {
     }
 
     if is_tui {
-        if let Err(e) = tui::run_tui(&code, &vars_map) {
+        if let Err(e) = tui::run_tui(&code, &steps, &vars_map) {
             eprintln!("TUI Error: {}", e);
         }
     } else if is_web {
-        if let Err(e) = web::start_web_server(&code, &vars_map) {
+        if let Err(e) = web::start_web_server(raw_input, &code, &steps, &vars_map) {
             eprintln!("Web Visualizer Error: {}", e);
         }
     } else if is_view {
-        if let Err(e) = html::open_standalone_html(raw_input, &code, &vars_map) {
+        if let Err(e) = html::open_standalone_html(raw_input, &code, &steps, &vars_map) {
             eprintln!("HTML Report Error: {}", e);
         }
     } else {

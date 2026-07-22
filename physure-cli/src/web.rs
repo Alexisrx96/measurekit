@@ -1,18 +1,73 @@
 use std::collections::HashMap;
 use tiny_http::{Response, Server};
-use physure_script::value::PhsValue;
+use physure_script::value::{PhsValue, PlotData};
+use crate::step::ExecutionStep;
 
-pub fn start_web_server(code: &str, vars: &HashMap<String, PhsValue>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn start_web_server(title: &str, code: &str, steps: &[ExecutionStep], vars: &HashMap<String, PhsValue>) -> Result<(), Box<dyn std::error::Error>> {
     let server = Server::http("127.0.0.1:3000").map_err(|e| format!("{}", e))?;
     println!("\x1b[1;32m🚀 Physure Web Visualizer running at http://localhost:3000\x1b[0m");
     println!("\x1b[90mPress Ctrl+C to stop the server\x1b[0m");
     let _ = open::that("http://localhost:3000");
 
-    let mut rows_html = String::new();
+    let mut steps_html = String::new();
+    for (i, step) in steps.iter().enumerate() {
+        if step.is_display_text {
+            if let PhsValue::String(ref text) = step.value {
+                steps_html.push_str(&format!(
+                    r#"<div class="my-4 p-4 bg-slate-900 border-l-4 border-cyan-500 rounded-r-lg shadow-md">
+                        <div class="text-xs uppercase font-mono text-cyan-400 mb-1">Documentation Block #{}</div>
+                        <div class="text-sm text-slate-200 whitespace-pre-wrap font-sans">{}</div>
+                    </div>"#, i + 1, text
+                ));
+            }
+            continue;
+        }
+
+        match &step.value {
+            PhsValue::Plot(PlotData { title: p_title, svg, .. }) => {
+                steps_html.push_str(&format!(
+                    r#"<div class="my-6 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                        <h3 class="text-md font-semibold text-cyan-400 mb-3 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18"/></svg>
+                            {}
+                        </h3>
+                        <div class="overflow-x-auto bg-slate-950 p-4 rounded-lg flex justify-center border border-slate-800 shadow-inner">
+                            {}
+                        </div>
+                    </div>"#, p_title, svg
+                ));
+            }
+            _ => {
+                let val_str = step.value.to_string();
+                if !val_str.is_empty() {
+                    steps_html.push_str(&format!(
+                        r#"<tr class="hover:bg-slate-900/50 transition">
+                            <td class="py-3 px-2 font-mono text-cyan-400 font-bold whitespace-nowrap">{}</td>
+                            <td class="py-3 px-2 font-mono text-slate-300">{}</td>
+                            <td class="py-3 px-2 font-mono text-amber-300 font-semibold">{}</td>
+                            <td class="py-3 px-2 text-right">
+                                <button onclick="navigator.clipboard.writeText('{} = {}')" class="px-3 py-1 bg-slate-800 hover:bg-cyan-600 text-xs rounded-md text-slate-200 font-medium transition shadow">Copy</button>
+                            </td>
+                        </tr>"#,
+                        step.label, step.expr_code, val_str, step.label, val_str
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut vars_html = String::new();
     for (k, v) in vars {
         let val_str = v.to_string();
-        rows_html.push_str(&format!(
-            "<tr><td class='py-2 font-mono text-cyan-400 font-bold'>{}</td><td class='py-2 font-mono text-amber-300'>{}</td><td class='py-2'><button onclick=\"navigator.clipboard.writeText('{} = {}')\" class='px-3 py-1 bg-slate-800 hover:bg-cyan-600 text-xs rounded-md text-white font-medium transition'>Copy</button></td></tr>",
+        vars_html.push_str(&format!(
+            r#"<div class="p-3 bg-slate-900 border border-slate-800 rounded-lg flex justify-between items-center shadow-sm">
+                <div>
+                    <span class="font-mono font-bold text-cyan-400 text-sm">{}</span>
+                    <span class="text-slate-400 mx-2 text-xs">=</span>
+                    <span class="font-mono text-amber-300 font-medium text-sm">{}</span>
+                </div>
+                <button onclick="navigator.clipboard.writeText('{} = {}')" class="px-2.5 py-1 bg-slate-800 hover:bg-cyan-600 text-xs rounded text-slate-200 transition">Copy</button>
+            </div>"#,
             k, val_str, k, val_str
         ));
     }
@@ -23,55 +78,70 @@ pub fn start_web_server(code: &str, vars: &HashMap<String, PhsValue>) -> Result<
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Physure Visualizer</title>
+    <title>Physure Visualizer - {}</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen p-8 font-sans">
-    <div class="max-w-6xl mx-auto space-y-6">
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6 font-sans">
+    <div class="max-w-7xl mx-auto space-y-8">
         <header class="flex justify-between items-center border-b border-slate-800 pb-4">
             <div>
-                <h1 class="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Physure Visual Dashboard</h1>
-                <p class="text-slate-400 text-sm">Interactive Physical Computation & Quantity Inspection</p>
+                <h1 class="text-3xl font-bold bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-400 bg-clip-text text-transparent">Physure Live Dashboard</h1>
+                <p class="text-slate-400 text-sm mt-1">Script: <code class="text-cyan-400 font-mono">{}</code> | Real-Time Execution Trace</p>
             </div>
-            <div class="flex items-center gap-3">
-                <span class="px-3 py-1 bg-cyan-950 border border-cyan-800 text-cyan-400 text-xs rounded-full font-mono">v0.2.4 Live</span>
-            </div>
+            <span class="px-3 py-1 bg-cyan-950 border border-cyan-800 text-cyan-400 text-xs rounded-full font-mono">v0.2.4 Live</span>
         </header>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl flex flex-col">
-                <h2 class="text-lg font-semibold text-cyan-400 mb-3 flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-                    PHS Source Code
-                </h2>
-                <pre class="bg-slate-950 p-4 rounded-lg font-mono text-sm text-slate-300 overflow-x-auto border border-slate-800 flex-1">{}</pre>
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- Left: PHS Code & Final Variables -->
+            <div class="lg:col-span-5 space-y-6">
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                    <h2 class="text-lg font-semibold text-cyan-400 mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                        Source PHS Script
+                    </h2>
+                    <pre class="bg-slate-950 p-4 rounded-lg font-mono text-xs text-slate-300 overflow-x-auto border border-slate-800 max-h-[500px]">{}</pre>
+                </div>
+
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                    <h2 class="text-lg font-semibold text-emerald-400 mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+                        Final State Variables
+                    </h2>
+                    <div class="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                        {}
+                    </div>
+                </div>
             </div>
 
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl flex flex-col">
-                <h2 class="text-lg font-semibold text-emerald-400 mb-3 flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                    Quantities & Variables
-                </h2>
-                <div class="overflow-x-auto flex-1">
-                    <table class="w-full text-left text-sm border-collapse">
-                        <thead>
-                            <tr class="border-b border-slate-800 text-slate-400 font-semibold">
-                                <th class="pb-2">Variable</th>
-                                <th class="pb-2">Value</th>
-                                <th class="pb-2">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-800/50">
-                            {}
-                        </tbody>
-                    </table>
+            <!-- Right: Step-by-Step Calculations & Plots -->
+            <div class="lg:col-span-7 space-y-6">
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                    <h2 class="text-lg font-semibold text-amber-400 mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                        Step-by-Step Calculation Trace
+                    </h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-400 font-semibold text-xs uppercase">
+                                    <th class="pb-3 px-2">Label / Target</th>
+                                    <th class="pb-3 px-2">Expression</th>
+                                    <th class="pb-3 px-2">Evaluated Result</th>
+                                    <th class="pb-3 px-2 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/60">
+                                {}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </body>
 </html>
-    "#, code, rows_html);
+    "#, title, title, code, vars_html, steps_html);
 
     for request in server.incoming_requests() {
         let response = Response::from_string(&html_content)
