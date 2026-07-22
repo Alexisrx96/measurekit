@@ -69,9 +69,9 @@ fn format_val_latex(val: &PhsValue) -> String {
             }
             let u_s = unit_to_latex(&q.unit.__repr__());
             if u_s.is_empty() {
-                format!("\\implies \\mathbf{{{}}}", val_s)
+                format!("= {}", val_s)
             } else {
-                format!("\\implies \\mathbf{{{}\\; {}}}", val_s, u_s)
+                format!("= {}\\; {}", val_s, u_s)
             }
         }
         PhsValue::Number(n) => {
@@ -82,9 +82,9 @@ fn format_val_latex(val: &PhsValue) -> String {
                     s = format!("{} \\times 10^{{{}}}", parts[0], parts[1].trim_start_matches('+'));
                 }
             }
-            format!("\\implies \\mathbf{{{}}}", s)
+            format!("= {}", s)
         }
-        PhsValue::Bool(b) => format!("\\implies \\mathbf{{\\text{{{}}}}}", if *b { "True" } else { "False" }),
+        PhsValue::Bool(b) => format!("= \\text{{{}}}", if *b { "True" } else { "False" }),
         _ => {
             let raw = val.to_string();
             let trimmed = raw.trim();
@@ -92,7 +92,7 @@ fn format_val_latex(val: &PhsValue) -> String {
                 return String::new();
             }
             if trimmed == "True" || trimmed == "False" {
-                return format!("\\implies \\mathbf{{\\text{{{}}}}}", trimmed);
+                return format!("= \\text{{{}}}", trimmed);
             }
 
             let mut parts = trimmed.splitn(2, ' ');
@@ -109,16 +109,16 @@ fn format_val_latex(val: &PhsValue) -> String {
                 }
                 if !rest.is_empty() {
                     let u_s = unit_to_latex(rest);
-                    format!("\\implies \\mathbf{{{}\\; {}}}", val_s, u_s)
+                    format!("= {}\\; {}", val_s, u_s)
                 } else {
-                    format!("\\implies \\mathbf{{{}}}", val_s)
+                    format!("= {}", val_s)
                 }
             } else {
                 let escaped = trimmed
                     .replace('\\', "\\backslash ")
                     .replace('_', "\\_")
                     .replace('&', "\\&");
-                format!("\\implies \\mathbf{{\\text{{{}}}}}", escaped)
+                format!("= \\text{{{}}}", escaped)
             }
         }
     }

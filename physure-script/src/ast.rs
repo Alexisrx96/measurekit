@@ -205,7 +205,16 @@ impl Expr {
             Expr::StringLiteral(s) => format!("\\text{{\"{}\"}}", s),
             Expr::Unary { op: UnaryOp::Sqrt, expr } => format!("\\sqrt{{{}}}", expr.to_latex()),
             Expr::Unary { op, expr } => format!("{}{}", op.to_phs(), expr.to_latex()),
-            Expr::Binary { op: BinaryOp::Div, left, right } => format!("\\frac{{{}}}{{{}}}", left.to_latex(), right.to_latex()),
+            Expr::Binary { op: BinaryOp::Div, left, right } => {
+                if let Expr::ImplicitMul { left: inner_left, right: inner_right } = &**left {
+                    if let Expr::Ident(u1) = &**inner_right {
+                        if let Expr::Ident(u2) = &**right {
+                            return format!("{} \\; \\text{{{}/{}}}", inner_left.to_latex(), u1, u2);
+                        }
+                    }
+                }
+                format!("\\frac{{{}}}{{{}}}", left.to_latex(), right.to_latex())
+            }
             Expr::Binary { op: BinaryOp::Pow, left, right } => format!("{{{}}}^{{{}}}", left.to_latex(), right.to_latex()),
             Expr::Binary { op, left, right } => format!("{} {} {}", left.to_latex(), op.to_latex(), right.to_latex()),
             Expr::ImplicitMul { left, right } => format!("{} \\; {}", left.to_latex(), right.to_latex()),
@@ -240,7 +249,7 @@ pub fn unit_to_latex(unit_str: &str) -> String {
         if parts.len() == 2 {
             let num = unit_to_latex(parts[0]);
             let den = unit_to_latex(parts[1]);
-            return format!("\\frac{{{}}}{{{}}}", num, den);
+            return format!("{}/{}", num, den);
         }
     }
     let terms: Vec<&str> = u.split(['*', ' ']).filter(|s| !s.is_empty()).collect();
