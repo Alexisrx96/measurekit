@@ -40,6 +40,40 @@ impl<'a> PhsLexer<'a> {
 
             let start = self.pos;
 
+            // Comments: # ... or // ...
+            if ch == '#' || (ch == '/' && self.input[self.pos..].starts_with("//")) {
+                while self.pos < len {
+                    let c = self.input[self.pos..].chars().next().unwrap();
+                    self.pos += c.len_utf8();
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            // Display text fence: ``` ... ```
+            if self.input[self.pos..].starts_with("```") {
+                let fence_start = self.pos;
+                self.pos += 3;
+                let text_start = self.pos;
+                if let Some(end_rel) = self.input[self.pos..].find("```") {
+                    let text = self.input[text_start..self.pos + end_rel].to_string();
+                    self.pos += end_rel + 3;
+                    tokens.push(PhsToken {
+                        kind: TokenKind::StringLiteral(text.clone()),
+                        value: text,
+                        pos: fence_start,
+                    });
+                    tokens.push(PhsToken {
+                        kind: TokenKind::Op("```".to_string()),
+                        value: "```".to_string(),
+                        pos: fence_start,
+                    });
+                    continue;
+                }
+            }
+
             // String literals: "..." or '...'
             if ch == '"' || ch == '\'' {
                 let quote = ch;

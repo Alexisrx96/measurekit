@@ -29,6 +29,13 @@ impl<'a> PhsParser<'a> {
     }
 
     pub fn parse_statement(&mut self) -> PhysureResult<Statement> {
+        if let Some(TokenKind::StringLiteral(text)) = self.peek_kind().cloned() {
+            if self.peek_offset_kind(1) == Some(&TokenKind::Op("```".to_string())) {
+                self.pos += 2;
+                return Ok(Statement::DisplayText(text));
+            }
+        }
+
         // Check if function definition: ident "(" params ")" "=" expr
         if let Some(stmt) = self.try_parse_fn_def()? {
             return Ok(stmt);
@@ -37,18 +44,11 @@ impl<'a> PhsParser<'a> {
         let expr = self.parse_expr_with_modifiers()?;
 
         if self.match_op("=") || self.match_op("->") {
-            if self.match_op("?") {
-                if let Expr::Ident(name) = expr {
-                    return Ok(Statement::AssignAndQuery {
-                        name,
-                        expr: Expr::Number(0.0), // placeholder if needed
-                    });
-                }
-            }
-
             if let Expr::Ident(name) = expr {
+                let is_query = self.match_op("?");
                 let right_expr = self.parse_expr_with_modifiers()?;
-                if self.match_op("=") && self.match_op("?") {
+                let is_query_after = self.match_op("?");
+                if is_query || is_query_after {
                     return Ok(Statement::AssignAndQuery {
                         name,
                         expr: right_expr,
@@ -77,6 +77,18 @@ impl<'a> PhsParser<'a> {
                 let target_unit = self.parse_unit_string()?;
                 expr = Expr::Convert { expr: Box::new(expr), target_unit };
             } else if self.match_op(":") {
+                if let Some(TokenKind::Number(_)) = self.peek_kind() {
+                    let spec_ident = self.peek_offset_kind(1);
+                    if let Some(TokenKind::Ident(id)) = spec_ident {
+                        if !matches!(id.as_str(), "e" | "f" | "g" | "E" | "F" | "G") {
+                            self.pos -= 1;
+                            break;
+                        }
+                    } else {
+                        self.pos -= 1;
+                        break;
+                    }
+                }
                 let spec = self.parse_unit_string()?;
                 expr = Expr::FormatSig { expr: Box::new(expr), spec };
             } else {
@@ -113,10 +125,16 @@ impl<'a> PhsParser<'a> {
             }
             if self.match_op(")") && (self.match_op("=") || self.match_op("->")) {
                 let mut body_stmts = Vec::new();
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 while !self.is_at_end() {
-                    body_stmts.push(self.parse_statement()?);
-                    if self.match_op(";") {
-                        continue;
+                    let stmt = self.parse_statement()?;
+                    body_stmts.push(stmt);
+                    if let Some(TokenKind::Ident(id)) = self.peek_kind() {
+                        if id == &fn_name || !param_names.contains(id) {
+                            if self.peek_offset_kind(1) == Some(&TokenKind::Op("(".to_string())) {
+                                break;
+                            }
+                        }
                     }
                 }
                 return Ok(Some(Statement::FnDef {
@@ -125,6 +143,8 @@ impl<'a> PhsParser<'a> {
                     body: body_stmts,
                 }));
             }
+            self.pos = saved;
+            return Ok(None);
         }
         self.pos = saved;
         Ok(None)
@@ -214,13 +234,7 @@ impl<'a> PhsParser<'a> {
     fn parse_additive(&mut self) -> PhysureResult<Expr> {
         let mut left = self.parse_multiplicative()?;
         loop {
-            if self.match_op("+/-") || self.match_op("±") {
-                let unc = self.parse_multiplicative()?;
-                left = Expr::Uncertainty {
-                    val: Box::new(left),
-                    unc: Box::new(unc),
-                };
-            } else if self.match_op("+") {
+            if self.match_op("+") {
                 let right = self.parse_multiplicative()?;
                 left = Expr::Binary {
                     op: BinaryOp::Add,
@@ -281,20 +295,54 @@ impl<'a> PhsParser<'a> {
         if self.is_at_end() {
             return false;
         }
+        if self.pos > 0 {
+            if let Some(prev_kind) = self.tokens.get(self.pos - 1).map(|t| &t.kind) {
+                if matches!(prev_kind, TokenKind::Ident(_)) && matches!(self.peek_kind(), Some(TokenKind::Ident(_))) {
+                    return false;
+                }
+                if matches!(prev_kind, TokenKind::Ident(_) | TokenKind::StringLiteral(_) | TokenKind::Sup(_)) {
+                    if matches!(self.peek_kind(), Some(TokenKind::Number(_))) {
+                        return false;
+                    }
+                }
+            }
+        }
         match self.peek_kind() {
             Some(TokenKind::Ident(name)) => {
-                !matches!(name.as_str(), "in" | "then" | "else")
+                if matches!(name.as_str(), "in" | "then" | "else") {
+                    return false;
+                }
+                let next_op = self.peek_offset_kind(1);
+                if next_op == Some(&TokenKind::Op("=".to_string()))
+                    || next_op == Some(&TokenKind::Op("->".to_string()))
+                    || next_op == Some(&TokenKind::Op("=>".to_string()))
+                    || next_op == Some(&TokenKind::Op("(".to_string()))
+                {
+                    return false;
+                }
+                true
             }
             Some(TokenKind::Number(_))
-            | Some(TokenKind::StringLiteral(_))
             | Some(TokenKind::Sqrt) => true,
             Some(TokenKind::Op(op)) => op == "(" || op == "[",
             _ => false,
         }
     }
 
-    fn parse_power(&mut self) -> PhysureResult<Expr> {
+    fn parse_uncertainty(&mut self) -> PhysureResult<Expr> {
         let left = self.parse_unary()?;
+        if self.match_op("+/-") || self.match_op("±") {
+            let unc = self.parse_unary()?;
+            return Ok(Expr::Uncertainty {
+                val: Box::new(left),
+                unc: Box::new(unc),
+            });
+        }
+        Ok(left)
+    }
+
+    fn parse_power(&mut self) -> PhysureResult<Expr> {
+        let left = self.parse_uncertainty()?;
         if self.match_op("^") || self.match_op("**") {
             let right = self.parse_power()?;
             return Ok(Expr::Binary {
@@ -396,6 +444,22 @@ impl<'a> PhsParser<'a> {
         while !self.is_at_end() {
             match self.peek_kind() {
                 Some(TokenKind::Ident(id)) => {
+                    if !unit_parts.is_empty() {
+                        let last: &String = unit_parts.last().unwrap();
+                        let last_is_num = last.chars().next().map_or(false, |c| c.is_ascii_digit() || c == '.');
+                        if !last_is_num && !matches!(last.as_str(), "*" | "/" | "^") {
+                            break;
+                        }
+                    }
+                    let next_op = self.peek_offset_kind(1);
+                    if next_op == Some(&TokenKind::Op("=".to_string()))
+                        || next_op == Some(&TokenKind::Op("->".to_string()))
+                        || next_op == Some(&TokenKind::Op(":".to_string()))
+                        || next_op == Some(&TokenKind::Op("=>".to_string()))
+                        || next_op == Some(&TokenKind::Op("(".to_string()))
+                    {
+                        break;
+                    }
                     unit_parts.push(id.clone());
                     self.pos += 1;
                 }

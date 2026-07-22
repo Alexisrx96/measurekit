@@ -4,6 +4,8 @@ use std::fs;
 use std::process;
 use physure_script::{parse_phs, transpile, PhsInterpreter, PhsValue, Target};
 
+mod html;
+mod protocol;
 mod rich;
 mod tui;
 mod web;
@@ -14,9 +16,18 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("PhysureScript (PHS) Visual CLI v0.2.4");
-        eprintln!("Usage: phs <script.phs> [--tui | --web]");
+        eprintln!("Usage: phs <script.phs> [--tui | --web | --view | --html]");
+        eprintln!("       phs register-protocol");
         eprintln!("       phs transpile <script.phs> --target <rust|python|java>");
         process::exit(1);
+    }
+
+    if args[1] == "register-protocol" {
+        if let Err(e) = protocol::register_phs_protocol() {
+            eprintln!("Failed to register phs:// protocol: {}", e);
+            process::exit(1);
+        }
+        return;
     }
 
     if args[1] == "transpile" && args.len() >= 3 {
@@ -41,15 +52,20 @@ fn main() {
 
     let is_tui = args.iter().any(|a| a == "--tui");
     let is_web = args.iter().any(|a| a == "--web");
+    let is_view = args.iter().any(|a| a == "--view" || a == "--html");
 
-    let input_arg = &args[1];
-    let code = if let Ok(content) = fs::read_to_string(input_arg) {
+    let mut raw_input = args[1].as_str();
+    if raw_input.starts_with("phs://") {
+        raw_input = raw_input.trim_start_matches("phs://").trim_start_matches('/');
+    }
+
+    let code = if let Ok(content) = fs::read_to_string(raw_input) {
         content
-    } else if input_arg.ends_with(".phs") {
-        eprintln!("error: file not found '{}'", input_arg);
+    } else if raw_input.ends_with(".phs") {
+        eprintln!("error: file not found '{}'", raw_input);
         process::exit(1);
     } else {
-        input_arg.clone()
+        raw_input.to_string()
     };
 
     let stmts = match parse_phs(&code) {
@@ -63,8 +79,8 @@ fn main() {
     let mut interp = PhsInterpreter::new();
     let mut vars_map = HashMap::new();
 
-    if !is_tui && !is_web {
-        RichRenderer::render_header(input_arg);
+    if !is_tui && !is_web && !is_view {
+        RichRenderer::render_header(raw_input);
     }
 
     for stmt in stmts {
@@ -73,10 +89,10 @@ fn main() {
                 if val != PhsValue::None {
                     if let physure_script::Statement::Assign { ref name, .. } = stmt {
                         vars_map.insert(name.clone(), val.clone());
-                        if !is_tui && !is_web {
+                        if !is_tui && !is_web && !is_view {
                             RichRenderer::render_variable_card(name, &val);
                         }
-                    } else if !is_tui && !is_web {
+                    } else if !is_tui && !is_web && !is_view {
                         println!("{}", val);
                     }
                 }
@@ -95,6 +111,10 @@ fn main() {
     } else if is_web {
         if let Err(e) = web::start_web_server(&code, &vars_map) {
             eprintln!("Web Visualizer Error: {}", e);
+        }
+    } else if is_view {
+        if let Err(e) = html::open_standalone_html(raw_input, &code, &vars_map) {
+            eprintln!("HTML Report Error: {}", e);
         }
     } else {
         RichRenderer::render_summary_box(&vars_map);
