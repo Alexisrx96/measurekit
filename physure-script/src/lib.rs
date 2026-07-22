@@ -3,6 +3,9 @@ pub mod lexer;
 pub mod parser;
 pub mod resolver;
 pub mod interpreter;
+pub mod codegen;
+
+pub use codegen::{transpile, Target};
 
 pub use ast::{Expr, Program, Statement};
 pub use lexer::{PhsLexer, PhsToken, TokenKind};
