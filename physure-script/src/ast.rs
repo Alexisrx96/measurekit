@@ -131,6 +131,23 @@ impl BinaryOp {
             BinaryOp::ApproxEq => "≈",
         }
     }
+
+    pub fn to_latex(&self) -> &'static str {
+        match self {
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "\\cdot",
+            BinaryOp::Div => "/",
+            BinaryOp::Pow => "^",
+            BinaryOp::Eq => "=",
+            BinaryOp::Neq => "\\neq",
+            BinaryOp::Lt => "<",
+            BinaryOp::Gt => ">",
+            BinaryOp::Lte => "\\le",
+            BinaryOp::Gte => "\\ge",
+            BinaryOp::ApproxEq => "\\approx",
+        }
+    }
 }
 
 impl Expr {
@@ -157,6 +174,53 @@ impl Expr {
             Expr::Uncertainty { val, unc } => format!("{} +/- {}", val.to_phs(), unc.to_phs()),
             Expr::Convert { expr, target_unit } => format!("{} => {}", expr.to_phs(), target_unit),
             Expr::FormatSig { expr, spec } => format!("{}: {}", expr.to_phs(), spec),
+        }
+    }
+
+    pub fn to_latex(&self) -> String {
+        match self {
+            Expr::Number(n) => {
+                let s = physure_core::quantity::format_float(*n);
+                if s.contains('e') || s.contains('E') {
+                    let parts: Vec<&str> = s.split(['e', 'E']).collect();
+                    if parts.len() == 2 {
+                        format!("{} \\times 10^{{{}}}", parts[0], parts[1].trim_start_matches('+'))
+                    } else {
+                        s
+                    }
+                } else {
+                    s
+                }
+            }
+            Expr::Ident(s) => {
+                if s.contains('_') {
+                    let parts: Vec<&str> = s.splitn(2, '_').collect();
+                    format!("{{{}}}_{{{}}}", parts[0], parts[1])
+                } else {
+                    s.clone()
+                }
+            }
+            Expr::StringLiteral(s) => format!("\\text{{\"{}\"}}", s),
+            Expr::Unary { op: UnaryOp::Sqrt, expr } => format!("\\sqrt{{{}}}", expr.to_latex()),
+            Expr::Unary { op, expr } => format!("{}{}", op.to_phs(), expr.to_latex()),
+            Expr::Binary { op: BinaryOp::Div, left, right } => format!("\\frac{{{}}}{{{}}}", left.to_latex(), right.to_latex()),
+            Expr::Binary { op: BinaryOp::Pow, left, right } => format!("{{{}}}^{{{}}}", left.to_latex(), right.to_latex()),
+            Expr::Binary { op, left, right } => format!("{} {} {}", left.to_latex(), op.to_latex(), right.to_latex()),
+            Expr::ImplicitMul { left, right } => format!("{} \\; {}", left.to_latex(), right.to_latex()),
+            Expr::Call { name, args } => {
+                let arg_strs: Vec<String> = args.iter().map(|a| a.to_latex()).collect();
+                format!("\\text{{{}}}({})", name, arg_strs.join(", "))
+            }
+            Expr::Ternary { cond, then_expr, else_expr } => format!("{} \\text{{ ? }} {} \\text{{ : }} {}", cond.to_latex(), then_expr.to_latex(), else_expr.to_latex()),
+            Expr::Let { name, val, body } => format!("\\text{{let }} {} = {} \\text{{ in }} {}", name, val.to_latex(), body.to_latex()),
+            Expr::If { cond, then_expr, else_expr } => format!("\\text{{if }} {} \\text{{ then }} {} \\text{{ else }} {}", cond.to_latex(), then_expr.to_latex(), else_expr.to_latex()),
+            Expr::Vector(items) => {
+                let item_strs: Vec<String> = items.iter().map(|i| i.to_latex()).collect();
+                format!("[{}]", item_strs.join(", "))
+            }
+            Expr::Uncertainty { val, unc } => format!("{} \\pm {}", val.to_latex(), unc.to_latex()),
+            Expr::Convert { expr, target_unit } => format!("{} \\implies \\text{{{}}}", expr.to_latex(), target_unit),
+            Expr::FormatSig { expr, .. } => expr.to_latex(),
         }
     }
 }

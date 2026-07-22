@@ -87,19 +87,29 @@ fn main() {
     }
 
     for stmt in stmts {
-        let (label, expr_code, is_disp) = match &stmt {
-            physure_script::Statement::Assign { name, expr } => (name.clone(), expr.to_phs(), false),
-            physure_script::Statement::AssignAndQuery { name, expr } => (format!("{}?", name), expr.to_phs(), false),
-            physure_script::Statement::Query { expr } => (expr.to_phs(), expr.to_phs(), false),
-            physure_script::Statement::DisplayText(txt) => ("doc".to_string(), txt.clone(), true),
-            physure_script::Statement::ExprStmt(expr) => (expr.to_phs(), expr.to_phs(), false),
+        let (label, expr_code, latex_expr, is_disp) = match &stmt {
+            physure_script::Statement::Assign { name, expr } => {
+                let lname = if name.contains('_') {
+                    let parts: Vec<&str> = name.splitn(2, '_').collect();
+                    format!("{{{}}}_{{{}}}", parts[0], parts[1])
+                } else {
+                    name.clone()
+                };
+                (name.clone(), expr.to_phs(), format!("{} = {}", lname, expr.to_latex()), false)
+            }
+            physure_script::Statement::AssignAndQuery { name, expr } => (format!("{}?", name), expr.to_phs(), expr.to_latex(), false),
+            physure_script::Statement::Query { expr } => (expr.to_phs(), expr.to_phs(), expr.to_latex(), false),
+            physure_script::Statement::DisplayText(txt) => ("doc".to_string(), txt.clone(), txt.clone(), true),
+            physure_script::Statement::ExprStmt(expr) => (expr.to_phs(), expr.to_phs(), expr.to_latex(), false),
             physure_script::Statement::FnDef { name, params, .. } => {
                 let param_strs: Vec<String> = params.iter().map(|p| p.to_phs()).collect();
-                (format!("fn {}", name), format!("{}({})", name, param_strs.join(", ")), false)
+                let c = format!("{}({})", name, param_strs.join(", "));
+                (format!("fn {}", name), c.clone(), format!("\\text{{{}}}", c), false)
             }
             physure_script::Statement::Assert { left, right, op } => {
                 let c = format!("assert {} {} {}", left.to_phs(), op.to_phs(), right.to_phs());
-                (c.clone(), c, false)
+                let l = format!("{} {} {}", left.to_latex(), op.to_latex(), right.to_latex());
+                (c.clone(), c, l, false)
             }
         };
 
@@ -124,6 +134,7 @@ fn main() {
                     steps.push(ExecutionStep {
                         label,
                         expr_code,
+                        latex_expr,
                         value: val,
                         is_display_text: is_disp,
                     });
