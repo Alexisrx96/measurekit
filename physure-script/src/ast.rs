@@ -207,15 +207,25 @@ impl Expr {
             Expr::Unary { op, expr } => format!("{}{}", op.to_phs(), expr.to_latex()),
             Expr::Binary { op: BinaryOp::Div, left, right } => {
                 if let Expr::ImplicitMul { left: inner_left, right: inner_right } = &**left {
-                    if let Expr::Ident(u1) = &**inner_right {
-                        if let Expr::Ident(u2) = &**right {
-                            return format!("{} \\; \\text{{{}/{}}}", inner_left.to_latex(), u1, u2);
+                    if let Some(u1) = get_unit_suffix_latex(inner_right) {
+                        if let Some(u2) = get_unit_suffix_latex(right) {
+                            let combined_unit = format!("{}/{}", u1, u2);
+                            let formatted_u = unit_to_latex(&combined_unit);
+                            return format!("{} \\; {}", inner_left.to_latex(), formatted_u);
                         }
                     }
                 }
                 format!("\\frac{{{}}}{{{}}}", left.to_latex(), right.to_latex())
             }
-            Expr::Binary { op: BinaryOp::Pow, left, right } => format!("{{{}}}^{{{}}}", left.to_latex(), right.to_latex()),
+            Expr::Binary { op: BinaryOp::Pow, left, right } => {
+                let p = right.to_latex();
+                let clean_p = if p.ends_with(".0") {
+                    p[..p.len() - 2].to_string()
+                } else {
+                    p
+                };
+                format!("{{{}}}^{{{}}}", left.to_latex(), clean_p)
+            }
             Expr::Binary { op, left, right } => format!("{} {} {}", left.to_latex(), op.to_latex(), right.to_latex()),
             Expr::ImplicitMul { left, right } => format!("{} \\; {}", left.to_latex(), right.to_latex()),
             Expr::Call { name, args } => {
@@ -236,6 +246,26 @@ impl Expr {
             }
             Expr::FormatSig { expr, .. } => expr.to_latex(),
         }
+    }
+}
+
+fn get_unit_suffix_latex(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(s) => Some(s.clone()),
+        Expr::Binary { op: BinaryOp::Pow, left, right } => {
+            if let Expr::Ident(u) = &**left {
+                let p = right.to_latex();
+                let clean_p = if p.ends_with(".0") {
+                    p[..p.len() - 2].to_string()
+                } else {
+                    p
+                };
+                Some(format!("{}^{{{}}}", u, clean_p))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
