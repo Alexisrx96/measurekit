@@ -1859,6 +1859,7 @@ name = "physure-cli"
 version = "0.2.2"
 dependencies = [
  "arboard",
+ "chrono",
  "crossterm",
  "dirs",
  "open",
