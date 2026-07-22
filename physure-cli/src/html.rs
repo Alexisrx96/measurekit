@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use physure_script::value::{PhsValue, PlotData};
+use physure_script::ast::unit_to_latex;
 use crate::step::ExecutionStep;
 
 struct ScriptMetadata {
@@ -66,11 +67,11 @@ fn format_val_latex(val: &PhsValue) -> String {
                 }
                 val_s = format!("({} \\pm {})", val_s, unc_s);
             }
-            let u_s = q.unit.__repr__().replace('*', " \\cdot ").replace('_', "\\_");
+            let u_s = unit_to_latex(&q.unit.__repr__());
             if u_s.is_empty() {
                 format!("\\implies \\mathbf{{{}}}", val_s)
             } else {
-                format!("\\implies \\mathbf{{{}\\; \\text{{{}}}}}", val_s, u_s)
+                format!("\\implies \\mathbf{{{}\\; {}}}", val_s, u_s)
             }
         }
         PhsValue::Number(n) => {
@@ -84,7 +85,11 @@ fn format_val_latex(val: &PhsValue) -> String {
             format!("\\implies \\mathbf{{{}}}", s)
         }
         PhsValue::Bool(b) => format!("\\implies \\mathbf{{\\text{{{}}}}}", if *b { "True" } else { "False" }),
-        _ => format!("\\implies \\mathbf{{\\text{{{}}}}}", val.to_string().replace('_', "\\_")),
+        _ => {
+            let s = val.to_string();
+            let escaped = s.replace('_', "\\_").replace('&', "\\&");
+            format!("\\implies \\mathbf{{\\text{{{}}}}}", escaped)
+        }
     }
 }
 
@@ -181,7 +186,7 @@ pub fn open_standalone_html(title: &str, code: &str, steps: &[ExecutionStep], va
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" media="print" onload="this.media='all'">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"
-        onload="if(typeof renderMathInElement==='function')renderMathInElement(document.body);"></script>
+        onload="if(typeof renderMathInElement==='function')renderMathInElement(document.body,{{delimiters:[{{left:'\\[',right:'\\]',display:true}},{{left:'\\(',right:'\\)',display:false}}],throwOnError:false}});"></script>
     <style>
         @page {{
             size: A4;

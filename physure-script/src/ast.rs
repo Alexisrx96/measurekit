@@ -222,12 +222,37 @@ impl Expr {
             }
             Expr::Uncertainty { val, unc } => format!("{} \\pm {}", val.to_latex(), unc.to_latex()),
             Expr::Convert { expr, target_unit } => {
-                let clean_u = target_unit.replace('_', "\\_").replace('*', " \\cdot ");
-                format!("{} \\implies \\text{{{}}}", expr.to_latex(), clean_u)
+                let clean_u = unit_to_latex(target_unit);
+                format!("{} \\implies {}", expr.to_latex(), clean_u)
             }
             Expr::FormatSig { expr, .. } => expr.to_latex(),
         }
     }
+}
+
+pub fn unit_to_latex(unit_str: &str) -> String {
+    let u = unit_str.trim();
+    if u.is_empty() {
+        return String::new();
+    }
+    if u.contains('/') {
+        let parts: Vec<&str> = u.split('/').collect();
+        if parts.len() == 2 {
+            let num = unit_to_latex(parts[0]);
+            let den = unit_to_latex(parts[1]);
+            return format!("\\frac{{{}}}{{{}}}", num, den);
+        }
+    }
+    let terms: Vec<&str> = u.split(['*', ' ']).filter(|s| !s.is_empty()).collect();
+    let latex_terms: Vec<String> = terms.iter().map(|term| {
+        if term.contains('^') {
+            let parts: Vec<&str> = term.split('^').collect();
+            format!("\\text{{{}}}^{{{}}}", parts[0], parts[1])
+        } else {
+            format!("\\text{{{}}}", term)
+        }
+    }).collect();
+    latex_terms.join(" \\cdot ")
 }
 
 impl ParamDef {
