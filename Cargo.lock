@@ -1908,6 +1908,7 @@ dependencies = [
  "physure-core",
  "physure-script",
  "ratatui",
+ "serde",
  "serde_json",
  "tiny_http",
  "winreg",

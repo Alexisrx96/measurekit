@@ -4,7 +4,8 @@ use physure_script::value::{PhsValue, PlotData};
 use physure_script::ast::unit_to_latex;
 use crate::step::ExecutionStep;
 use crate::katex_assets::{KATEX_CSS, KATEX_JS, AUTO_RENDER_JS};
-use crate::config::PhysureConfig;
+use crate::config::{I18nLabels, PhysureConfig};
+use crate::latex::render_raw_math;
 
 struct ScriptMetadata {
     title: Option<String>,
@@ -47,7 +48,7 @@ fn escape_html(input: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn format_val_latex(val: &PhsValue) -> String {
+fn format_val_latex(val: &PhsValue, i18n: &I18nLabels) -> String {
     match val {
         PhsValue::Quantity(q) => {
             let mut val_s = physure_core::quantity::format_float(q.value.mean());
@@ -115,11 +116,7 @@ fn format_val_latex(val: &PhsValue) -> String {
                     format!("= {}", val_s)
                 }
             } else {
-                let escaped = trimmed
-                    .replace('\\', "\\backslash ")
-                    .replace('_', "\\_")
-                    .replace('&', "\\&");
-                format!("= \\text{{{}}}", escaped)
+                format!("= {}", render_raw_math(trimmed, i18n))
             }
         }
     }
@@ -187,7 +184,7 @@ pub fn start_web_server(title: &str, code: &str, steps: &[ExecutionStep], _vars:
                 fig_counter += 1;
             }
             _ => {
-                let eval_latex = format_val_latex(&step.value);
+                let eval_latex = format_val_latex(&step.value, &i18n);
                 let eq_num = eq_counter;
                 eq_counter += 1;
 

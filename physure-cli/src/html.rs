@@ -5,7 +5,8 @@ use physure_script::value::{PhsValue, PlotData};
 use physure_script::ast::unit_to_latex;
 use crate::step::ExecutionStep;
 use crate::katex_assets::{KATEX_CSS, KATEX_JS, AUTO_RENDER_JS};
-use crate::config::PhysureConfig;
+use crate::config::{I18nLabels, PhysureConfig};
+use crate::latex::render_raw_math;
 
 struct ScriptMetadata {
     title: Option<String>,
@@ -48,7 +49,7 @@ fn escape_html(input: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn format_val_latex(val: &PhsValue) -> String {
+fn format_val_latex(val: &PhsValue, i18n: &I18nLabels) -> String {
     match val {
         PhsValue::Quantity(q) => {
             let mut val_s = physure_core::quantity::format_float(q.value.mean());
@@ -87,6 +88,17 @@ fn format_val_latex(val: &PhsValue) -> String {
             format!("= {}", s)
         }
         PhsValue::Bool(b) => format!("= \\text{{{}}}", if *b { "True" } else { "False" }),
+        PhsValue::Vector(v) => {
+            let items: Vec<String> = v.iter().map(|item| {
+                let s = format_val_latex(item, i18n);
+                s.trim_start_matches("= ").to_string()
+            }).collect();
+            if items.len() > 4 {
+                format!("= [{}, \\dots, {}]", items[..3].join(", "), items.last().unwrap_or(&String::new()))
+            } else {
+                format!("= [{}]", items.join(", "))
+            }
+        },
         _ => {
             let raw = val.to_string();
             let trimmed = raw.trim();
@@ -116,11 +128,7 @@ fn format_val_latex(val: &PhsValue) -> String {
                     format!("= {}", val_s)
                 }
             } else {
-                let escaped = trimmed
-                    .replace('\\', "\\backslash ")
-                    .replace('_', "\\_")
-                    .replace('&', "\\&");
-                format!("= \\text{{{}}}", escaped)
+                format!("= {}", render_raw_math(trimmed, i18n))
             }
         }
     }
@@ -187,16 +195,25 @@ pub fn open_standalone_html(title: &str, code: &str, steps: &[ExecutionStep], _v
                 fig_counter += 1;
             }
             _ => {
-                let eval_latex = format_val_latex(&step.value);
+                let mut eval_latex = format_val_latex(&step.value, &i18n);
+                if !step.latex_expr.is_empty() && eval_latex.starts_with("= ") {
+                    eval_latex = eval_latex.trim_start_matches("= ").to_string();
+                }
                 let eq_num = eq_counter;
                 eq_counter += 1;
 
+                let math_body = if step.latex_expr.is_empty() {
+                    eval_latex
+                } else {
+                    format!("{} {}", step.latex_expr, eval_latex)
+                };
+
                 content_html.push_str(&format!(
                     r#"<div class="latex-eq-container">
-                        <div class="latex-eq-main">\[ {} \quad {} \]</div>
+                        <div class="latex-eq-main">\[ {} \]</div>
                         <div class="latex-eq-num">({})</div>
                     </div>"#,
-                    step.latex_expr, eval_latex, eq_num
+                    math_body, eq_num
                 ));
             }
         }

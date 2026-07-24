@@ -14,6 +14,12 @@ pub struct I18nLabels {
     pub fig_prefix: &'static str,
     pub footer_engine: &'static str,
     pub html_lang: &'static str,
+    pub solve_from: &'static str,
+    pub solve_solving_for: &'static str,
+    pub given_prefix: &'static str,
+    pub if_word: &'static str,
+    pub then_word: &'static str,
+    pub else_word: &'static str,
 }
 
 impl PhysureConfig {
@@ -64,6 +70,12 @@ impl PhysureConfig {
                 fig_prefix: "Figura",
                 footer_engine: "Motor Physure Core",
                 html_lang: "es",
+                solve_from: "De",
+                solve_solving_for: "despejando",
+                given_prefix: "Dado",
+                if_word: "si",
+                then_word: "entonces",
+                else_word: "si no",
             },
             "fr" => I18nLabels {
                 abstract_title: "Résumé / Abstract",
@@ -72,6 +84,12 @@ impl PhysureConfig {
                 fig_prefix: "Figure",
                 footer_engine: "Moteur Physure Core",
                 html_lang: "fr",
+                solve_from: "À partir de",
+                solve_solving_for: "en résolvant pour",
+                given_prefix: "Étant donné",
+                if_word: "si",
+                then_word: "alors",
+                else_word: "sinon",
             },
             "de" => I18nLabels {
                 abstract_title: "Zusammenfassung / Abstract",
@@ -80,6 +98,12 @@ impl PhysureConfig {
                 fig_prefix: "Abbildung",
                 footer_engine: "Physure Core Engine",
                 html_lang: "de",
+                solve_from: "Aus",
+                solve_solving_for: "aufgelöst nach",
+                given_prefix: "Gegeben",
+                if_word: "wenn",
+                then_word: "dann",
+                else_word: "sonst",
             },
             _ => I18nLabels {
                 abstract_title: "Abstract",
@@ -88,6 +112,12 @@ impl PhysureConfig {
                 fig_prefix: "Figure",
                 footer_engine: "Physure Core Engine",
                 html_lang: "en",
+                solve_from: "From",
+                solve_solving_for: "solving for",
+                given_prefix: "Given",
+                if_word: "if",
+                then_word: "then",
+                else_word: "else",
             },
         }
     }
